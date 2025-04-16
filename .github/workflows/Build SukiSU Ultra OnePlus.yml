@@ -85,7 +85,7 @@ jobs:
           sed -i 's/ -dirty//g' common/scripts/setlocalversion
           sed -i 's/ -dirty//g' msm-kernel/scripts/setlocalversion
           sed -i 's/ -dirty//g' external/dtc/scripts/setlocalversion
-          sed -i '$i res=$(echo "$res" | sed '\''s/-dirty//g'\'')' common/scripts/setlocalversion
+          sed -i '$i res=$(echo "-白昼贯虹" | sed '\''s/-dirty//g'\'')' common/scripts/setlocalversion
           git add -A
           git commit -m "Force remove -dirty suffix from kernel version"
 
