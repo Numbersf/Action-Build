@@ -124,6 +124,11 @@ jobs:
           fi
 
           cd ./common
+          # Change to common directory and apply SUSFS patch
+          cd ../common
+          if [ "${{ inputs.soc }}" == "sun" ]; then
+            sed -i '/#include <trace\/hooks\/blk.h>/a #include <trace/hooks/fs.h>' ./fs/namespace.c
+          fi
           patch -p1 < 50_add_susfs_in_gki-${{ github.event.inputs.ANDROID_VERSION }}-${{ github.event.inputs.KERNEL_VERSION }}.patch || true
           echo "完成"
 
