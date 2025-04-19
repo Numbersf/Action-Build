@@ -288,7 +288,7 @@ jobs:
           fi
 
           # 可选复制其它新文件（如果存在）
-          if [ "${{ github.event.inputs.CPUD }}" = "sm8750" ]; then
+          if [ "${{ github.event.inputs.CPU }}" = "sm8750" ]; then
           for file in dtbo.img system_dlkm.erofs.img vendor_dlkm.img vendor_boot.img; do
             if [ -f "$dir1$file" ]; then
               target_name="$file"
