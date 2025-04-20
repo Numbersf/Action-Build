@@ -97,7 +97,7 @@ jobs:
       - name: Add KernelSU-SukiSU Ultra
         run: |
           cd kernel_workspace/kernel_platform
-          curl -LSs "https://raw.githubusercontent.com/ShirkNeko/SukiSU-Ultra/main/kernel/setup.sh" | bash -s main
+          curl -LSs "https://raw.githubusercontent.com/ShirkNeko/SukiSU-Ultra/main/kernel/setup.sh" | bash -s susfs-dev
           cd ./KernelSU
           KSU_VERSION=$(expr $(/usr/bin/git rev-list --count main) "+" 10606)
           echo "KSUVER=$KSU_VERSION" >> $GITHUB_ENV
@@ -124,11 +124,6 @@ jobs:
           fi
 
           cd ./common
-          # Change to common directory and apply SUSFS patch
-          cd ../common
-          if [ "${{ inputs.soc }}" == "sun" ]; then
-            sed -i '/#include <trace\/hooks\/blk.h>/a #include <trace/hooks/fs.h>' ./fs/namespace.c
-          fi
           patch -p1 < 50_add_susfs_in_gki-${{ github.event.inputs.ANDROID_VERSION }}-${{ github.event.inputs.KERNEL_VERSION }}.patch || true
           echo "完成"
 
@@ -352,5 +347,5 @@ jobs:
       - name: Upload AnyKernel3
         uses: actions/upload-artifact@v4
         with:
-          name: AnyKernel3_SukiSUUltra_${{ env.KSUVER }}_${{ github.event.inputs.FEIL }}${{ steps.suffix.outputs.value }}
+          name: AnyKernel3_SukiSUUltra_${{ env.KSUVER }}_${{ github.event.inputs.FEIL }}_KPM${{ steps.suffix.outputs.value }}
           path: ./AnyKernel3/*
