@@ -1,4 +1,4 @@
-name: Build OnePlus Kernel test
+name: Sync OnePlus Kernel
 
 on:
   workflow_dispatch:
@@ -11,17 +11,9 @@ on:
         description: "配置文件"
         required: true
         default: 'oneplus_ace5_pro'
-      CPUD:
-        description: "处理器代号"
-        required: true
-        default: 'sun'
-      BUILD_METHOD:
-        description: "编译方式gki？perf？"
-        required: true
-        default: 'perf'
 
 jobs:
-  build:
+  sync_and_size:
     runs-on: ubuntu-latest
 
     steps:
@@ -64,45 +56,6 @@ jobs:
           du -sh . | tee sync_size.txt
           SYNC_SIZE=$(cat sync_size.txt | awk '{print $1}')
           echo "SYNC_SIZE=$SYNC_SIZE" >> $GITHUB_ENV
-
-      # 删除 -dirty 后缀 (可选，如果你不需要)
-      - name: Force remove -dirty suffix
-        run: |
-          cd kernel_workspace/kernel_platform
-          sed -i 's/ -dirty//g' common/scripts/setlocalversion
-          sed -i 's/ -dirty//g' msm-kernel/scripts/setlocalversion
-          sed -i 's/ -dirty//g' external/dtc/scripts/setlocalversion
-          sed -i '$i res=$(echo "$res" | sed '\''s/-dirty//g'\'')' common/scripts/setlocalversion
-          git add -A
-          git commit -m "Force remove -dirty suffix from kernel version"
-
-      - name: Build kernel (Bazel for specific CPUs)
-        if: ${{ github.event.inputs.CPU == 'sm8650' || github.event.inputs.CPU == 'sm7675' }}
-        run: |
-          cd kernel_workspace
-          ./kernel_platform/build_with_bazel.py -t ${{ github.event.inputs.CPUD }} ${{ github.event.inputs.BUILD_METHOD }}
-
-      - name: Fallback build kernel (oplus script for other CPUs)
-        if: ${{ github.event.inputs.CPU != 'sm8650' && github.event.inputs.CPU != 'sm7675' }}
-        run: |
-          cd kernel_workspace
-          LTO=thin ./kernel_platform/oplus/build/oplus_build_kernel.sh ${{ github.event.inputs.CPUD }} ${{ github.event.inputs.BUILD_METHOD }}
-
-      - name: Find kernel output
-        run: |
-          KERNEL_OUTPUT=$(find kernel_workspace/out -name "Image" -type f -print -quit)
-          if [ -n "$KERNEL_OUTPUT" ]; then
-            echo "KERNEL_OUTPUT=$KERNEL_OUTPUT" >> $GITHUB_ENV
-          else
-            echo "Error: Kernel Image not found!"
-            exit 1
-          fi
-
-      - name: Upload kernel
-        uses: actions/upload-artifact@v4
-        with:
-          name: kernel-${{ github.event.inputs.CPU }}-${{ github.event.inputs.FEIL }}-${{ github.event.inputs.CPUD }}-${{ github.event.inputs.BUILD_METHOD }}
-          path: ${{ env.KERNEL_OUTPUT }}
 
       - name: Upload sync size
         uses: actions/upload-artifact@v4
