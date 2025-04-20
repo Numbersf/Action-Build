@@ -1,4 +1,4 @@
-name: Sync OnePlus Kernel
+name: Sync OnePlus Kernel test 3
 
 on:
   workflow_dispatch:
