@@ -5,23 +5,23 @@ on:
       CPU:
         description: "分支"
         required: true
-        default: 'sm8550'
+        default: 'sm8650'
       FEIL:
         description: "配置文件"
         required: true
-        default: 'oneplus_ace2pro_v'
+        default: 'oneplus_ace5'
       CPUD:
         description: "处理器代号"
         required: true
-        default: 'kalama'
+        default: 'pineapple'
       ANDROID_VERSION:
         description: "内核安卓版本"
         required: true
-        default: 'android13'
+        default: 'android14'
       KERNEL_VERSION:
         description: "内核版本"
         required: true
-        default: '5.15'
+        default: '6.1'
       SUSFS_CI:
         description: "SUSFS模块下载是否调用CI？"
         required: true
@@ -85,7 +85,7 @@ jobs:
           sed -i 's/ -dirty//g' common/scripts/setlocalversion
           sed -i 's/ -dirty//g' msm-kernel/scripts/setlocalversion
           sed -i 's/ -dirty//g' external/dtc/scripts/setlocalversion
-          sed -i '$i res=$(echo "$res" | sed '\''s/-dirty//g'\'')' common/scripts/setlocalversion
+          sed -i '$i res=$(echo "-灰蝙蝠🦇" | sed '\''s/-dirty//g'\'')' common/scripts/setlocalversion
           git add -A
           git commit -m "Force remove -dirty suffix from kernel version"
 
