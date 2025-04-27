@@ -3,43 +3,98 @@ on:
   workflow_dispatch:
     inputs:
       CPU:
+        type: choice
         description: "分支"
         required: true
-        default: 'sm8750'
+        default: sm8550
+        options:
+          - sm7550
+          - sm7675
+          - sm8450
+          - sm8475
+          - sm8550
+          - sm8650
+          - sm8750
       FEIL:
+        type: choice
         description: "配置文件"
         required: true
-        default: 'oneplus_ace5_pro'
+        default: oneplus_ace2pro_v
+        options:
+          - oneplus_nord_ce4_v
+          - oneplus_ace_3v_v
+          - oneplus_nord_4_v
+          - oneplus_10_pro_v
+          - oneplus_10t_v
+          - oneplus_11r_v
+          - oneplus_ace2_v
+          - oneplus_ace_pro_v
+          - oneplus_11_v
+          - oneplus_12r_v
+          - oneplus_ace2pro_v
+          - oneplus_ace3_v
+          - oneplus_open_v
+          - oneplus12_v
+          - oneplus_13r
+          - oneplus_ace3_pro_v
+          - oneplus_ace5
+          - oneplus_pad2_v
+          - oneplus_13
+          - oneplus_ace5_pro
+          - GitHub有bug可能不显示最后一项,误使用此项
       CPUD:
+        type: choice
         description: "处理器代号"
         required: true
-        default: 'sun'
+        default: kalama
+        options:
+          - crow
+          - waipio
+          - kalama
+          - pineapple
+          - sun
       ANDROID_VERSION:
+        type: choice
         description: "内核安卓版本"
         required: true
-        default: 'android15'
+        default: android13
+        options:
+          - android12
+          - android13
+          - android14
+          - android15
       KERNEL_VERSION:
-        description: "内核版本"
-        required: true
-        default: '6.6'
+       type: choice
+       description: "内核版本"
+       required: true
+       default: "5.15"
+       options:
+         - "5.10"
+         - "5.15"
+         - "6.1"
+         - "6.6"
       BUILD_METHOD:
-        description: "编译方式gki？perf？"
+        type: choice
+        description: "编译方式"
         required: true
-        default: 'gki'
+        default: gki
+        options:
+          - gki
+          - perf
       SUSFS_CI:
+        type: boolean
         description: "SUSFS模块下载是否调用CI？"
         required: true
-        type: boolean
         default: true
       LZ4:
+        type: boolean
         description: "是否启用lz4？"
         required: true
-        type: boolean
         default: false
       VFS:
+        type: boolean
         description: "是否启用VFS？"
         required: true
-        type: boolean
         default: true
 
 jobs:
@@ -68,6 +123,18 @@ jobs:
           sudo apt update && sudo apt upgrade -y
           sudo apt install -y python3 git curl
 
+      - name: Show selected inputs debug
+        run: |
+          echo "Selected CPU: ${{ github.event.inputs.CPU }}"
+          echo "Selected FEIL: ${{ github.event.inputs.FEIL }}"
+          echo "Selected CPUD: ${{ github.event.inputs.CPUD }}"
+          echo "Selected ANDROID_VERSION: ${{ github.event.inputs.ANDROID_VERSION }}"
+          echo "Selected KERNEL_VERSION: ${{ github.event.inputs.KERNEL_VERSION }}"
+          echo "Selected BUILD_METHOD: ${{ github.event.inputs.BUILD_METHOD }}"
+          echo "Selected SUSFS_CI: ${{ github.event.inputs.SUSFS_CI }}"
+          echo "Selected LZ4: ${{ github.event.inputs.LZ4 }}"
+          echo "Selected VFS: ${{ github.event.inputs.VFS }}"
+
       - name: Install repo tool
         run: |
           curl https://storage.googleapis.com/git-repo-downloads/repo > ~/repo
@@ -79,6 +146,8 @@ jobs:
           mkdir kernel_workspace && cd kernel_workspace
           repo init -u https://github.com/OnePlusOSS/kernel_manifest.git -b refs/heads/oneplus/${{ github.event.inputs.CPU }} -m ${{ github.event.inputs.FEIL }}.xml --depth=1
           repo sync
+          rm kernel_platform/common/android/abi_gki_protected_exports_* || echo "No protected exports!"
+          rm kernel_platform/msm-kernel/android/abi_gki_protected_exports_* || echo "No protected exports!"
 
       # 删除 -dirty 后缀
       - name: Force remove -dirty suffix
@@ -286,7 +355,7 @@ jobs:
           fi
 
           # 可选复制其它新文件（如果存在）
-          if [ "${{ github.event.inputs.CPU }}" = "sm8750" ]; then
+          if [ "${{ github.event.inputs.CPUD }}" = "sm8750" ]; then
           for file in dtbo.img system_dlkm.erofs.img vendor_dlkm.img vendor_boot.img; do
             if [ -f "$dir1$file" ]; then
               target_name="$file"
@@ -316,7 +385,13 @@ jobs:
         if: ${{ github.event.inputs.SUSFS_CI == 'true' }}
         run: |
           LATEST_RUN_ID=$(curl -s -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
-            "https://api.github.com/repos/sidex15/susfs4ksu-module/actions/runs?status=success" | jq -r '.workflow_runs[0].id')
+            "https://api.github.com/repos/sidex15/susfs4ksu-module/actions/runs?status=success" | \
+            jq -r '.workflow_runs[] | select(.head_branch == "v1.5.2+") | .id' | head -n 1)
+
+          if [ -z "$LATEST_RUN_ID" ]; then
+            echo "No successful run found for branch v1.5.2+"
+            exit 1
+          fi
 
           ARTIFACT_URL=$(curl -s -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
             "https://api.github.com/repos/sidex15/susfs4ksu-module/actions/runs/$LATEST_RUN_ID/artifacts" | jq -r '.artifacts[0].archive_download_url')
@@ -336,8 +411,16 @@ jobs:
         run: |
           echo "value=${{ github.event.inputs.VFS == 'true' && '_VFS' || '' }}${{ github.event.inputs.LZ4 == 'true' && '_LZ4KD' || '' }}" >> $GITHUB_OUTPUT
 
+      - name: Remove _uv suffix from FEIL
+        id: feil_clean
+        run: |
+          clean_feil="${{ github.event.inputs.FEIL }}"
+          clean_feil="${clean_feil%_v}"  # 去掉结尾的 _v（如果有）
+          clean_feil="${clean_feil%_u}"  # 去掉结尾的 _u（如果有）
+          echo "value=$clean_feil" >> $GITHUB_OUTPUT
+
       - name: Upload AnyKernel3
         uses: actions/upload-artifact@v4
         with:
-          name: AnyKernel3_SukiSUUltra_${{ env.KSUVER }}_${{ github.event.inputs.FEIL }}${{ steps.suffix.outputs.value }}
+          name: AnyKernel3_SukiSUUltra_${{ env.KSUVER }}_${{ steps.feil_clean.outputs.value }}_KPM${{ steps.suffix.outputs.value }}
           path: ./AnyKernel3/*
