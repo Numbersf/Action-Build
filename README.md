@@ -9,12 +9,15 @@
  
 配置文件中的``_x``后缀是你正在使用系统版本。``_v``是``Android15``、``_u``是``Android14``、``_t``是``Android13``、无后缀一般是一个机型出厂``Android``版本。
  
-部分设备的``lz4kd``存在问题,修复中,**跑不出来请先不要启用``ZRAM算法``**
+部分设备的``lz4kd``存在问题,修复中,**跑不出来请先不要启用``ZRAM算法``**,请提前备份``boot``分区!
+ 
+``OnePlus Ace5Pro(ColorOS)OnePlus 13(ColorOS)``需要特殊处理并替换``dtbo.img``
  
 记得**音量下**安装模块
  
 # 更新日志
---允许自定义内核后缀  <**`beta`**  
+--暂时性修复`OnePlus Ace5Pro、OnePlus 13`跑不出来的问题  
+--允许自定义内核后缀  <- **`beta`**  
 ```
 1.当自定义内核后缀为空时,使用随机字符串,不再是默认的“x.xx.xxx-androidxx-8-o-g3b1e97b8b29f”
 2.当自定义启用时,修改内核为“x.xx.xxx-androidxx-自定义内容”,同时也不再保留androidxx-8-o-g3b1e97b8b29f
