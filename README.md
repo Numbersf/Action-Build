@@ -16,7 +16,7 @@
 记得**音量下**安装模块
  
 # 更新日志
---暂时性修复`OnePlus Ace5Pro、OnePlus 13`跑不出来的问题  
+--暂时性修复`OnePlus Ace5Pro、OnePlus 13`跑不出来的问题[@reigadegr](https://github.com/reigadegr)   
 --允许自定义内核后缀  <- **`beta`**  
 ```
 1.当自定义内核后缀为空时,使用随机字符串,不再是默认的“x.xx.xxx-androidxx-8-o-g3b1e97b8b29f”
@@ -27,8 +27,8 @@
 ```
 AnyKernel3_SukiSUUltra_12866_oneplus_ace2pro_Android15_KPM_VFS.zip
 ```
---新增 `dir4`、`dir5` 路径用于支持 `sm8750` 和部分机型开启 ZRAM 后的新路径（比如 `ace2p`、`13T`）  
---添加 `zram` 模块的 `LZ4K` 压缩算法支持  
+--新增 `dir4`、`dir5` 路径用于支持 `sm8750` 和部分机型开启 ZRAM 后的新路径（比如 `ace2p`、`13T`）[@ShirkNeko](https://github.com/ShirkNeko)  
+--添加 `zram` 模块的 `LZ4K` 压缩算法支持 [@ShirkNeko](https://github.com/ShirkNeko) 
 --移除配置文件后缀可能存在的 `_v` 或 `_u`  
 --同步 `susfs` 模块上游下载频道的变化，解决无法下载的问题  
 --优化 `sm8750`、`sm7675` 的 `build` 方案  
