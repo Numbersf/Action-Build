@@ -50,7 +50,7 @@ on:
         default: kalama
         options:
           - crow
-          - waipio
+          - cape/waipio
           - kalama
           - pineapple
           - sun
