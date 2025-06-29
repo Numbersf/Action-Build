@@ -531,31 +531,26 @@ jobs:
           fi
 
       - name: Enable lto=thin For FAST
-        if: ${{ (needs.get-config.outputs.KERNEL_VERSION == '5.10' || needs.get-config.outputs.KERNEL_VERSION == '5.15') && github.event.inputs.FAST_BUILD == 'true' }}
+        if: ${{ (needs.get-config.outputs.KERNEL_VERSION == '5.10' || needs.get-config.outputs.KERNEL_VERSION == '5.15' || needs.get-config.outputs.KERNEL_VERSION == '6.1') && github.event.inputs.FAST_BUILD == 'true' }}
         run: |
           cd kernel_workspace/kernel_platform
-
           DEFCONFIG=./common/arch/arm64/configs/gki_defconfig
-
+          if [[ ! -f "$DEFCONFIG" ]]; then
+            echo "Error: $DEFCONFIG not found!"
+            exit 1
+          fi
           echo "Enabling ThinLTO in $DEFCONFIG"
-
-          # 开启 CONFIG_LTO
           sed -i 's/^CONFIG_LTO=n/CONFIG_LTO=y/' "$DEFCONFIG"
-
-          # 替换 FULL/NONE 为 THIN，防止冲突
           sed -i 's/^CONFIG_LTO_CLANG_FULL=y/CONFIG_LTO_CLANG_THIN=y/' "$DEFCONFIG"
           sed -i 's/^CONFIG_LTO_CLANG_NONE=y/CONFIG_LTO_CLANG_THIN=y/' "$DEFCONFIG"
-
-          # 添加 THIN（若未设置）
           grep -q '^CONFIG_LTO_CLANG_THIN=y' "$DEFCONFIG" || echo 'CONFIG_LTO_CLANG_THIN=y' >> "$DEFCONFIG"
-
+          echo "ThinLTO enabled successfully"
+      
       - name: Build Kernel FAST
         if: ${{ github.event.inputs.FAST_BUILD == 'true' }}
         id: fast_build
         run: |
           KERNEL_VERSION="${{ needs.get-config.outputs.KERNEL_VERSION }}"
-
-          # 判断内核版本并设置对应 clang 路径
           if [[ "$KERNEL_VERSION" == "6.6" ]]; then
             CLANG_PATH="clang-r510928"
             CLANG_DIR="prebuilts"
@@ -571,43 +566,26 @@ jobs:
             USE_LLVM_IAS=true
           else
             echo "fallback=true" >> "$GITHUB_OUTPUT"
-            echo "⚠️ 当前内核版本 \"$KERNEL_VERSION\" 没有对应 clang 工具链，回退使用官方构建脚本"
-            echo "请考虑关闭 FAST_BUILD 或补充该版本 clang 路径"
+            echo "⚠️ The current kernel version \"$KERNEL_VERSION\" does not have a corresponding clang toolchain, falling back to using the official build script"
             exit 0
           fi
-
           export PATH="$GITHUB_WORKSPACE/kernel_workspace/kernel_platform/$CLANG_DIR/clang/host/linux-x86/$CLANG_PATH/bin:$PATH"
           export PATH="/usr/lib/ccache:$PATH"
           export CC="ccache clang"
-
-          # 安装依赖工具
           sudo apt install -y libelf-dev ccache
-
           cd kernel_workspace/kernel_platform/common
-
-          # 拼接构建参数
-          MAKE_ARGS="LLVM=1 ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- \
-            RUSTC=../../prebuilts/rust/linux-x86/1.73.0b/bin/rustc \
-            PAHOLE=../../prebuilts/kernel-build-tools/linux-x86/bin/pahole \
-            LD=ld.lld HOSTLD=ld.lld KCFLAGS+=-Wno-error"
-
-          # 如果是 5.10，添加 LLVM_IAS=1
+          MAKE_ARGS="LLVM=1 ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- RUSTC=../../prebuilts/rust/linux-x86/1.73.0b/bin/rustc PAHOLE=../../prebuilts/kernel-build-tools/linux-x86/bin/pahole LD=ld.lld HOSTLD=ld.lld KCFLAGS='-Wno-error -flto=thin'"
           if [[ "$USE_LLVM_IAS" == "true" ]]; then
             MAKE_ARGS="LLVM_IAS=1 $MAKE_ARGS"
           fi
-
-          # 可选清理 ccache 缓存（不清理可注释）
-          # ccache -C
-
-          # 配置内核
-          make -j$(nproc --all) O=out $MAKE_ARGS gki_defconfig
-
-          # 构建内核
-          make -j$(nproc --all) O=out $MAKE_ARGS
-
-          # 显示 ccache 统计信息
+          echo "MAKE_ARGS: $MAKE_ARGS"
+          env | grep -E 'KCFLAGS|MAKEFLAGS|LTO' || echo "No conflicting environment variables found"
+          echo "Executing: make -j$(nproc --all) O=out $MAKE_ARGS gki_defconfig"
+          eval "make -j$(nproc --all) O=out $MAKE_ARGS gki_defconfig" || { echo "Error: Failed to generate defconfig"; exit 1; }
+          echo "Executing: make -j$(nproc --all) O=out $MAKE_ARGS"
+          eval "make -j$(nproc --all) O=out $MAKE_ARGS" || { echo "Error: Kernel build failed"; exit 1; }
+          echo "Kernel build completed successfully"
           ccache -s
-
       - name: Fallback to Build Kernel
         if: ${{ github.event.inputs.FAST_BUILD == 'false' || steps.fast_build.outputs.fallback == 'true' }}
         run: |
