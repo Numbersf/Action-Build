@@ -6,7 +6,7 @@ on:
         type: choice
         description: "配置文件"
         required: true
-        default: oneplus_ace2_pro_v
+        default: oneplus12_v
         options:
           - oneplus_nord_ce4_lite_5g_v
           - oneplus_nord_ce4_v
@@ -48,12 +48,12 @@ on:
         type: string
         description: "分支名(不可留空)/自定义版本标识(留空不修改)"
         required: false
-        default: "susfs-main/Numbersf"
+        default: "susfs-main/"
       BUILD_TIME:
         type: string
         description: "自定义构建时间 (输入F使用当前时间)"
         required: false
-        default: "Sun Jun 15 14:56:02 UTC 2025"
+        default: "F"
       SUFFIX:
         type: string
         description: "自定义内核后缀 (不输入使用随机字符串)"
@@ -73,7 +73,7 @@ on:
         type: boolean
         description: "是否启用内核模块(KPM)？"
         required: true
-        default: true
+        default: false
       SCHED:
         type: boolean
         description: "是否添加风驰驱动？"
@@ -83,7 +83,7 @@ on:
         type: boolean
         description: "是否添加更多ZRAM算法？"
         required: true
-        default: false
+        default: true
 
 jobs:
   build:
@@ -850,7 +850,7 @@ jobs:
 
       - name: Make AnyKernel3
         run: |
-          git clone https://github.com/Numbersf/AnyKernel3 --depth=1
+          git clone https://github.com/suifengershi9/AnyKernel3 --depth=1
           rm -rf ./AnyKernel3/.git
           mkdir -p kernel_workspace/kernel_platform/out/Final-Image-Find/
           dir1=""
