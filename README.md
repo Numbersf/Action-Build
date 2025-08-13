@@ -132,6 +132,13 @@
 # 更新日志
 >小的更新内容将被忽略 更多内容请参看提交
  
+--允许修改`SUBLEVEL`,用于解决系统更新后`SUBLEVEL`改变而内核源码没有更新导致的无法开机的问题,默认关闭,默认值为`99`,有需要自行修改
+```
+6.1.75->6.1.99
+```  
+ 
+--升级`LZ4`到`1.10.0`  <- **`beta`**  
+ 
 --允许分批次每次9个运行多个工作流,`CAll Build Start UP`是一个极其危险的新工作流文件,**它没有新功能且一切保持默认不可自定义**,新工作流**禁止**普通用户使用!普通用户请使用`Build OnePlus_SukiSU Ultra All`!如果一定要用,请确保你有清除`ccache`产生的`cache`的能力,且每跑出9个**必须立即**清理掉所有机型的`cache`,否则会影响速度  
  
 --支持设置分支、自定义版本标识  
@@ -182,7 +189,7 @@ https://github.com/你的用户名(username)/你的仓库名/actions/caches
  
 --修复`OnePlus Ace5Pro、OnePlus 13`跑不出来或者无法开机问题,直接使用官方`dtbo`就可以直接开机[@reigadegr](https://github.com/reigadegr)  
  
---支持显示自己填入的内容在`Show selected inputs debug`这一步,同时工作流名称也可以看到一些东西  
+--支持显示自己填入的内容在`Debug Show Selected Inputs`这一步,同时工作流名称也可以看到一些东西  
  
 --从写入 `Anykernel3.zip` 的配置文件后缀中删除潜在的版本代码,替换成精确的 `Android` 版本号`XX.X.X`
 ```
