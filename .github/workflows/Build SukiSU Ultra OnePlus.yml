@@ -815,39 +815,63 @@ jobs:
         id: fast_build
         run: |
           KERNEL_VERSION="${{ env.KERNEL_VERSION }}"
-          if [[ "$KERNEL_VERSION" == "6.6" ]]; then
-            CLANG_PATH="clang-r510928"
-            CLANG_DIR="prebuilts"
-          elif [[ "$KERNEL_VERSION" == "6.1" ]]; then
-            CLANG_PATH="clang-r487747c"
-            CLANG_DIR="prebuilts"
-          elif [[ "$KERNEL_VERSION" == "5.15" ]]; then
-            CLANG_PATH="clang-r450784e"
-            CLANG_DIR="prebuilts"
-          elif [[ "$KERNEL_VERSION" == "5.10" ]]; then
-            CLANG_PATH="clang-r416183b"
-            CLANG_DIR="prebuilts-master"
-          else
+          cd kernel_workspace/kernel_platform
+
+          # 自动检测 LLVM_IAS
+          if grep -q '^LLVM_IAS=1' ./common/build.config.arm; then
+            export USE_LLVM_IAS=true
+          fi
+
+          # 从 build.config.common 读取 CLANG_PREBUILT_BIN
+          CLANG_PREBUILT_BIN=$(grep '^CLANG_PREBUILT_BIN=' ./common/build.config.common | cut -d'=' -f2 || true)
+          if [[ -z "$CLANG_PREBUILT_BIN" ]]; then
+            echo "⚠️ CLANG_PREBUILT_BIN 未在 build.config.common 中找到，回退至官方构建脚本"
             echo "fallback=true" >> "$GITHUB_OUTPUT"
-            echo "⚠️ 当前内核版本 \"$KERNEL_VERSION\" 没有对应 clang 工具链，回退使用官方构建脚本"
-            echo "请考虑关闭 FAST_BUILD 或补充该版本 clang 路径"
+            echo "请考虑关闭 FAST_BUILD 并提交问题"
             exit 0
           fi
-          export PATH="$GITHUB_WORKSPACE/kernel_workspace/kernel_platform/$CLANG_DIR/clang/host/linux-x86/$CLANG_PATH/bin:$PATH"
+
+          # 优先尝试从 CLANG_PREBUILT_BIN 提取 clang-r 版本
+          if [[ "$CLANG_PREBUILT_BIN" =~ (clang-r[0-9a-z]+) ]]; then
+            CLANG_VERSION="${BASH_REMATCH[1]}"
+          else
+            # 如果未匹配到，尝试从 build.config.constants 读取
+            if [[ -f ./common/build.config.constants ]]; then
+              CLANG_VERSION=$(grep '^CLANG_VERSION=' ./common/build.config.constants | cut -d'=' -f2 || true)
+            fi
+          fi
+
+          if [[ -z "$CLANG_VERSION" ]]; then
+            echo "⚠️ 未能从 CLANG_PREBUILT_BIN 或 build.config.constants 获取到 Clang 版本，回退至官方构建脚本"
+            echo "fallback=true" >> "$GITHUB_OUTPUT"
+            echo "请考虑关闭 FAST_BUILD 并提交问题"
+            exit 0
+          fi
+
+          CLANG_PREBUILT_BIN=${CLANG_PREBUILT_BIN/\$\{CLANG_VERSION\}/$CLANG_VERSION}
+          CLANG_DIR=$(echo "$CLANG_PREBUILT_BIN" | cut -d'/' -f1)
+          CLANG_PATH=$(basename "$(dirname "$CLANG_PREBUILT_BIN")")
+
+          echo "✅ CLANG_VERSION=$CLANG_VERSION"
+          echo "✅ CLANG_DIR=$CLANG_DIR"
+          echo "✅ CLANG_PATH=$CLANG_PATH"
+          echo "✅ USE_LLVM_IAS=${USE_LLVM_IAS:-false}"
+
+          export PATH="$GITHUB_WORKSPACE/kernel_workspace/kernel_platform/$CLANG_PREBUILT_BIN:$PATH"
           export PATH="/usr/lib/ccache:$PATH"
           export CC="ccache clang"
           sudo apt install -y libelf-dev ccache
 
-          cd kernel_workspace/kernel_platform
+          cd ./common
           # 强制修改 SUBLEVEL，默认关闭
-          # sed -i 's/^SUBLEVEL[[:space:]]*=[[:space:]]*.*/SUBLEVEL = 99/' ./common/Makefile
+          # sed -i 's/^SUBLEVEL[[:space:]]*=[[:space:]]*.*/SUBLEVEL = 99/' Makefile
 
           MAKE_ARGS="LLVM=1 ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- \
             RUSTC=../../prebuilts/rust/linux-x86/1.73.0b/bin/rustc \
             PAHOLE=../../prebuilts/kernel-build-tools/linux-x86/bin/pahole \
             LD=ld.lld HOSTLD=ld.lld KCFLAGS+=-Wno-error"
 
-          if grep -q '^LLVM_IAS=1' ./common/build.config.arm; then
+          if [[ "$USE_LLVM_IAS" == "true" ]]; then
             MAKE_ARGS="LLVM_IAS=1 $MAKE_ARGS"
           fi
 
