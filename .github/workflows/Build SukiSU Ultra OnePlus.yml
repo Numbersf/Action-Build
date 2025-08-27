@@ -608,77 +608,6 @@ jobs:
           patch -p1 -F 3 < lz4k_oplus.patch || true
           echo 'lz4k_oplus_patch完成'
 
-      - name: Upgrade LZ4
-        run: |
-          LZ4_VERSION="1.10.0"
-          LZ4_DOWNLOAD_URL="https://github.com/lz4/lz4/archive/refs/tags/v${LZ4_VERSION}.tar.gz"
-          cd kernel_workspace/kernel_platform/common
-          mkdir -p lz4_temp && cd lz4_temp
-          echo "下载LZ4 ${LZ4_VERSION}源码..."
-          curl -Ls "${LZ4_DOWNLOAD_URL}" -o lz4.tar.gz
-          tar -zxf lz4.tar.gz --strip-components=1
-
-          # 复制文件并使用独立命名，避免与LZ4K冲突
-          echo "复制LZ4文件到内核目录..."
-          # 源码文件（添加"lz4v2_"前缀）
-          cp lib/lz4.c ../lib/lz4v2_core.c
-          cp lib/lz4.h ../lib/lz4v2_core.h
-          cp lib/lz4hc.c ../lib/lz4v2_hc.c
-          cp lib/lz4hc.h ../lib/lz4v2_hc.h
-          # 头文件（放在独立路径）
-          mkdir -p ../include/linux/lz4v2
-          cp lib/lz4.h ../include/linux/lz4v2/lz4.h
-          cp lib/lz4hc.h ../include/linux/lz4v2/lz4hc.h
-
-          # 全局重命名函数和宏（彻底隔离命名空间）
-          echo "重命名符号以避免冲突..."
-          # 核心压缩函数重命名
-          sed -i 's/LZ4_compress_default/lz4v2_compress_default/g' ../lib/lz4v2_core.c ../lib/lz4v2_core.h
-          sed -i 's/LZ4_decompress_safe/lz4v2_decompress_safe/g' ../lib/lz4v2_core.c ../lib/lz4v2_core.h
-          # HC高压缩函数重命名
-          sed -i 's/LZ4_compress_HC/lz4v2_compress_HC/g' ../lib/lz4v2_hc.c ../lib/lz4v2_hc.h
-          # 内部宏和辅助函数重命名
-          sed -i 's/LZ4_/LZ4V2_/g' ../lib/lz4v2_core.c ../lib/lz4v2_core.h ../lib/lz4v2_hc.c ../lib/lz4v2_hc.h
-          
-          # 添加内核兼容性适配
-          echo "添加内核适配代码..."
-          # 引入内核必要头文件
-          sed -i '1i#include <linux/types.h>' ../lib/lz4v2_core.c
-          sed -i '2i#include <linux/kernel.h>' ../lib/lz4v2_core.c
-          sed -i '3i#include <linux/module.h>' ../lib/lz4v2_core.c
-          # HC文件同样处理
-          sed -i '1i#include <linux/types.h>' ../lib/lz4v2_hc.c
-          sed -i '2i#include <linux/kernel.h>' ../lib/lz4v2_hc.c
-          sed -i '3i#include <linux/module.h>' ../lib/lz4v2_hc.c
-
-          # 添加模块声明（符合内核规范）
-          echo "添加模块元数据..."
-          cat >> ../lib/lz4v2_core.c << 'EOF'
-          MODULE_LICENSE("GPL");
-          MODULE_DESCRIPTION("LZ4 1.10.0 Compression (v2)");
-          MODULE_AUTHOR("LZ4 Project");
-          EXPORT_SYMBOL(lz4v2_compress_default);
-          EXPORT_SYMBOL(lz4v2_decompress_safe);
-          EOF
-
-          cat >> ../lib/lz4v2_hc.c << 'EOF'
-          MODULE_LICENSE("GPL");
-          MODULE_DESCRIPTION("LZ4HC 1.10.0 Compression (v2)");
-          MODULE_AUTHOR("LZ4 Project");
-          EXPORT_SYMBOL(lz4v2_compress_HC);
-          EOF
-
-          # 更新Makefile确保编译（独立于LZ4K）
-          echo "更新Makefile配置..."
-          if ! grep -q "lz4v2_core.o" ../lib/Makefile; then
-            echo "obj-\$(CONFIG_LZ4V2_COMPRESS) += lz4v2_core.o" >> ../lib/Makefile
-            echo "obj-\$(CONFIG_LZ4V2_COMPRESS) += lz4v2_hc.o" >> ../lib/Makefile
-          fi
-
-          # 清理临时文件
-          cd .. && rm -rf lz4_temp
-          echo "LZ4 ${LZ4_VERSION}集成完成（与LZ4K兼容）"
-
       # 配置信息,带*为附加项目,具有一定危险性和不确定性
       - name: Add Configuration Settings
         run: |
@@ -750,14 +679,6 @@ jobs:
             echo "CONFIG_CRYPTO_842=y" >> "$CONFIG_FILE"
             echo "CONFIG_CRYPTO_LZ4K_OPLUS=y" >> "$CONFIG_FILE"
             echo "CONFIG_ZRAM_WRITEBACK=y" >> "$CONFIG_FILE"
-          fi
-
-          # LZ4 1.10.0
-          echo "CONFIG_LZ4V2_COMPRESS=y" >> "$CONFIG_FILE"
-          echo "CONFIG_LZ4V2_HC=y" >> "$CONFIG_FILE"
-          echo "CONFIG_LZ4V2_DEBUG=n" >> "$CONFIG_FILE"
-          if [ "${{ github.event.inputs.ZRAM }}" = "true" ]; then
-            echo "CONFIG_ZRAM_LZ4V2=y" >> "$CONFIG_FILE"
           fi
 
           # 移除构建审查
