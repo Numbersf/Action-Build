@@ -112,40 +112,11 @@ jobs:
           remove-haskell: 'true'
           remove-codeql: 'true'
 
-      - name: Auto Extract
+      - name: Extract OnePlus Manifest Info
         id: extract_info
         run: |
           set -e
           cd "$GITHUB_WORKSPACE"
-          declare -A KVERSION_MAP=(
-            ["oneplus_nord_ce4_lite_5g"]="android14 6.1"
-            ["oneplus_nord_ce4"]="android14 5.15"
-            ["oneplus_nord_4"]="android14 6.1"
-            ["oneplus_ace_3v"]="android14 6.1"
-            ["oneplus_10_pro"]="android12 5.10"
-            ["oneplus_10t"]="android12 5.10"
-            ["oneplus_11r"]="android12 5.10"
-            ["oneplus_ace2"]="android12 5.10"
-            ["oneplus_ace_pro"]="android12 5.10"
-            ["oneplus_11"]="android13 5.15"
-            ["oneplus_12r"]="android13 5.15"
-            ["oneplus_ace2_pro"]="android13 5.15"
-            ["oneplus_ace3"]="android13 5.15"
-            ["oneplus_open"]="android13 5.15"
-            ["oneplus12"]="android14 6.1"
-            ["oneplus_13r"]="android14 6.1"
-            ["oneplus_ace3_pro"]="android14 6.1"
-            ["oneplus_ace5"]="android14 6.1"
-            ["oneplus_pad_pro"]="android14 6.1"
-            ["oneplus_pad2"]="android14 6.1"
-            ["oneplus_nord_5"]="android14 6.1"
-            ["oneplus_ace5_pro"]="android15 6.6"
-            ["oneplus_13"]="android15 6.6"
-            ["oneplus_13t"]="android15 6.6"
-            ["oneplus_13s"]="android15 6.6"
-            ["oneplus_pad_2_pro"]="android15 6.6"
-            ["oneplus_pad_3"]="android15 6.6"
-          )
           FILE="${{ github.event.inputs.FILE }}"
           if [[ "$FILE" =~ ^(.+)_([a-zA-Z])$ ]]; then
             FILE_CONF="${BASH_REMATCH[1]}"
@@ -200,16 +171,6 @@ jobs:
             exit 1
           fi
 
-          echo "解析 KVERSION_MAP 获取 KANDROID_VERSION 和 KERNEL_VERSION..."
-          if [[ -n "${KVERSION_MAP[$FILE_CONF]}" ]]; then
-            read -r KANDROID_VERSION KERNEL_VERSION <<< "${KVERSION_MAP[$FILE_CONF]}"
-            echo "✅ KVERSION_MAP[$FILE_CONF] = $KANDROID_VERSION $KERNEL_VERSION"
-            echo "KANDROID_VERSION=$KANDROID_VERSION" >> $GITHUB_ENV
-            echo "KERNEL_VERSION=$KERNEL_VERSION" >> $GITHUB_ENV
-          else
-            echo "❌ KVERSION_MAP 中没有找到 $FILE_CONF 对应的版本信息"
-          fi
-
           echo "解析 README.md 获取 CPUD 和 BUILD_METHOD..."
           if [[ -s "$README_PATH" ]]; then
             BUILD_LINE=$(grep -m1 'oplus_build_kernel.sh' "$README_PATH" || true)
@@ -233,9 +194,7 @@ jobs:
           echo "-----------------------"
           echo "Selected CPU: ${{ env.CPU }}"
           echo "Selected CPUD: ${{ env.CPUD }}"
-          echo "Selected KANDROID_VERSION: ${{ env.KANDROID_VERSION }}"
           echo "Selected ANDROID_VERSION: ${{ env.ANDROID_VERSION }}"
-          echo "Selected KERNEL_VERSION: ${{ env.KERNEL_VERSION }}"
           echo "Selected BUILD_METHOD: ${{ env.BUILD_METHOD }}"
           echo "Selected FILE: ${{ github.event.inputs.FILE }}"
           echo "Custom KSU_META: ${{ github.event.inputs.KSU_META }}"
@@ -354,13 +313,28 @@ jobs:
           rm kernel_platform/common/android/abi_gki_protected_exports_* || echo "No protected exports!"
           rm kernel_platform/msm-kernel/android/abi_gki_protected_exports_* || echo "No protected exports!"
 
-      - name: Spoofing Kernel Version
+      - name: Kernel Version Handling
         run: |
           cd kernel_workspace/kernel_platform
-          # 读取原始版本
+          # 获取内核 Android 版本号(KANDROID_VERSION)以及内核版本号(KERNEL_VERSION)
+          for f in ./common/build.config.constants ./common/build.config.common; do
+            if [ -f "$f" ]; then
+              BRANCH=$(grep -m1 '^BRANCH=' "$f" | cut -d= -f2)
+              [ -n "$BRANCH" ] && break
+            fi
+          done
+
+          if [ -n "$BRANCH" ]; then
+            echo "KANDROID_VERSION=${BRANCH%-*}" >> $GITHUB_ENV
+            echo "KERNEL_VERSION=${BRANCH#*-}" >> $GITHUB_ENV
+          else
+            echo "No BRANCH found in build.config files"
+          fi
+
+          # 从 Makefile 获取完整内核版本号(TKERNEL_VERSION)以及可选的修改内核等级
           ORIG_VERSION=$(awk '/^VERSION =/ {v=$3} /^PATCHLEVEL =/ {p=$3} /^SUBLEVEL =/ {s=$3} END {print v"."p"."s}' ./common/Makefile)
 
-          # 强制修改 SUBLEVEL，默认关闭
+          # 强制修改 SUBLEVEL(内核等级)，默认关闭
           # sed -i 's/^SUBLEVEL[[:space:]]*=[[:space:]]*.*/SUBLEVEL = 99/' ./common/Makefile
 
           # 读取修改后的版本
