@@ -57,7 +57,7 @@ on:
         type: string
         description: "分支名(不可留空)/自定义版本标识(留空不修改)"
         required: false
-        default: ""
+        default: "susfs-main/"
       BUILD_TIME:
         type: string
         description: "自定义构建时间 (输入F使用当前时间)"
