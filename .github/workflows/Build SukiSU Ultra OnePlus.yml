@@ -917,11 +917,17 @@ jobs:
         run: |
           echo "value=${{ github.event.inputs.ZRAM == 'true' && '_LZ4KD' || '' }}${{ github.event.inputs.KPM == 'true' && '_KPM' || '' }}${{ github.event.inputs.HOOK == 'kprobe' && '_KP' || github.event.inputs.HOOK == 'manual' && '_VFS' || github.event.inputs.HOOK == 'tracepoint' && '_TP' || '' }}${{ github.event.inputs.SCHED== 'true' && '_SCHED' || '' }}" >> $GITHUB_OUTPUT
 
-      - name: Upload AnyKernel3
+      - name: Create AnyKernel3 zip
+        run: |
+          cd ./AnyKernel3
+          zip -r ../AnyKernel3_SukiSUUltra_${{ env.KSUVER }}_${{ steps.extract_info.outputs.value }}(${{ env.TKERNEL_VERSION }})${{ steps.suffix.outputs.value }}.zip ./*
+          cd ..
+      
+      - name: Upload AnyKernel3 zip
         uses: actions/upload-artifact@v4
         with:
-          name: AnyKernel3_SukiSUUltra_${{ env.KSUVER }}_${{ steps.extract_info.outputs.value }}(${{ env.TKERNEL_VERSION }})${{ steps.suffix.outputs.value }}
-          path: ./AnyKernel3/*
+          name: AnyKernel3_SukiSUUltra_${{ env.KSUVER }}_${{ steps.extract_info.outputs.value }}(${{ env.TKERNEL_VERSION }})${{ steps.suffix.outputs.value }}.zip
+          path: ./AnyKernel3_SukiSUUltra_${{ env.KSUVER }}_${{ steps.extract_info.outputs.value }}(${{ env.TKERNEL_VERSION }})${{ steps.suffix.outputs.value }}.zip
 
       - name: Download and Unzip ZRAM
         if: ${{ github.event.inputs.ZRAM == 'true' }}
@@ -981,18 +987,25 @@ jobs:
             exit 0
           fi
 
-      - name: Upload ZRAM Module
+      - name: Create ZRAM Module zip
+        if: ${{ github.event.inputs.ZRAM == 'true' && steps.zram_find.outputs.upload != 'false' }}
+        run: |
+          cd ./ZRAM-Module
+          zip -r ../ZRAM-Module_${{ env.KERNEL_VERSION }}_${{ steps.extract_info.outputs.value }}.zip ./*
+          cd ..
+      
+      - name: Upload ZRAM Module zip
         if: ${{ github.event.inputs.ZRAM == 'true' && steps.zram_find.outputs.upload != 'false' }}
         uses: actions/upload-artifact@v4
         with:
-          name: ZRAM-Module_${{ env.KERNEL_VERSION }}_${{ steps.extract_info.outputs.value }}
-          path: ZRAM-Module/*
+          name: ZRAM-Module_${{ env.KERNEL_VERSION }}_${{ steps.extract_info.outputs.value }}.zip
+          path: ./ZRAM-Module_${{ env.KERNEL_VERSION }}_${{ steps.extract_info.outputs.value }}.zip
 
       - name: Set outputs for release
         id: set_outputs
         run: |
-          echo "anykernel_name=AnyKernel3_SukiSUUltra_${{ env.KSUVER }}_${{ steps.extract_info.outputs.value }}(${{ env.TKERNEL_VERSION }})${{ steps.suffix.outputs.value }}" >> $GITHUB_OUTPUT
-          echo "zram_name=ZRAM-Module_${{ env.KERNEL_VERSION }}_${{ steps.extract_info.outputs.value }}" >> $GITHUB_OUTPUT
+          echo "anykernel_name=AnyKernel3_SukiSUUltra_${{ env.KSUVER }}_${{ steps.extract_info.outputs.value }}(${{ env.TKERNEL_VERSION }})${{ steps.suffix.outputs.value }}.zip" >> $GITHUB_OUTPUT
+          echo "zram_name=ZRAM-Module_${{ env.KERNEL_VERSION }}_${{ steps.extract_info.outputs.value }}.zip" >> $GITHUB_OUTPUT
           echo "release_name=SukiSU Ultra ${{ steps.extract_info.outputs.value }} (${{ env.TKERNEL_VERSION }})${{ steps.suffix.outputs.value }}" >> $GITHUB_OUTPUT
           echo "tag_name=v${{ env.KSUVER }}-${{ github.event.inputs.FILE }}${{ steps.suffix.outputs.value }}" >> $GITHUB_OUTPUT
 
@@ -1010,24 +1023,24 @@ jobs:
     runs-on: ubuntu-latest
     needs: build
     steps:
-      - name: Download AnyKernel3 artifact
+      - name: Download AnyKernel3 zip artifact
         uses: actions/download-artifact@v4
         with:
           name: ${{ needs.build.outputs.anykernel_name }}
-          path: ./AnyKernel3
+          path: ./
 
-      - name: Download ZRAM Module artifact
+      - name: Download ZRAM Module zip artifact
         if: ${{ github.event.inputs.ZRAM == 'true' }}
         uses: actions/download-artifact@v4
         with:
           name: ${{ needs.build.outputs.zram_name }}
-          path: ./ZRAM-Module
+          path: ./
 
       - name: Create Release
         uses: softprops/action-gh-release@v1
         with:
           tag_name: ${{ needs.build.outputs.tag_name }}
-          release_name: ${{ needs.build.outputs.release_name }}
+          name: ${{ needs.build.outputs.release_name }}
           body: |
             SukiSU Ultra Kernel for ${{ needs.build.outputs.release_name }}
             Built with GitHub Actions
@@ -1040,7 +1053,7 @@ jobs:
             - SCHED: ${{ github.event.inputs.SCHED }}
             - FAST_BUILD: ${{ github.event.inputs.FAST_BUILD }}
           files: |
-            ./AnyKernel3/*
-            ./ZRAM-Module/*
+            ./${{ needs.build.outputs.anykernel_name }}
+            ./${{ needs.build.outputs.zram_name }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
