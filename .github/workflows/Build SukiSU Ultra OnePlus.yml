@@ -919,9 +919,16 @@ jobs:
 
       - name: Create AnyKernel3 zip
         run: |
-          cd ./AnyKernel3
-          zip -r ../AnyKernel3_SukiSUUltra_${{ env.KSUVER }}_${{ steps.extract_info.outputs.value }}(${{ env.TKERNEL_VERSION }})${{ steps.suffix.outputs.value }}.zip ./*
-          cd ..
+          if [ -d "./AnyKernel3" ]; then
+            # Replace parentheses with underscores in filename to avoid shell issues
+            zip_filename="AnyKernel3_SukiSUUltra_${{ env.KSUVER }}_${{ steps.extract_info.outputs.value }}_${{ env.TKERNEL_VERSION }}_${{ steps.suffix.outputs.value }}.zip"
+            cd ./AnyKernel3
+            zip -r "../$zip_filename" ./*
+            cd ..
+          else
+            echo "Error: AnyKernel3 directory not found!"
+            exit 1
+          fi
       
       - name: Upload AnyKernel3 zip
         uses: actions/upload-artifact@v4
@@ -990,9 +997,15 @@ jobs:
       - name: Create ZRAM Module zip
         if: ${{ github.event.inputs.ZRAM == 'true' && steps.zram_find.outputs.upload != 'false' }}
         run: |
-          cd ./ZRAM-Module
-          zip -r ../ZRAM-Module_${{ env.KERNEL_VERSION }}_${{ steps.extract_info.outputs.value }}.zip ./*
-          cd ..
+          if [ -d "./ZRAM-Module" ]; then
+            zip_filename="ZRAM-Module_${{ env.KERNEL_VERSION }}_${{ steps.extract_info.outputs.value }}.zip"
+            cd ./ZRAM-Module
+            zip -r "../$zip_filename" ./*
+            cd ..
+          else
+            echo "Error: ZRAM-Module directory not found!"
+            exit 1
+          fi
       
       - name: Upload ZRAM Module zip
         if: ${{ github.event.inputs.ZRAM == 'true' && steps.zram_find.outputs.upload != 'false' }}
@@ -1004,7 +1017,7 @@ jobs:
       - name: Set outputs for release
         id: set_outputs
         run: |
-          echo "anykernel_name=AnyKernel3_SukiSUUltra_${{ env.KSUVER }}_${{ steps.extract_info.outputs.value }}(${{ env.TKERNEL_VERSION }})${{ steps.suffix.outputs.value }}.zip" >> $GITHUB_OUTPUT
+          echo "anykernel_name=AnyKernel3_SukiSUUltra_${{ env.KSUVER }}_${{ steps.extract_info.outputs.value }}_${{ env.TKERNEL_VERSION }}_${{ steps.suffix.outputs.value }}.zip" >> $GITHUB_OUTPUT
           echo "zram_name=ZRAM-Module_${{ env.KERNEL_VERSION }}_${{ steps.extract_info.outputs.value }}.zip" >> $GITHUB_OUTPUT
           echo "release_name=SukiSU Ultra ${{ steps.extract_info.outputs.value }} (${{ env.TKERNEL_VERSION }})${{ steps.suffix.outputs.value }}" >> $GITHUB_OUTPUT
           echo "tag_name=v${{ env.KSUVER }}-${{ github.event.inputs.FILE }}${{ steps.suffix.outputs.value }}" >> $GITHUB_OUTPUT
