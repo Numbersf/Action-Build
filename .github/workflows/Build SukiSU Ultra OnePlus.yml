@@ -57,7 +57,7 @@ on:
         type: string
         description: "分支名(必填)/自定义版本标识(输入F不修改)/调整提交hash(留空不修改)"
         required: false
-        default: "susfs-main/Numbersf/"
+        default: "susfs-main/⚡Ultra⚡/"
       BUILD_TIME:
         type: string
         description: "自定义构建时间 (输入F使用当前时间)"
