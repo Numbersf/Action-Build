@@ -105,13 +105,13 @@ jobs:
           inputs: |
             {
               "FILE": "${{ matrix.file }}",
-              "SUSFS_CI": "CI",
-              "KSU_META": "susfs-main/Numbersf",
+              "SUSFS_CI": "NoN",
+              "KSU_META": "susfs-main/Numbersf/",
               "BUILD_TIME": "F",
               "SUFFIX": "",
               "FAST_BUILD": "true",
-              "VFS": "true",
-              "KPM": "true",
+              "HOOK": "manual",
+              "LSM": "true",
               "SCHED": "${{ matrix.enable_sched }}",
               "ZRAM": "false"
             }
