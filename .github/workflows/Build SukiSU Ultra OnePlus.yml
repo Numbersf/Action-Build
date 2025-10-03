@@ -31,6 +31,7 @@ on:
           - oneplus_nord_5
           - oneplus_ace5_pro
           - oneplus_13
+          - oneplus_13_global
           - oneplus_13t
           - oneplus_13s
           - oneplus_pad_2_pro
@@ -55,7 +56,7 @@ on:
           - NoN
       KSU_META:
         type: string
-        description: "分支名(必填)/自定义版本标识(输入F不修改)/调整提交hash(留空不修改)"
+        description: "分支名(必填)/自定义版本标识(留空不修改)/调整提交hash(留空不修改)"
         required: false
         default: "susfs-main/⚡Ultra⚡/"
       BUILD_TIME:
@@ -77,7 +78,7 @@ on:
         type: boolean
         description: "是否启用内核层面阻止对关键分区/设备节点的非法写入(LSM)？"
         required: true
-        default: true
+        default: false
       SCHED:
         type: boolean
         description: "是否添加风驰驱动？"
@@ -452,11 +453,19 @@ jobs:
           cd kernel_workspace/kernel_platform
 
           META="${{ github.event.inputs.KSU_META }}"
+
+          # 必须包含两个分隔符（至少三个字段）
+          if [[ "$(grep -o '/' <<< "$META" | wc -l)" -lt 2 ]]; then
+            echo "错误: KSU_META 参数缺少必要的分隔符 '/'，格式应为: 分支名/自定义标识(可省略)/提交hash(可省略)"
+            exit 10
+          fi
+
+          # 解析字段：分支 / 自定义标识 / 手动 hash
           IFS='/' read -r BRANCH_NAME CUSTOM_TAG MANUAL_HASH <<< "$META"
 
           echo "分支名: $BRANCH_NAME"
-          echo "自定义版本标识: $CUSTOM_TAG"
-          [[ -n "$MANUAL_HASH" ]] && echo "手动指定 hash: $MANUAL_HASH"
+          [[ -n "$CUSTOM_TAG" ]] && echo "自定义版本标识: $CUSTOM_TAG" || echo "自定义版本标识: 未启用"
+          [[ -n "$MANUAL_HASH" ]] && echo "手动指定 hash: $MANUAL_HASH" || echo "手动指定 hash: 未启用"
 
           curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash -s "$BRANCH_NAME"
           cd ./KernelSU
@@ -470,32 +479,27 @@ jobs:
 
           KSU_API_VERSION=$(curl -fsSL "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/$BRANCH_NAME/kernel/Makefile" | \
             grep -m1 "KSU_VERSION_API :=" | awk -F'= ' '{print $2}' | tr -d '[:space:]')
-
           if [[ -z "$KSU_API_VERSION" || "$(printf '%s\n' "$KSU_API_VERSION" "3.1.7" | sort -V | head -n1)" != "3.1.7" ]]; then
             KSU_API_VERSION="3.1.7"
           fi
-
           echo "KSU_API_VERSION=$KSU_API_VERSION" >> $GITHUB_ENV
 
           GIT_HASH=$(git rev-parse --short HEAD)
           echo "GIT_HASH=$GIT_HASH"
 
+          # 组装版本号
           if [[ -n "$MANUAL_HASH" ]]; then
-            # 有手动 hash 的情况
-            if [[ "$CUSTOM_TAG" == "F" || "$CUSTOM_TAG" == "f" || -z "$CUSTOM_TAG" ]]; then
-              VERSION_FULL="v$KSU_API_VERSION-$SHORT_HASH@$BRANCH_NAME"
-            else
-              VERSION_FULL="v$KSU_API_VERSION-$CUSTOM_TAG@$BRANCH_NAME[$SHORT_HASH]"
-            fi
+            USE_HASH="$SHORT_HASH"
           else
-            # 无手动 hash，使用最新 commit
-            if [[ "$CUSTOM_TAG" == "F" || "$CUSTOM_TAG" == "f" || -z "$CUSTOM_TAG" ]]; then
-              VERSION_FULL="v$KSU_API_VERSION-$GIT_HASH@$BRANCH_NAME"
-            else
-              VERSION_FULL="v$KSU_API_VERSION-$CUSTOM_TAG@$BRANCH_NAME[$GIT_HASH]"
-            fi
+            USE_HASH="$GIT_HASH"
+          fi
+          if [[ -z "$CUSTOM_TAG" ]]; then
+            VERSION_FULL="v$KSU_API_VERSION-$USE_HASH@$BRANCH_NAME"
+          else
+            VERSION_FULL="v$KSU_API_VERSION-$CUSTOM_TAG@$BRANCH_NAME[$USE_HASH]"
           fi
 
+          # 清理并写入 Makefile 版本信息
           sed -i '/define get_ksu_version_full/,/endef/d' kernel/Makefile
           sed -i '/KSU_VERSION_API :=/d' kernel/Makefile
           sed -i '/KSU_VERSION_FULL :=/d' kernel/Makefile
@@ -602,9 +606,9 @@ jobs:
           echo "调用 manual 钩子"
           patch -p1 -F 3 < scope_min_manual_hooks_v1.5.patch
           elif [ "${{ github.event.inputs.HOOK }}" = "tracepoint" ]; then
-          cp ../../SukiSU_patch/hooks/sukisu_tracepoint_hooks_v1.1.patch ./
+          cp ../../SukiSU_patch/hooks/tracepoint_hooks.patch ./
           echo "调用 tracepoint 钩子"
-          patch -p1 -F 3 < sukisu_tracepoint_hooks_v1.1.patch
+          patch -p1 -F 3 < tracepoint_hooks.patch
           fi
 
       - name: Apply ZRAM
