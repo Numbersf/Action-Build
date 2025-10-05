@@ -4,7 +4,7 @@ on:
     inputs:
       FILE:
         type: choice
-        description: "配置文件"
+        description: "Configuration File"
         required: true
         default: oneplus_ace2_pro_v
         options:
@@ -38,7 +38,7 @@ on:
           - oneplus_pad_3
       HOOK:
         type: choice
-        description: "钩子选择"
+        description: "Hook Selection"
         required: true
         default: manual
         options:
@@ -47,7 +47,7 @@ on:
           - tracepoint
       SUSFS_CI:
         type: choice
-        description: "下载SUSFS模块调用方式"
+        description: "Download SUSFS module calling method"
         required: true
         default: NoN
         options:
@@ -56,37 +56,37 @@ on:
           - NoN
       KSU_META:
         type: string
-        description: "分支名(必填)/自定义版本标识(留空不修改)/调整提交hash(留空不修改)"
+        description: "Branch name (required) / Custom version identifier (leave blank to not modify) / Adjust commit hash (leave blank to not modify)"
         required: false
         default: "susfs-main/Numbersf/"
       BUILD_TIME:
         type: string
-        description: "自定义构建时间 (输入F使用当前时间)"
+        description: "Custom build time (type F to use current time)"
         required: false
         default: "Mon Aug 18 09:30:24 UTC 2025"
       SUFFIX:
         type: string
-        description: "自定义内核后缀 (不输入使用随机字符串)"
+        description: "Custom kernel suffix (if not entered, a random string will be used)"
         required: false
         default: ""
       FAST_BUILD:
         type: boolean
-        description: "是否启用极速构建？"
+        description: "Enable fast builds?"
         required: true
         default: true
       LSM:
         type: boolean
-        description: "是否启用内核层面阻止对关键分区/设备节点的非法写入(LSM)？"
+        description: "Is kernel-level prevention of illegal writes to critical partitions/device nodes (LSM) enabled?"
         required: true
         default: false
       SCHED:
         type: boolean
-        description: "是否添加风驰驱动？"
+        description: "Do you want to add Fengchi drive?"
         required: true
         default: false
       ZRAM:
         type: boolean
-        description: "是否添加更多ZRAM算法？"
+        description: "Will more ZRAM algorithms be added?"
         required: true
         default: false
 
