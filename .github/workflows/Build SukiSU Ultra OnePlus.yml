@@ -63,7 +63,7 @@ on:
         type: string
         description: "自定义构建时间 (输入F使用当前时间)"
         required: false
-        default: "Mon Aug 18 09:30:24 UTC 2025"
+        default: "Sun Oct 05 19:30:30 UTC 2025"
       SUFFIX:
         type: string
         description: "自定义内核后缀 (不输入使用随机字符串)"
