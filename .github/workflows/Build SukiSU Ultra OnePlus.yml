@@ -36,6 +36,7 @@ on:
           - oneplus_13s
           - oneplus_pad_2_pro
           - oneplus_pad_3
+          - oneplus_ace5_ultra
       HOOK:
         type: choice
         description: "钩子选择"
@@ -78,7 +79,7 @@ on:
         type: boolean
         description: "是否启用内核层面阻止对关键分区/设备节点的非法写入(LSM)？"
         required: true
-        default: false
+        default: true
       SCHED:
         type: boolean
         description: "是否添加风驰驱动？"
@@ -113,7 +114,7 @@ jobs:
           remove-haskell: 'true'
           remove-codeql: 'true'
 
-      - name: Extract OnePlus Manifest Info
+      - name: Extract Manifest Info
         id: extract_info
         run: |
           set -e
@@ -124,7 +125,7 @@ jobs:
           else
             FILE_CONF="$FILE"
           fi
-          FILE_BASE=$(echo "$FILE_CONF" | sed -E 's/_([a-zA-Z0-9])/\U\1/g; s/^oneplus/OnePlus/')
+          FILE_BASE=$(echo "$FILE_CONF" | sed -E 's/_([a-zA-Z0-9])/\U\1/g; s/^oneplus/OnePlus/; s/^realme/Realme/; s/^oppo/Oppo/')
           mkdir -p ".repo/manifests_fallback"
           XML_PATH=".repo/manifests_fallback/${FILE}.xml"
           README_PATH=".repo/manifests_fallback/README.md"
@@ -132,33 +133,65 @@ jobs:
           echo "FILE_CONF=$FILE_CONF" >> $GITHUB_ENV
           echo "FILE_BASE=$FILE_BASE" >> $GITHUB_ENV
 
-          echo "🌐 拉取 OnePlus Manifest 分支列表..."
-          BRANCHES=$(curl -s https://api.github.com/repos/OnePlusOSS/kernel_manifest/branches | jq -r '.[].name')
+          # 动态调用源码清单仓库,仓库优先级：1️⃣ OnePlusOSS → 2️⃣ Numbersf(可换)
+          declare -A REPOS
+          REPOS["OnePlusOSS"]="https://api.github.com/repos/OnePlusOSS/kernel_manifest"
+          REPOS["Dynamic"]="https://api.github.com/repos/Numbersf/kernel_manifest"
 
-          FOUND=""
-          for BRANCH in $BRANCHES; do
-            XML_URL="https://raw.githubusercontent.com/OnePlusOSS/kernel_manifest/$BRANCH/${FILE}.xml"
-            README_URL="https://raw.githubusercontent.com/OnePlusOSS/kernel_manifest/$BRANCH/README.md"
-            if curl -sf --head "$XML_URL" > /dev/null; then
-              echo "✅ XML: $BRANCH"
-              curl -s -o "$XML_PATH" "$XML_URL"
-              curl -s -o "$README_PATH" "$README_URL"
-              FOUND="$BRANCH"
-              break
+          FOUND_REPO=""
+          FOUND_BRANCH=""
+
+          check_repo() {
+            local OWNER=$1
+            local REPO_URL=$2
+
+            echo "🌐 尝试拉取 ${OWNER} 分支列表..."
+            BRANCHES=$(curl -s ${REPO_URL}/branches | jq -r '.[].name' || true)
+            if [[ -z "$BRANCHES" ]]; then
+              echo "⚠️ ${OWNER} 分支列表获取失败，跳过。"
+              return 1
             fi
-          done
+            for BRANCH in $BRANCHES; do
+              XML_URL="https://raw.githubusercontent.com/${OWNER}/kernel_manifest/$BRANCH/${FILE}.xml"
+              README_URL="https://raw.githubusercontent.com/${OWNER}/kernel_manifest/$BRANCH/README.md"
+              if curl -sf --head "$XML_URL" > /dev/null; then
+                echo "✅ 在 ${OWNER} 找到 ${FILE}.xml (分支: $BRANCH)"
+                curl -s -o "$XML_PATH" "$XML_URL"
+                curl -s -o "$README_PATH" "$README_URL" || true
+                FOUND_REPO="$OWNER"
+                FOUND_BRANCH="$BRANCH"
+                return 0
+              fi
+            done
+            return 1
+          }
 
-          if [[ -z "$FOUND" || ! -s "$XML_PATH" ]]; then
-            echo "❌ 无法找到 ${FILE}.xml"
+          # 默认仓库寻找文件
+          if check_repo "OnePlusOSS" "${REPOS["OnePlusOSS"]}"; then
+            echo "MANIFEST_REPO=OnePlusOSS" >> $GITHUB_ENV
+            echo "MANIFEST_BRANCH=$FOUND_BRANCH" >> $GITHUB_ENV
+          fi
+
+          # 动态仓库寻找文件
+          if [[ -z "$FOUND_REPO" ]]; then
+            DYNAMIC_URL="${REPOS["Dynamic"]}"
+            DYNAMIC_OWNER=$(echo "$DYNAMIC_URL" | sed -E 's#https://api.github.com/repos/([^/]+)/.*#\1#')
+            if check_repo "$DYNAMIC_OWNER" "$DYNAMIC_URL"; then
+              echo "MANIFEST_REPO=$DYNAMIC_OWNER" >> $GITHUB_ENV
+              echo "MANIFEST_BRANCH=$FOUND_BRANCH" >> $GITHUB_ENV
+            fi
+          fi
+
+          if [[ -z "$FOUND_REPO" || ! -s "$XML_PATH" ]]; then
+            echo "❌ 无法在动态仓库中找到 ${FILE}.xml"
             exit 1
           fi
-          echo "📥 下载完成，开始提取 revision..."
 
           # 解析 revision 字符串
           REVISION=$(grep -oP '<project[^>]+revision="\K[^"]+' "$XML_PATH" | head -n1 || true)
           echo "解析 FILE 获取 CPU 和 ANDROID_VERSION..."
           # 提取 CPU
-          CPU=$(echo "$REVISION" | sed -E 's#^oneplus/([^_]+).*#\1#')
+          CPU=$(echo "$REVISION" | sed -E 's#^(oneplus|realme|oppo)/([^_]+).*#\2#')
           # 提取 ANDROID_VERSION
           ANDROID_VERSION=$(echo "$REVISION" | grep -oP '\d{1,2}\.\d{1,2}(\.\d{1,2})?')
           if [[ -n "$CPU" && -n "$ANDROID_VERSION" ]]; then
@@ -303,7 +336,17 @@ jobs:
           mkdir -p .repo/manifests
           FILE="${{ github.event.inputs.FILE }}"
           cp "$GITHUB_WORKSPACE/.repo/manifests_fallback/${FILE}.xml" ".repo/manifests/${FILE}.xml"
-          repo init -u https://github.com/OnePlusOSS/kernel_manifest.git -b oneplus/${{env.CPU}} -m "${FILE}.xml" --repo-rev=v2.16 --depth=1 --no-clone-bundle --no-tags
+
+          MANIFEST_REPO="${{ env.MANIFEST_REPO }}"
+          MANIFEST_BRANCH="${{ env.MANIFEST_BRANCH }}"
+          CPU="${{ env.CPU }}"
+          echo "MANIFEST_REPO=$MANIFEST_REPO"
+          echo "MANIFEST_BRANCH=$MANIFEST_BRANCH"
+
+          BASE_URL="https://github.com/${MANIFEST_REPO}/kernel_manifest.git"
+
+          echo "使用 $MANIFEST_REPO 的分支 $MANIFEST_BRANCH 初始化仓库..."
+          repo init -u "$BASE_URL" -b "$MANIFEST_BRANCH" -m "${FILE}.xml" --repo-rev=v2.16 --depth=1 --no-clone-bundle --no-tags
           repo sync -c -j$(nproc) --no-clone-bundle --no-tags --force-sync
 
           for dir in kernel_platform/common kernel_platform/msm-kernel; do
@@ -669,7 +712,6 @@ jobs:
 
           # SUSFS配置
           echo "CONFIG_KSU_SUSFS=y" >> "$CONFIG_FILE"
-          echo "CONFIG_KSU_SUSFS_HAS_MAGIC_MOUNT=y" >> "$CONFIG_FILE"
           echo "CONFIG_KSU_SUSFS_SUS_PATH=y" >> "$CONFIG_FILE"
           echo "CONFIG_KSU_SUSFS_SUS_MOUNT=y" >> "$CONFIG_FILE"
           echo "CONFIG_KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT=y" >> "$CONFIG_FILE"
