@@ -271,7 +271,7 @@ jobs:
       - name: Install Dependencies + APTC
         uses: awalsh128/cache-apt-pkgs-action@latest
         with:
-          packages: python3 git curl ccache libelf-dev build-essential flex bison libssl-dev libncurses-dev liblz4-tool zlib1g-dev libxml2-utils rsync unzip gawk jq gh
+          packages: python3 git curl ccache libelf-dev build-essential flex bison libssl-dev libncurses-dev liblz4-tool zlib1g-dev libxml2-utils rsync unzip gawk jq gh dwarves
           execute_install_scripts: true
 
       - name: Restore Ccache (improved key)
@@ -353,6 +353,32 @@ jobs:
           ORIG_VERSION=$(awk '/^VERSION =/ {v=$3} /^PATCHLEVEL =/ {p=$3} /^SUBLEVEL =/ {s=$3} END {print v"."p"."s}' ./common/Makefile)
           echo "TKERNEL_VERSION=$ORIG_VERSION" >> $GITHUB_ENV
 
+      - name: Normalize kernel version string (avoid >64 chars)
+        run: |
+          set -euo pipefail
+          cd kernel_workspace/kernel_platform
+          # Disable auto suffixes to avoid -dirty/git-describe/vendor ship noise
+          echo "LOCALVERSION_AUTO=0" >> $GITHUB_ENV
+          echo "LOCALVERSION_SHIP=1" >> $GITHUB_ENV
+          # Make repo appear 'clean' to avoid -dirty (harmless if no changes)
+          git add -A || true
+          git -c user.name="CI" -c user.email="ci@example.com" commit -m "CI normalize version" || true
+          # Build a short safe LOCALVERSION: -a<android>-<1digit>g<6hex>, cap length
+          KVER="${KANDROID_VERSION:-android13}"
+          SUF_IN="${{ github.event.inputs.SUFFIX }}"
+          if [ -n "$SUF_IN" ]; then
+            SUF="$SUF_IN"
+          else
+            DIG=$(od -An -N1 -tu1 < /dev/urandom | tr -d '[:space:]' | awk '{print $1 % 10}')
+            HEX=$(od -An -N3 -tx1 /dev/urandom | tr -d ' \n')
+            SUF="${DIG}g${HEX}"
+          fi
+          SHORT_KVER="$(echo "$KVER" | sed -E 's/^android([0-9]+)/a\1/; s/[^a-z0-9]+//g')"
+          LV="-${SHORT_KVER}-${SUF}"
+          [ ${#LV} -gt 24 ] && LV="${LV:0:24}"
+          echo "LOCALVERSION_SAFE=$LV" >> $GITHUB_ENV
+          echo "Using LOCALVERSION_SAFE=$LV"
+
       - name: Prepare LOCALVERSION
         id: localver
         run: |
@@ -418,7 +444,7 @@ jobs:
           define get_ksu_version_full
           $VERSION_FULL
           endef
-          
+
           KSU_VERSION_API := $KSU_API_VERSION
           KSU_VERSION_FULL := $VERSION_FULL
           EOF
@@ -615,6 +641,19 @@ jobs:
 
           sed -i 's/check_defconfig//' ./common/build.config.gki
 
+      - name: Disable BTF when FAST (if you later decide not to install pahole)
+        if: ${{ github.event.inputs.FAST_BUILD == 'true' }}
+        run: |
+          if ! command -v pahole >/dev/null 2>&1; then
+            echo "pahole not found; disabling BTF for FAST build"
+            cd kernel_workspace/kernel_platform
+            DEFCONFIG=./common/arch/arm64/configs/gki_defconfig
+            sed -i 's/^CONFIG_DEBUG_INFO_BTF=y/CONFIG_DEBUG_INFO_BTF=n/' "$DEFCONFIG" || true
+            grep -q '^CONFIG_DEBUG_INFO_BTF=n' "$DEFCONFIG" || echo 'CONFIG_DEBUG_INFO_BTF=n' >> "$DEFCONFIG"
+          else
+            echo "pahole found; keeping BTF enabled"
+          fi
+
       - name: Custom BUILD_TIME
         shell: bash
         run: |
@@ -695,7 +734,7 @@ jobs:
           export CC="ccache clang"
 
           cd ./common
-          MAKE_ARGS="LLVM=1 ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- LD=ld.lld HOSTLD=ld.lld KCFLAGS+=-Wno-error LOCALVERSION='${{ steps.localver.outputs.value }}'"
+          MAKE_ARGS="LLVM=1 ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- LD=ld.lld HOSTLD=ld.lld KCFLAGS+=-Wno-error LOCALVERSION='${{ env.LOCALVERSION_SAFE }}' LOCALVERSION_AUTO=0 LOCALVERSION_SHIP=1"
           if [[ "$USE_LLVM_IAS" == "true" ]]; then
             MAKE_ARGS="LLVM_IAS=1 $MAKE_ARGS"
           fi
@@ -703,6 +742,12 @@ jobs:
           make -j$(nproc --all) O=out $MAKE_ARGS gki_defconfig
           make -j$(nproc --all) O=out $MAKE_ARGS
           ccache -s
+
+      - name: Prep dirs for fallback script
+        if: ${{ github.event.inputs.FAST_BUILD == 'false' || steps.fast_build.outputs.fallback == 'true' }}
+        run: |
+          mkdir -p kernel_workspace/kernel_platform/out/target/product/${{ env.CPUD }}
+          mkdir -p kernel_workspace/device/qcom/${{ env.CPUD }}-kernel
 
       - name: Fallback to Build Kernel
         if: ${{ github.event.inputs.FAST_BUILD == 'false' || steps.fast_build.outputs.fallback == 'true' }}
@@ -712,7 +757,7 @@ jobs:
             ./kernel_platform/oplus/bazel/oplus_modules_variant.sh ${{ env.CPUD }} ${{ env.BUILD_METHOD }}
             ./kernel_platform/build_with_bazel.py --lto=thin -t ${{ env.CPUD }} ${{ env.BUILD_METHOD }}
           else
-            LOCALVERSION='${{ steps.localver.outputs.value }}' \
+            LOCALVERSION='${{ env.LOCALVERSION_SAFE }}' LOCALVERSION_AUTO=0 LOCALVERSION_SHIP=1 \
             LTO=thin SYSTEM_DLKM_RE_SIGN=0 BUILD_SYSTEM_DLKM=0 KMI_SYMBOL_LIST_STRICT_MODE=0 \
             ./kernel_platform/oplus/build/oplus_build_kernel.sh ${{ env.CPUD }} ${{ env.BUILD_METHOD }}
           fi
