@@ -1,4 +1,4 @@
-name: Build OnePlus_SukiSU Ultra All
+name: Build OnePlus SukiSU Ultra
 
 permissions:
   contents: read
@@ -62,7 +62,7 @@ on:
           - NoN
       KSU_META:
         type: string
-        description: "分支名(必填)/自定义版本标识(留空不修改)/调整提交hash(留空不修改) 例: susfs-main/Numbersf/"
+        description: "分支名(必填)/自定义版本标识(留空不修改)/调整提交hash(留空不修改)"
         required: false
         default: "susfs-main/Numbersf/"
       BUILD_TIME:
@@ -98,7 +98,7 @@ on:
 
 jobs:
   build:
-    name: ${{ github.event.inputs.FAST_BUILD == 'true' && ' [FAST]' || '' }}${{ github.event.inputs.SCHED == 'true' && ' [SCHED]' || '' }}${{ github.event.inputs.ZRAM == 'true' && ' [ZRAM]' || '' }}${{ github.event.inputs.LSM == 'true' && ' [LSM]' || '' }}For ${{ github.event.inputs.FILE }} ${{ github.event.inputs.SUFFIX }}
+    name: ${{ github.event.inputs.FAST_BUILD == 'true' && ' [FAST]' || '' }}${{ github.event.inputs.SCHED == 'true' && ' [SCHED]' || '' }}${{ github.event.inputs.ZRAM == 'true' && ' [ZRAM]' || '' }}${{ github.event.inputs.LSM == 'true' && ' [LSM]' || '' }} For ${{ github.event.inputs.FILE }} ${{ github.event.inputs.SUFFIX }}
     runs-on: ubuntu-latest
     env:
       LC_ALL: C
@@ -107,6 +107,9 @@ jobs:
       CCACHE_NOHASHDIR: "true"
       CCACHE_HARDLINK: "true"
       CCACHE_MAXSIZE: 8G
+      CCACHE_BASEDIR: ${{ github.workspace }}
+      CCACHE_COMPRESS: "true"
+      CCACHE_SLOPPINESS: file_macro,time_macros,include_file_mtime,include_file_ctime
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -151,7 +154,7 @@ jobs:
             local OWNER=$1
             local REPO_URL=$2
             echo "::group::Fetch branches for $OWNER"
-            BRANCHES=$(curl -s --retry 5 --retry-delay 2 --retry-connrefused ${REPO_URL}/branches | jq -r '.[].name' || true)
+            BRANCHES=$(curl -fsSL --retry 5 --retry-delay 2 --retry-connrefused "${REPO_URL}/branches" | jq -r '.[].name' || true)
             echo "::endgroup::"
             if [[ -z "$BRANCHES" ]]; then
               echo "⚠️ ${OWNER} 分支列表获取失败，跳过。"
@@ -160,10 +163,10 @@ jobs:
             for BRANCH in $BRANCHES; do
               XML_URL="https://raw.githubusercontent.com/${OWNER}/kernel_manifest/$BRANCH/${FILE}.xml"
               README_URL="https://raw.githubusercontent.com/${OWNER}/kernel_manifest/$BRANCH/README.md"
-              if curl -sf --retry 5 --retry-delay 2 --retry-connrefused --head "$XML_URL" > /dev/null; then
+              if curl -sf --retry 5 --retry-delay 2 --retry-connrefused --head "$XML_URL" >/dev/null; then
                 echo "✅ 在 ${OWNER} 找到 ${FILE}.xml (分支: $BRANCH)"
-                curl -s --retry 5 --retry-delay 2 --retry-connrefused -o "$XML_PATH" "$XML_URL"
-                curl -s --retry 3 --retry-delay 2 --retry-connrefused -o "$README_PATH" "$README_URL" || true
+                curl -fsSL --retry 5 --retry-delay 2 --retry-connrefused -o "$XML_PATH" "$XML_URL"
+                curl -fsSL --retry 3 --retry-delay 2 --retry-connrefused -o "$README_PATH" "$README_URL" || true
                 FOUND_REPO="$OWNER"
                 FOUND_BRANCH="$BRANCH"
                 return 0
@@ -224,6 +227,7 @@ jobs:
 
       - name: Debug Show Selected Inputs
         run: |
+          set -euo pipefail
           echo "-----------------------"
           echo "Selected CPU: ${{ env.CPU }}"
           echo "Selected CPUD: ${{ env.CPUD }}"
@@ -245,12 +249,21 @@ jobs:
           echo "Selected ZRAM: ${{ github.event.inputs.ZRAM }}"
           echo "-----------------------"
 
+      - name: Stabilize KBUILD Identity
+        run: |
+          set -euo pipefail
+          echo "KBUILD_BUILD_USER=runner" >> $GITHUB_ENV
+          echo "KBUILD_BUILD_HOST=github" >> $GITHUB_ENV
+
       - name: Check Disk Space
-        run: df -h
+        run: |
+          set -euo pipefail
+          df -h
 
       - name: Create and Enable 3G Swap
         run: |
-          sudo swapoff -a
+          set -euo pipefail
+          sudo swapoff -a || true
           sudo fallocate -l 3G /swapfile
           sudo chmod 600 /swapfile
           sudo mkswap /swapfile
@@ -259,22 +272,24 @@ jobs:
 
       - name: Set Cache Environment
         run: |
+          set -euo pipefail
           echo "CCACHE_DIR=$HOME/.ccache_${{ github.event.inputs.FILE }}" >> $GITHUB_ENV
           mkdir -p "$HOME/.ccache_${{ github.event.inputs.FILE }}"
           echo "set: $HOME/.ccache_${{ github.event.inputs.FILE }}"
 
       - name: Configure Git
         run: |
+          set -euo pipefail
           git config --global user.name "Numbersf"
           git config --global user.email "263623064@qq.com"
 
-      - name: Install Dependencies + APTC
+      - name: Install Dependencies
         uses: awalsh128/cache-apt-pkgs-action@latest
         with:
-          packages: python3 git curl ccache libelf-dev build-essential flex bison libssl-dev libncurses-dev liblz4-tool zlib1g-dev libxml2-utils rsync unzip gawk jq gh dwarves
+          packages: python3 git curl ccache libelf-dev build-essential flex bison libssl-dev libncurses-dev liblz4-tool zlib1g-dev libxml2-utils rsync unzip gawk jq dwarves gh
           execute_install_scripts: true
 
-      - name: Restore Ccache (improved key)
+      - name: Restore Ccache
         uses: actions/cache@v3
         with:
           path: ${{ env.CCACHE_DIR }}
@@ -282,6 +297,7 @@ jobs:
 
       - name: Initialize Ccache
         run: |
+          set -euo pipefail
           INIT_FLAG="${{ env.CCACHE_DIR }}/.ccache_initialized"
           if command -v ccache >/dev/null 2>&1; then
             if [ ! -f "$INIT_FLAG" ]; then
@@ -301,7 +317,7 @@ jobs:
       - name: Install Repo Tool
         run: |
           set -euo pipefail
-          curl -fsSL --retry 5 --retry-delay 2 https://storage.googleapis.com/git-repo-downloads/repo -o ~/repo
+          curl -fsSL --retry 5 --retry-delay 2 --retry-connrefused https://storage.googleapis.com/git-repo-downloads/repo -o ~/repo
           chmod a+x ~/repo
           sudo mv ~/repo /usr/local/bin/repo
 
@@ -312,20 +328,23 @@ jobs:
           mkdir -p .repo/manifests
           FILE="${{ github.event.inputs.FILE }}"
           cp "$GITHUB_WORKSPACE/.repo/manifests_fallback/${FILE}.xml" ".repo/manifests/${FILE}.xml"
-
           MANIFEST_REPO="${{ env.MANIFEST_REPO }}"
           MANIFEST_BRANCH="${{ env.MANIFEST_BRANCH }}"
-          CPU="${{ env.CPU }}"
           echo "MANIFEST_REPO=$MANIFEST_REPO"
           echo "MANIFEST_BRANCH=$MANIFEST_BRANCH"
-
+          if [ -z "$MANIFEST_REPO" ] || [ -z "$MANIFEST_BRANCH" ]; then
+            echo "Manifest resolution failed. MANIFEST_REPO='$MANIFEST_REPO' MANIFEST_BRANCH='$MANIFEST_BRANCH'"
+            exit 1
+          fi
           BASE_URL="https://github.com/${MANIFEST_REPO}/kernel_manifest.git"
-
           echo "::group::使用 $MANIFEST_REPO 的分支 $MANIFEST_BRANCH 初始化仓库..."
           repo init -u "$BASE_URL" -b "$MANIFEST_BRANCH" -m "${FILE}.xml" --repo-rev=v2.16 --depth=1 --no-clone-bundle --no-tags
-          repo sync -c -j$(nproc) --no-clone-bundle --no-tags --force-sync --prune
+          if ! repo sync -c -j"$(nproc)" --no-clone-bundle --no-tags --force-sync --prune; then
+            echo "First repo sync failed, retrying after 5s..."
+            sleep 5
+            repo sync -c -j"$(nproc)" --no-clone-bundle --no-tags --force-sync --prune
+          fi
           echo "::endgroup::"
-
           for dir in kernel_platform/common kernel_platform/msm-kernel; do
             if [ -e "$dir/BUILD.bazel" ]; then
               sed -i '/^[[:space:]]*"protected_exports_list"[[:space:]]*:[[:space:]]*"android\/abi_gki_protected_exports_aarch64",$/d' "$dir/BUILD.bazel"
@@ -335,171 +354,86 @@ jobs:
 
       - name: Kernel Version Handling
         run: |
+          set -euo pipefail
           cd kernel_workspace/kernel_platform
-          # 获取内核 Android 版本号(KANDROID_VERSION)以及内核版本号(KERNEL_VERSION)
           for f in ./common/build.config.constants ./common/build.config.common; do
             if [ -f "$f" ]; then
               BRANCH=$(grep -m1 '^BRANCH=' "$f" | cut -d= -f2)
               [ -n "$BRANCH" ] && break
             fi
           done
-
           if [ -n "$BRANCH" ]; then
             echo "KANDROID_VERSION=${BRANCH%-*}" >> $GITHUB_ENV
             echo "KERNEL_VERSION=${BRANCH#*-}" >> $GITHUB_ENV
           else
             echo "No BRANCH found in build.config files"
           fi
-
-          # 从 Makefile 获取完整内核版本号(TKERNEL_VERSION)以及可选的修改内核等级
           ORIG_VERSION=$(awk '/^VERSION =/ {v=$3} /^PATCHLEVEL =/ {p=$3} /^SUBLEVEL =/ {s=$3} END {print v"."p"."s}' ./common/Makefile)
+          echo "TKERNEL_VERSION=$ORIG_VERSION" >> $GITHUB_ENV
 
-          # 强制修改 SUBLEVEL(内核等级)，默认关闭
-          # sed -i 's/^SUBLEVEL[[:space:]]*=[[:space:]]*.*/SUBLEVEL = 99/' ./common/Makefile
-
-          # 读取修改后的版本
-          NEW_VERSION=$(awk '/^VERSION =/ {v=$3} /^PATCHLEVEL =/ {p=$3} /^SUBLEVEL =/ {s=$3} END {print v"."p"."s}' ./common/Makefile)
-
-          if [ "$ORIG_VERSION" != "$NEW_VERSION" ]; then
-            echo "Kernel Version:$ORIG_VERSION->$NEW_VERSION"
-            echo "TKERNEL_VERSION=$NEW_VERSION" >> $GITHUB_ENV
+      - name: Normalize/lock LOCALVERSION
+        run: |
+          set -euo pipefail
+          cd kernel_workspace/kernel_platform
+          echo "LOCALVERSION_AUTO=0" >> $GITHUB_ENV
+          echo "LOCALVERSION_SHIP=1" >> $GITHUB_ENV
+          git add -A || true
+          git -c user.name="CI" -c user.email="ci@example.com" commit -m "CI: clean index for -dirty suppression" || true
+          KV="${KANDROID_VERSION:-android13}"
+          KV_SAFE=$(echo "$KV" | sed -E 's/[^a-zA-Z0-9.]+/-/g; s/\.+/-/g; s/-+/-/g; s/^-|-$//g')
+          SUF_IN="${{ github.event.inputs.SUFFIX }}"
+          if [ -n "$SUF_IN" ]; then
+            SUF="$SUF_IN"
           else
-            echo "Kernel Version:$ORIG_VERSION No changes"
-            echo "TKERNEL_VERSION=$ORIG_VERSION" >> $GITHUB_ENV
+            DIG=$(od -An -N1 -tu1 < /dev/urandom | tr -d '[:space:]' | awk '{print $1 % 10}')
+            HEX=$(od -An -N3 -tx1 /dev/urandom | tr -d ' \n')
+            SUF="${DIG}g${HEX}"
           fi
-
-      # 自定义内核后缀
-      - name: Custom Kernel Suffix if set
-        if: ${{ github.event.inputs.SUFFIX != '' }}
-        run: |
-          cd kernel_workspace
-          SUFFIX="${{ github.event.inputs.SUFFIX }}"
-          KANDROID_VERSION="${{ env.KANDROID_VERSION }}"
-          FAST_BUILD="${{ github.event.inputs.FAST_BUILD }}"
-
-          for path in \
-            kernel_platform/common/scripts/setlocalversion \
-            kernel_platform/msm-kernel/scripts/setlocalversion \
-            kernel_platform/external/dtc/scripts/setlocalversion; do
-
+          LV="-${KV_SAFE}-${SUF}"
+          [ ${#LV} -gt 32 ] && LV="${LV:0:32}"
+          echo "LOCALVERSION_SAFE=$LV" >> $GITHUB_ENV
+          echo "Using LOCALVERSION_SAFE=$LV"
+          for path in common/scripts/setlocalversion msm-kernel/scripts/setlocalversion external/dtc/scripts/setlocalversion; do
             [ -f "$path" ] || continue
-
             echo "Modifying: $path"
-
-            # Remove -dirty
             sed -i 's/ -dirty//g' "$path"
             sed -i '$i res=$(echo "$res" | sed '\''s/-dirty//g'\'')' "$path"
-
             if grep -q 'KERNELVERSION.*scm_version' "$path"; then
-              echo "Detected NEW setlocalversion format"
-              sed -i "s|echo \"\${KERNELVERSION}.*scm_version}\"|echo \"\${KERNELVERSION}-${KANDROID_VERSION}-${SUFFIX}\"|" "$path"
-
+              sed -i "s|echo \"\${KERNELVERSION}.*scm_version}\"|echo \"\${KERNELVERSION}${LV}\"|" "$path"
             elif grep -q 'echo "\$res"' "$path"; then
-              echo "Detected OLD setlocalversion format"
-              if [ "$FAST_BUILD" = "true" ]; then
-                echo "FAST_BUILD enabled: using static res"
-                sed -i "s/^res=.*/res=\"-${KANDROID_VERSION}-${SUFFIX}\"/" "$path"
-              else
-                echo "Standard build: injecting suffix via cut/echo"
-                if [[ -f ./kernel_platform/build_with_bazel.py ]]; then
-                  echo "使用官方脚本编译且当使用 build_with_bazel 时，可能受特殊符号数量限制，编译失败请修改"
-                  echo "When using the official script and building with build_with_bazel, the build may fail due to a limit on the number of special characters. Please modify the configuration if that happens."
-                fi
-                tac "$path" | sed "0,/echo \"\\\$res\"/s//res=\\\$(echo \\\$res | cut -d- -f1-2)-${SUFFIX}; echo \"\\\$res\";/" | tac > "$path.tmp" && mv "$path.tmp" "$path"
-              fi
+              sed -i "s/^res=.*/res=\"${LV}\"/" "$path"
             else
-              echo "Unknown format, appending echo manually"
-              echo "echo \"\$res-${SUFFIX}\"" >> "$path"
+              echo "echo \"\$res${LV}\"" >> "$path"
             fi
-
             chmod +x "$path"
           done
-
-          git add -A
-          git commit -m "Custom suffix & removed -dirty"
-
-      # 伪官方格式的随机后缀（仅在 SUFFIX 未设置时生效）*
-      - name: Custom Kernel Random Suffix if empty
-        if: ${{ github.event.inputs.SUFFIX == '' }}
-        run: |
-          cd kernel_workspace
-          KANDROID_VERSION="${{ env.KANDROID_VERSION }}"
-          FAST_BUILD="${{ github.event.inputs.FAST_BUILD }}"
-
-          # 生成随机数字和随机hash
-          RANDOM_DIGIT=$(od -An -N1 -tu1 < /dev/urandom | tr -d '[:space:]' | awk '{print $1 % 11}')
-          RANDOM_HASH=$(od -An -N7 -tx1 /dev/urandom | tr -d ' \n')
-          RANDOM_SUFFIX="${RANDOM_DIGIT}-o-g${RANDOM_HASH}"
-
-          for path in \
-            kernel_platform/common/scripts/setlocalversion \
-            kernel_platform/msm-kernel/scripts/setlocalversion \
-            kernel_platform/external/dtc/scripts/setlocalversion; do
-
-            [ -f "$path" ] || continue
-
-            echo "Modifying: $path"
-
-            # Remove -dirty
-            sed -i 's/ -dirty//g' "$path"
-            sed -i '$i res=$(echo "$res" | sed '\''s/-dirty//g'\'')' "$path"
-
-            if grep -q 'KERNELVERSION.*scm_version' "$path"; then
-              echo "Detected NEW setlocalversion format"
-              sed -i "s|echo \"\${KERNELVERSION}.*scm_version}\"|echo \"\${KERNELVERSION}-${KANDROID_VERSION}-${RANDOM_SUFFIX}\"|" "$path"
-
-            elif grep -q 'echo "\$res"' "$path"; then
-              echo "Detected OLD setlocalversion format"
-              if [ "$FAST_BUILD" = "true" ]; then
-                echo "FAST_BUILD enabled: using static res with random suffix"
-                sed -i "s/^res=.*/res=\"-${KANDROID_VERSION}-${RANDOM_SUFFIX}\"/" "$path"
-              else
-                echo "Standard build: injecting random suffix via cut/echo"
-                tac "$path" | sed "0,/echo \"\\\$res\"/s//res=\\\$(echo \\\$res | cut -d- -f1-2)-${RANDOM_SUFFIX}; echo \"\\\$res\";/" | tac > "$path.tmp" && mv "$path.tmp" "$path"
-              fi
-            else
-              echo "Unknown format, appending echo manually"
-              echo "echo \"\$res-${RANDOM_SUFFIX}\"" >> "$path"
-            fi
-
-            chmod +x "$path"
-          done
-
-          git add -A
-          git commit -m "Random suffix & remove -dirty"
 
       - name: Add SukiSU Ultra
         run: |
+          set -euo pipefail
           cd kernel_workspace/kernel_platform
-
           META="${{ github.event.inputs.KSU_META }}"
           if [[ "$(grep -o '/' <<< "$META" | wc -l)" -lt 2 ]]; then
             echo "错误: KSU_META 参数缺少必要的分隔符 '/'，格式应为: 分支名/自定义标识(可省略)/提交hash(可省略)"
             exit 10
           fi
-
           IFS='/' read -r BRANCH_NAME CUSTOM_TAG MANUAL_HASH <<< "$META"
-
           echo "分支名: $BRANCH_NAME"
           [[ -n "$CUSTOM_TAG" ]] && echo "自定义版本标识: $CUSTOM_TAG" || echo "自定义版本标识: 未启用"
           [[ -n "$MANUAL_HASH" ]] && echo "手动指定 hash: $MANUAL_HASH" || echo "手动指定 hash: 未启用"
-
-          curl -LSs --retry 5 --retry-delay 2 --retry-connrefused "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash -s "$BRANCH_NAME"
+          curl -fsSL --retry 5 --retry-delay 2 --retry-connrefused "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash -s "$BRANCH_NAME"
           cd ./KernelSU
-
           if [[ -n "$MANUAL_HASH" ]]; then
             git fetch origin "$BRANCH_NAME" --depth=50
             git checkout "$MANUAL_HASH"
             SHORT_HASH=${MANUAL_HASH:0:8}
           fi
-
-          KSU_API_VERSION=$(curl -fsSL --retry 5 --retry-delay 2 "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/$BRANCH_NAME/kernel/Makefile" | \
+          KSU_API_VERSION=$(curl -fsSL --retry 5 --retry-delay 2 --retry-connrefused "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/$BRANCH_NAME/kernel/Makefile" | \
             grep -m1 "KSU_VERSION_API :=" | awk -F'= ' '{print $2}' | tr -d '[:space:]')
           if [[ -z "$KSU_API_VERSION" || "$(printf '%s\n' "$KSU_API_VERSION" "3.1.7" | sort -V | head -n1)" != "3.1.7" ]]; then
             KSU_API_VERSION="3.1.7"
           fi
           echo "KSU_API_VERSION=$KSU_API_VERSION" >> $GITHUB_ENV
-
           GIT_HASH=$(git rev-parse --short HEAD)
           if [[ -n "$MANUAL_HASH" ]]; then
             USE_HASH="$SHORT_HASH"
@@ -511,30 +445,24 @@ jobs:
           else
             VERSION_FULL="v$KSU_API_VERSION-$CUSTOM_TAG@$BRANCH_NAME[$USE_HASH]"
           fi
-
           sed -i '/define get_ksu_version_full/,/endef/d' kernel/Makefile
           sed -i '/KSU_VERSION_API :=/d' kernel/Makefile
           sed -i '/KSU_VERSION_FULL :=/d' kernel/Makefile
-
           VERSION_DEFINITIONS=$(cat <<EOF
           define get_ksu_version_full
           $VERSION_FULL
           endef
-
           KSU_VERSION_API := $KSU_API_VERSION
           KSU_VERSION_FULL := $VERSION_FULL
           EOF
           )
-
           awk -v def="$VERSION_DEFINITIONS" '
             /REPO_OWNER :=/ {print; print def; inserted=1; next}
             1
             END {if (!inserted) print def}
           ' kernel/Makefile > kernel/Makefile.tmp && mv kernel/Makefile.tmp kernel/Makefile
-
           KSU_VERSION=$(expr $(git rev-list --count main 2>/dev/null || echo 13000) + 10700)
           echo "KSUVER=$KSU_VERSION" >> $GITHUB_ENV
-
           echo "::group::最终 Makefile 中版本信息及部分调试结果预览"
           grep -A10 "REPO_OWNER" kernel/Makefile || true
           grep "KSU_VERSION_FULL" kernel/Makefile || true
@@ -542,6 +470,7 @@ jobs:
 
       - name: Apply Patches SukiSU Ultra
         run: |
+          set -euo pipefail
           cd kernel_workspace
           git clone https://gitlab.com/simonpunk/susfs4ksu.git -b gki-${{ env.KANDROID_VERSION }}-${{ env.KERNEL_VERSION }}
           git clone https://github.com/ShirkNeko/SukiSU_patch.git
@@ -550,7 +479,6 @@ jobs:
           cp ../susfs4ksu/kernel_patches/50_add_susfs_in_gki-${{ env.KANDROID_VERSION }}-${{ env.KERNEL_VERSION }}.patch ./common/
           cp ../susfs4ksu/kernel_patches/fs/* ./common/fs/
           cp ../susfs4ksu/kernel_patches/include/linux/* ./common/include/linux/
-
           if [ "${{ github.event.inputs.ZRAM }}" = "true" ]; then
             echo "正在拉取zram补丁"
             cp -r ../SukiSU_patch/other/zram/lz4k/include/linux/* ./common/include/linux/
@@ -558,14 +486,12 @@ jobs:
             cp -r ../SukiSU_patch/other/zram/lz4k/crypto/* ./common/crypto/
             cp -r ../SukiSU_patch/other/zram/lz4k_oplus ./common/lib/
           fi
-
           cd ./common
           GKI_V="${{ env.KANDROID_VERSION }}-${{ env.KERNEL_VERSION }}"
           SUBLEVEL=$(grep '^SUBLEVEL *=' Makefile | head -n1 | cut -d= -f2 | tr -d ' ')
-
           if [ "$GKI_V" == "android13-5.15" ] && [ "$SUBLEVEL" -lt 123 ]; then
             echo "修复内核版本5.15.0到5.15.123仅支持旧版C库造成的一些bug"
-            curl -Lo fix_5.15.legacy.patch --retry 5 --retry-delay 2 --retry-connrefused https://raw.githubusercontent.com/Numbersf/Action-Build/SukiSU-Ultra/patches/fix_5.15.legacy
+            curl -fsSL --retry 5 --retry-delay 2 --retry-connrefused -o fix_5.15.legacy.patch https://raw.githubusercontent.com/Numbersf/Action-Build/SukiSU-Ultra/patches/fix_5.15.legacy
             patch -p1 < fix_5.15.legacy.patch
             echo "fix_5.15_patch完成"
           fi
@@ -577,8 +503,7 @@ jobs:
             if grep -q 'common-modules/trusty' "$GITHUB_WORKSPACE/.repo/manifests_fallback/${file}.xml"; then
               TRUSTY_EXISTS="true"
             fi
-            echo "trusty_exists=$TRUSTY_EXISTS" >> $GITHUB_OUTPUT
-
+            echo "trusty_exists=$TRUSTY_EXISTS" >> "$GITHUB_OUTPUT"
             if [[ "$TRUSTY_EXISTS" == "false" && "$(printf '%s\n' "$TKERNEL_VERSION" "6.6.30" | sort -V | head -n1)" = "$TKERNEL_VERSION" ]]; then
               echo "修复内核版本6.6部分机型缺失Trusty OS导致的susfs的报错"
               sed -i 's/-32,12 +32,38/-32,11 +32,37/g' 50_add_susfs_in_gki-${{ env.KANDROID_VERSION }}-${KERNEL_VERSION}.patch
@@ -591,6 +516,7 @@ jobs:
 
       - name: Apply Hide Stuff Patches
         run: |
+          set -euo pipefail
           cd kernel_workspace/kernel_platform/common
           cp ../../SukiSU_patch/69_hide_stuff.patch ./
           echo "正在打隐藏应用补丁"
@@ -600,78 +526,87 @@ jobs:
       - name: Apply Convert HMBIRD_OGKI to HMBIRD_GKI
         if: ${{ env.KERNEL_VERSION == '6.6' }}
         run: |
+          set -euo pipefail
           cd kernel_workspace/kernel_platform/common
           sed -i '1iobj-y += hmbird_patch.o' drivers/Makefile
-          wget https://github.com/Numbersf/Action-Build/raw/SukiSU-Ultra/patches/hmbird_patch.patch
+          curl -fsSL --retry 5 --retry-delay 2 --retry-connrefused -o hmbird_patch.patch https://github.com/Numbersf/Action-Build/raw/SukiSU-Ultra/patches/hmbird_patch.patch
           echo "正在打OGKI转换GKI补丁"
           patch -p1 -F 3 < hmbird_patch.patch
           echo "OGKI转换GKI_patch完成"
 
       - name: Apply HOOK
         run: |
+          set -euo pipefail
           cd kernel_workspace/kernel_platform/common
-          if [ "${{ github.event.inputs.HOOK }}" = "kprobe" ]; then
-            echo "调用 kprobe 钩子"
-          elif [ "${{ github.event.inputs.HOOK }}" = "manual" ]; then
-            cp ../../SukiSU_patch/hooks/scope_min_manual_hooks_v1.5.patch ./
-            echo "调用 manual 钩子"
-            patch -p1 -F 3 < scope_min_manual_hooks_v1.5.patch
-          elif [ "${{ github.event.inputs.HOOK }}" = "tracepoint" ]; then
-            cp ../../SukiSU_patch/hooks/tracepoint_hooks.patch ./
-            echo "调用 tracepoint 钩子"
-            patch -p1 -F 3 < tracepoint_hooks.patch
-          fi
+          case "${{ github.event.inputs.HOOK }}" in
+            kprobe)
+              echo "调用 kprobe 钩子"
+              ;;
+            manual)
+              echo "调用 manual 钩子"
+              cp ../../SukiSU_patch/hooks/scope_min_manual_hooks_v1.5.patch ./
+              patch -p1 -F 3 < scope_min_manual_hooks_v1.5.patch
+              ;;
+            tracepoint)
+              echo "调用 tracepoint 钩子"
+              cp ../../SukiSU_patch/hooks/tracepoint_hooks.patch ./
+              patch -p1 -F 3 < tracepoint_hooks.patch
+              ;;
+          esac
 
       - name: Apply ZRAM
         if: ${{ github.event.inputs.ZRAM == 'true' }}
         run: |
+          set -euo pipefail
           cd kernel_workspace/kernel_platform/common
           cp ../../SukiSU_patch/other/zram/zram_patch/${{ env.KERNEL_VERSION }}/lz4kd.patch ./
           echo "正在打lz4kd补丁"
           patch -p1 -F 3 < lz4kd.patch || true
-          echo 'lz4kd_patch完成'
+          echo "lz4kd_patch完成"
           cp ../../SukiSU_patch/other/zram/zram_patch/${{ env.KERNEL_VERSION }}/lz4k_oplus.patch ./
           echo "正在打lz4k_oplus补丁"
           patch -p1 -F 3 < lz4k_oplus.patch || true
-          echo 'lz4k_oplus_patch完成'
+          echo "lz4k_oplus_patch完成"
 
       - name: Apply SCHED
         if: ${{ github.event.inputs.SCHED == 'true' }}
         run: |
+          set -euo pipefail
           cd kernel_workspace/kernel_platform/common
           git clone https://github.com/HanKuCha/sched_ext.git
           cp -r ./sched_ext/* ./kernel/sched
           rm -rf ./sched_ext/.git
-          cd ./kernel/sched
 
       - name: Apply LSM_BBG
         if: ${{ github.event.inputs.LSM == 'true' }}
         run: |
+          set -euo pipefail
           cd kernel_workspace/kernel_platform/common
           echo "正在启用内核级基带保护支持…"
           wget -O- https://github.com/vc-teahouse/Baseband-guard/raw/main/setup.sh | bash
 
       - name: Add Configuration Settings
         run: |
+          set -euo pipefail
           cd kernel_workspace/kernel_platform
           CONFIG_FILE=./common/arch/arm64/configs/gki_defconfig
-          KERNEL_VERSION="${{ env.KERNEL_VERSION }}"
-
           echo "CONFIG_KSU=y" >> "$CONFIG_FILE"
           echo "CONFIG_KPM=y" >> "$CONFIG_FILE"
-
-          if [ "${{ github.event.inputs.HOOK }}" = "kprobe" ]; then
-            echo "CONFIG_KSU_SUSFS_SUS_SU=y" >> "$CONFIG_FILE"
-            echo "CONFIG_KPROBES=y" >> "$CONFIG_FILE"
-            echo "CONFIG_KSU_KPROBES_HOOK=y" >> "$CONFIG_FILE"
-          elif [ "${{ github.event.inputs.HOOK }}" = "manual" ]; then
-            echo "CONFIG_KSU_SUSFS_SUS_SU=n" >> "$CONFIG_FILE"
-            echo "CONFIG_KSU_MANUAL_HOOK=y" >> "$CONFIG_FILE"
-          elif [ "${{ github.event.inputs.HOOK }}" = "tracepoint" ]; then
-            echo "CONFIG_KSU_SUSFS_SUS_SU=n" >> "$CONFIG_FILE"
-            echo "CONFIG_KSU_TRACEPOINT_HOOK=y" >> "$CONFIG_FILE"
-          fi
-
+          case "${{ github.event.inputs.HOOK }}" in
+            kprobe)
+              echo "CONFIG_KSU_SUSFS_SUS_SU=y" >> "$CONFIG_FILE"
+              echo "CONFIG_KPROBES=y" >> "$CONFIG_FILE"
+              echo "CONFIG_KSU_KPROBES_HOOK=y" >> "$CONFIG_FILE"
+              ;;
+            manual)
+              echo "CONFIG_KSU_SUSFS_SUS_SU=n" >> "$CONFIG_FILE"
+              echo "CONFIG_KSU_MANUAL_HOOK=y" >> "$CONFIG_FILE"
+              ;;
+            tracepoint)
+              echo "CONFIG_KSU_SUSFS_SUS_SU=n" >> "$CONFIG_FILE"
+              echo "CONFIG_KSU_TRACEPOINT_HOOK=y" >> "$CONFIG_FILE"
+              ;;
+          esac
           echo "CONFIG_KSU_SUSFS=y" >> "$CONFIG_FILE"
           echo "CONFIG_KSU_SUSFS_SUS_PATH=y" >> "$CONFIG_FILE"
           echo "CONFIG_KSU_SUSFS_SUS_MOUNT=y" >> "$CONFIG_FILE"
@@ -686,22 +621,18 @@ jobs:
           echo "CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y" >> "$CONFIG_FILE"
           echo "CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y" >> "$CONFIG_FILE"
           echo "CONFIG_KSU_SUSFS_OPEN_REDIRECT=y" >> "$CONFIG_FILE"
-
           echo "CONFIG_TMPFS_XATTR=y" >> "$CONFIG_FILE"
           echo "CONFIG_TMPFS_POSIX_ACL=y" >> "$CONFIG_FILE"
-
           echo "CONFIG_TCP_CONG_ADVANCED=y" >> "$CONFIG_FILE"
           echo "CONFIG_TCP_CONG_BBR=y" >> "$CONFIG_FILE"
           echo "CONFIG_NET_SCH_FQ=y" >> "$CONFIG_FILE"
           echo "CONFIG_TCP_CONG_BIC=n" >> "$CONFIG_FILE"
           echo "CONFIG_TCP_CONG_WESTWOOD=n" >> "$CONFIG_FILE"
           echo "CONFIG_TCP_CONG_HTCP=n" >> "$CONFIG_FILE"
-
           echo "CONFIG_IP_ECN=y" >> "$CONFIG_FILE"
           echo "CONFIG_TCP_ECN=y" >> "$CONFIG_FILE"
           echo "CONFIG_IPV6_ECN=y" >> "$CONFIG_FILE"
           echo "CONFIG_IP_NF_TARGET_ECN=y" >> "$CONFIG_FILE"
-
           if [ "${{ github.event.inputs.ZRAM }}" = "true" ]; then
             echo "CONFIG_CRYPTO_LZ4HC=y" >> "$CONFIG_FILE"
             echo "CONFIG_CRYPTO_LZ4K=y" >> "$CONFIG_FILE"
@@ -710,16 +641,14 @@ jobs:
             echo "CONFIG_CRYPTO_LZ4K_OPLUS=y" >> "$CONFIG_FILE"
             echo "CONFIG_ZRAM_WRITEBACK=y" >> "$CONFIG_FILE"
           fi
-
           if [ "${{ github.event.inputs.LSM }}" = "true" ]; then
             echo "CONFIG_BBG=y" >> "$CONFIG_FILE"
           fi
-
-          sed -i 's/check_defconfig//' ./common/build.config.gki      
+          sed -i 's/check_defconfig//' ./common/build.config.gki
 
       - name: Custom BUILD_TIME
-        shell: bash
         run: |
+          set -euo pipefail
           INPUT_TIME="${{ github.event.inputs.BUILD_TIME }}"
           if [[ -n "$INPUT_TIME" && "$INPUT_TIME" != "F" && "$INPUT_TIME" != "f" ]]; then
             DATESTR="$INPUT_TIME"
@@ -730,7 +659,7 @@ jobs:
           fi
           echo "KBUILD_BUILD_TIMESTAMP=${DATESTR}" >> "$GITHUB_ENV"
           echo "KBUILD_BUILD_VERSION=1" >> "$GITHUB_ENV"
-          cd kernel_workspace/kernel_platform/
+          cd kernel_workspace/kernel_platform
           for f in common/scripts/mkcompile_h msm-kernel/scripts/mkcompile_h; do
             if [ -f "$f" ]; then
               echo "Patching mkcompile_h with BUILD_TIME=$DATESTR"
@@ -745,6 +674,7 @@ jobs:
       - name: Enable lto=thin For FAST
         if: ${{ (env.KERNEL_VERSION == '5.10' || env.KERNEL_VERSION == '5.15') && github.event.inputs.FAST_BUILD == 'true' }}
         run: |
+          set -euo pipefail
           cd kernel_workspace/kernel_platform
           DEFCONFIG=./common/arch/arm64/configs/gki_defconfig
           echo "Enabling ThinLTO in $DEFCONFIG"
@@ -759,62 +689,72 @@ jobs:
         run: |
           set -euo pipefail
           cd kernel_workspace/kernel_platform
-
           if [[ -f ./common/build.config.arm ]] && grep -q '^LLVM_IAS=1' ./common/build.config.arm; then
             USE_LLVM_IAS=true
           else
             USE_LLVM_IAS=false
           fi
-
           CLANG_PREBUILT_BIN=$(grep -m1 '^CLANG_PREBUILT_BIN=' ./common/build.config.common | cut -d'=' -f2 || true)
           if [[ -z "$CLANG_PREBUILT_BIN" ]]; then
             echo "⚠️ CLANG_PREBUILT_BIN 未在 build.config.common 中找到，回退至官方构建脚本"
             echo "fallback=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-
           if [[ "$CLANG_PREBUILT_BIN" =~ (clang-r[0-9a-z]+) ]]; then
             CLANG_VERSION="${BASH_REMATCH[1]}"
           elif [[ -f ./common/build.config.constants ]]; then
             CLANG_VERSION=$(grep -m1 '^CLANG_VERSION=' ./common/build.config.constants | cut -d'=' -f2 || true)
           fi
-
           if [[ -z "${CLANG_VERSION:-}" ]]; then
             echo "⚠️ 未能从 CLANG_PREBUILT_BIN 或 build.config.constants 获取到 Clang 版本，回退至官方构建脚本"
             echo "fallback=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-
           CLANG_PREBUILT_BIN=${CLANG_PREBUILT_BIN/\$\{CLANG_VERSION\}/$CLANG_VERSION}
           if [[ ! -d "$CLANG_PREBUILT_BIN" ]]; then
             echo "⚠️ 预置 Clang 目录不存在，回退至官方构建脚本"
             echo "fallback=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-
           export PATH="$GITHUB_WORKSPACE/kernel_workspace/kernel_platform/$CLANG_PREBUILT_BIN:$PATH"
           export PATH="/usr/lib/ccache:$PATH"
           export CC="ccache clang"
-
           cd ./common
           MAKE_ARGS="LLVM=1 ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- LD=ld.lld HOSTLD=ld.lld KCFLAGS+=-Wno-error LOCALVERSION='${{ env.LOCALVERSION_SAFE }}' LOCALVERSION_AUTO=0 LOCALVERSION_SHIP=1"
           if [[ "$USE_LLVM_IAS" == "true" ]]; then
             MAKE_ARGS="LLVM_IAS=1 $MAKE_ARGS"
           fi
-
-          make -j$(nproc --all) O=out $MAKE_ARGS gki_defconfig
-          make -j$(nproc --all) O=out $MAKE_ARGS
+          make -j"$(nproc --all)" O=out $MAKE_ARGS gki_defconfig
+          if ! command -v pahole >/dev/null 2>&1; then
+            echo "pahole missing, disabling BTF for this build only"
+            if [ -x ./scripts/config ]; then
+              ./scripts/config --file out/.config -d DEBUG_INFO_BTF || true
+            fi
+            sed -i 's/^CONFIG_DEBUG_INFO_BTF=y/CONFIG_DEBUG_INFO_BTF=n/' out/.config || true
+            yes "" | make -j"$(nproc --all)" O=out $MAKE_ARGS olddefconfig
+          fi
+          make -j"$(nproc --all)" O=out $MAKE_ARGS
           ccache -s
+
+      - name: Cache Bazel
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cache/bazel
+            kernel_workspace/.cache/bazel
+          key: bazel-${{ runner.os }}-${{ env.MANIFEST_BRANCH }}-${{ env.CPU }}-${{ env.ANDROID_VERSION }}
 
       - name: Prep dirs for fallback script
         if: ${{ github.event.inputs.FAST_BUILD == 'false' || steps.fast_build.outputs.fallback == 'true' }}
         run: |
+          set -euo pipefail
           mkdir -p kernel_workspace/kernel_platform/out/target/product/${{ env.CPUD }}
           mkdir -p kernel_workspace/device/qcom/${{ env.CPUD }}-kernel
 
       - name: Fallback to Build Kernel
         if: ${{ github.event.inputs.FAST_BUILD == 'false' || steps.fast_build.outputs.fallback == 'true' }}
         run: |
+          set -euo pipefail
           cd kernel_workspace
           if [ -f ./kernel_platform/build_with_bazel.py ]; then
             ./kernel_platform/oplus/bazel/oplus_modules_variant.sh ${{ env.CPUD }} ${{ env.BUILD_METHOD }}
@@ -825,14 +765,26 @@ jobs:
             ./kernel_platform/oplus/build/oplus_build_kernel.sh ${{ env.CPUD }} ${{ env.BUILD_METHOD }}
           fi
 
+      - name: Show utsrelease and Linux version
+        run: |
+          set -euo pipefail
+          for d in kernel_workspace/kernel_platform/common/out kernel_workspace/kernel_platform/out; do
+            [ -d "$d" ] || continue
+            echo "Checking $d"
+            cat "$d/include/generated/utsrelease.h" 2>/dev/null || true
+            strings "$d/vmlinux" 2>/dev/null | grep -m1 -E '^Linux version ' || true
+          done
+
       - name: Make AnyKernel3
         run: |
+          set -euo pipefail
           git clone https://github.com/Numbersf/AnyKernel3 --depth=1
           rm -rf ./AnyKernel3/.git
           mkdir -p kernel_workspace/kernel_platform/out/Final-Image-Find/
-          dir1=""
-          dir2=""
           image_path=$(find "./kernel_workspace/kernel_platform/common/out/" -name "Image" -size +10485760c 2>/dev/null | head -n 1)
+          if [ -z "$image_path" ]; then
+            image_path=$(find "./kernel_workspace/kernel_platform/common/out/" -name "Image.gz" -size +10485760c 2>/dev/null | head -n 1)
+          fi
           if [ -n "$image_path" ]; then
             dir1=$(dirname "$image_path")/
             echo "使用 make 编译的统一路径，成功找到 Image 文件"
@@ -866,8 +818,6 @@ jobs:
               fi
             done
           fi
-
-          # metadata
           cat > ./AnyKernel3/metadata.txt <<EOF
           FILE=${{ github.event.inputs.FILE }}
           CPU=${{ env.CPU }}
@@ -879,7 +829,7 @@ jobs:
           LSM=${{ github.event.inputs.LSM }}
           ZRAM=${{ github.event.inputs.ZRAM }}
           SCHED=${{ github.event.inputs.SCHED }}
-          LOCALVERSION=${{ steps.localver.outputs.value }}
+          LOCALVERSION=${{ env.LOCALVERSION_SAFE }}
           BUILD_TIME=${{ env.KBUILD_BUILD_TIMESTAMP }}
           EOF
 
@@ -887,16 +837,19 @@ jobs:
         if: ${{ github.event.inputs.SUSFS_CI == 'CI' }}
         continue-on-error: true
         run: |
-          LATEST_RUN_ID=$(curl -s -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+          set -euo pipefail
+          LATEST_RUN_ID=$(curl -fsSL -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+            --retry 5 --retry-delay 2 --retry-connrefused \
             "https://api.github.com/repos/sidex15/susfs4ksu-module/actions/runs?status=success" | \
             jq -r '.workflow_runs[] | select(.head_branch == "v1.5.2+") | .id' | head -n 1)
           if [ -z "$LATEST_RUN_ID" ]; then
             echo "No successful run found for branch v1.5.2+"
           else
-            ARTIFACT_URL=$(curl -s -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+            ARTIFACT_URL=$(curl -fsSL -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+              --retry 5 --retry-delay 2 --retry-connrefused \
               "https://api.github.com/repos/sidex15/susfs4ksu-module/actions/runs/$LATEST_RUN_ID/artifacts" | jq -r '.artifacts[0].archive_download_url')
-            if [ -n "$ARTIFACT_URL" ]; then
-              curl -L -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" -o ksu_module_susfs_1.5.2+_CI.zip "$ARTIFACT_URL"
+            if [ -n "$ARTIFACT_URL" ] && [ "$ARTIFACT_URL" != "null" ]; then
+              curl -fL --retry 5 --retry-delay 2 --retry-connrefused -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" -o ksu_module_susfs_1.5.2+_CI.zip "$ARTIFACT_URL"
               cp ksu_module_susfs_1.5.2+_CI.zip ./AnyKernel3/
             else
               echo "Failed to fetch artifact URL"
@@ -907,7 +860,8 @@ jobs:
         if: ${{ github.event.inputs.SUSFS_CI == 'Release' }}
         continue-on-error: true
         run: |
-          wget -O ksu_module_susfs_1.5.2+_Release.zip https://github.com/sidex15/ksu_module_susfs/releases/latest/download/ksu_module_susfs_1.5.2+.zip
+          set -euo pipefail
+          curl -fsSL --retry 5 --retry-delay 2 --retry-connrefused -o ksu_module_susfs_1.5.2+_Release.zip https://github.com/sidex15/ksu_module_susfs/releases/latest/download/ksu_module_susfs_1.5.2+.zip
           cp ksu_module_susfs_1.5.2+_Release.zip ./AnyKernel3/
 
       - name: Download Latest SukiSU-Ultra APK from CI
@@ -915,6 +869,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          set -euo pipefail
           run_id=$(gh api \
             "repos/SukiSU-Ultra/SukiSU-Ultra/actions/workflows/build-manager.yml/runs?branch=main&status=success&per_page=1" \
             --jq '.workflow_runs[0].id' || echo "")
@@ -928,7 +883,7 @@ jobs:
               echo "No 'manager' artifact found in run $run_id. Skipping download."
             else
               echo "Downloading from: $artifact_url"
-              curl -fL -H "Authorization: token $GITHUB_TOKEN" -o manager.zip "$artifact_url"
+              curl -fL --retry 5 --retry-delay 2 --retry-connrefused -H "Authorization: token $GITHUB_TOKEN" -o manager.zip "$artifact_url"
               unzip -j manager.zip "*.apk" -d ./AnyKernel3/
             fi
           fi
@@ -936,6 +891,7 @@ jobs:
       - name: Set zip Suffix
         id: suffix
         run: |
+          set -euo pipefail
           echo "value=${{ github.event.inputs.ZRAM == 'true' && '_LZ4KD' || '' }}${{ github.event.inputs.LSM == 'true' && '_LSM' || '' }}${{ github.event.inputs.HOOK == 'kprobe' && '_KP' || github.event.inputs.HOOK == 'manual' && '_VFS' || github.event.inputs.HOOK == 'tracepoint' && '_TP' || '' }}${{ github.event.inputs.SCHED== 'true' && '_SCHED' || '' }}" >> $GITHUB_OUTPUT
 
       - name: Upload AnyKernel3
@@ -948,31 +904,28 @@ jobs:
         if: ${{ github.event.inputs.ZRAM == 'true' }}
         id: zram_find
         run: |
-          set -e
+          set -euo pipefail
           sudo apt install -y unzip
           echo "尝试获取 ZRAM 模块 zip 下载链接..."
           retries=3
-          success=0
           for i in $(seq 1 $retries); do
             echo "第 $i 次尝试下载..."
-            download_url=$(curl -s https://api.github.com/repos/FurLC/ZRAM-Module/releases/latest | \
+            download_url=$(curl -fsSL --retry 5 --retry-delay 2 --retry-connrefused https://api.github.com/repos/FurLC/ZRAM-Module/releases/latest | \
               grep "browser_download_url" | grep "ZRAM-Module-.*\.zip" | cut -d '"' -f 4 | head -n 1)
             if [ -n "$download_url" ]; then
               echo "✅ 成功获取下载链接: $download_url"
-              wget -N "$download_url" && success=1 && break
+              curl -fsSL --retry 5 --retry-delay 2 --retry-connrefused -O "$download_url" && break
             else
               echo "⚠️ 获取下载链接失败，等待 3 秒后重试..."
               sleep 3
             fi
           done
-
-          if [ "$success" -ne 1 ]; then
+          if [ -z "$download_url" ]; then
             echo "❌ 连续 $retries 次尝试后仍然无法获取 ZRAM 模块下载链接"
             echo "upload=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-
-          unzip "$(ls -t ZRAM-Module-*.zip | head -1)" -d ZRAM-Module
+          unzip -o "$(ls -t ZRAM-Module-*.zip | head -1)" -d ZRAM-Module
           target="./ZRAM-Module/zram/zram.ko"
           echo "查找 zram.ko 模块文件..."
           search_paths=(
@@ -1009,4 +962,6 @@ jobs:
           path: ZRAM-Module/*
 
       - name: Post-build Disk Check
-        run: df -h
+        run: |
+          set -euo pipefail
+          df -h
