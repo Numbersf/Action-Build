@@ -274,9 +274,33 @@ jobs:
           set -euo pipefail
           sudo apt-get -o Acquire::Retries=3 update -qq
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-            python3 git curl ccache libelf-dev build-essential flex bison libssl-dev \
-            libncurses-dev liblz4-tool zlib1g-dev libxml2-utils rsync unzip gawk jq gh dwarves \
-            pkg-config bc file ca-certificates wget
+            python3 \
+            git \
+            curl \
+            ccache \
+            libelf-dev \
+            build-essential \
+            flex \
+            bison \
+            libssl-dev \
+            libncurses-dev \
+            liblz4-tool \
+            zlib1g-dev \
+            libxml2-utils \
+            rsync \
+            unzip \
+            gawk \
+            jq \
+            gh \
+            dwarves \
+            pkg-config \
+            bc \
+            file \
+            ca-certificates \
+            wget \
+            clang \
+            lld \
+            llvm
           sudo apt-get clean
 
       - name: Restore Ccache (improved key)
