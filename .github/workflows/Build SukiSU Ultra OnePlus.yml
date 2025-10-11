@@ -336,6 +336,7 @@ jobs:
       - name: Kernel Version Handling
         run: |
           cd kernel_workspace/kernel_platform
+          # 获取内核 Android 版本号(KANDROID_VERSION)以及内核版本号(KERNEL_VERSION)
           for f in ./common/build.config.constants ./common/build.config.common; do
             if [ -f "$f" ]; then
               BRANCH=$(grep -m1 '^BRANCH=' "$f" | cut -d= -f2)
@@ -350,47 +351,122 @@ jobs:
             echo "No BRANCH found in build.config files"
           fi
 
+          # 从 Makefile 获取完整内核版本号(TKERNEL_VERSION)以及可选的修改内核等级
           ORIG_VERSION=$(awk '/^VERSION =/ {v=$3} /^PATCHLEVEL =/ {p=$3} /^SUBLEVEL =/ {s=$3} END {print v"."p"."s}' ./common/Makefile)
-          echo "TKERNEL_VERSION=$ORIG_VERSION" >> $GITHUB_ENV
 
-      - name: Normalize kernel version string (avoid >64 chars)
-        run: |
-          set -euo pipefail
-          cd kernel_workspace/kernel_platform
-          # Disable auto suffixes to avoid -dirty/git-describe/vendor ship noise
-          echo "LOCALVERSION_AUTO=0" >> $GITHUB_ENV
-          echo "LOCALVERSION_SHIP=1" >> $GITHUB_ENV
-          # Make repo appear 'clean' to avoid -dirty (harmless if no changes)
-          git add -A || true
-          git -c user.name="CI" -c user.email="ci@example.com" commit -m "CI normalize version" || true
-          # Build a short safe LOCALVERSION: -a<android>-<1digit>g<6hex>, cap length
-          KVER="${KANDROID_VERSION:-android13}"
-          SUF_IN="${{ github.event.inputs.SUFFIX }}"
-          if [ -n "$SUF_IN" ]; then
-            SUF="$SUF_IN"
+          # 强制修改 SUBLEVEL(内核等级)，默认关闭
+          # sed -i 's/^SUBLEVEL[[:space:]]*=[[:space:]]*.*/SUBLEVEL = 99/' ./common/Makefile
+
+          # 读取修改后的版本
+          NEW_VERSION=$(awk '/^VERSION =/ {v=$3} /^PATCHLEVEL =/ {p=$3} /^SUBLEVEL =/ {s=$3} END {print v"."p"."s}' ./common/Makefile)
+
+          if [ "$ORIG_VERSION" != "$NEW_VERSION" ]; then
+            echo "Kernel Version:$ORIG_VERSION->$NEW_VERSION"
+            echo "TKERNEL_VERSION=$NEW_VERSION" >> $GITHUB_ENV
           else
-            DIG=$(od -An -N1 -tu1 < /dev/urandom | tr -d '[:space:]' | awk '{print $1 % 10}')
-            HEX=$(od -An -N3 -tx1 /dev/urandom | tr -d ' \n')
-            SUF="${DIG}g${HEX}"
+            echo "Kernel Version:$ORIG_VERSION No changes"
+            echo "TKERNEL_VERSION=$ORIG_VERSION" >> $GITHUB_ENV
           fi
-          SHORT_KVER="$(echo "$KVER" | sed -E 's/^android([0-9]+)/a\1/; s/[^a-z0-9]+//g')"
-          LV="-${SHORT_KVER}-${SUF}"
-          [ ${#LV} -gt 24 ] && LV="${LV:0:24}"
-          echo "LOCALVERSION_SAFE=$LV" >> $GITHUB_ENV
-          echo "Using LOCALVERSION_SAFE=$LV"
 
-      - name: Prepare LOCALVERSION
-        id: localver
+      # 自定义内核后缀
+      - name: Custom Kernel Suffix if set
+        if: ${{ github.event.inputs.SUFFIX != '' }}
         run: |
-          set -euo pipefail
-          KVER="${{ env.KANDROID_VERSION }}"
-          SUF="${{ github.event.inputs.SUFFIX }}"
-          if [[ -z "$SUF" ]]; then
-            RANDOM_DIGIT=$(od -An -N1 -tu1 < /dev/urandom | tr -d '[:space:]' | awk '{print $1 % 11}')
-            RANDOM_HASH=$(od -An -N7 -tx1 /dev/urandom | tr -d ' \n')
-            SUF="${RANDOM_DIGIT}-o-g${RANDOM_HASH}"
-          fi
-          echo "value=-${KVER}-${SUF}" >> "$GITHUB_OUTPUT"
+          cd kernel_workspace
+          SUFFIX="${{ github.event.inputs.SUFFIX }}"
+          KANDROID_VERSION="${{ env.KANDROID_VERSION }}"
+          FAST_BUILD="${{ github.event.inputs.FAST_BUILD }}"
+
+          for path in \
+            kernel_platform/common/scripts/setlocalversion \
+            kernel_platform/msm-kernel/scripts/setlocalversion \
+            kernel_platform/external/dtc/scripts/setlocalversion; do
+
+            [ -f "$path" ] || continue
+
+            echo "Modifying: $path"
+
+            # Remove -dirty
+            sed -i 's/ -dirty//g' "$path"
+            sed -i '$i res=$(echo "$res" | sed '\''s/-dirty//g'\'')' "$path"
+
+            if grep -q 'KERNELVERSION.*scm_version' "$path"; then
+              echo "Detected NEW setlocalversion format"
+              sed -i "s|echo \"\${KERNELVERSION}.*scm_version}\"|echo \"\${KERNELVERSION}-${KANDROID_VERSION}-${SUFFIX}\"|" "$path"
+
+            elif grep -q 'echo "\$res"' "$path"; then
+              echo "Detected OLD setlocalversion format"
+              if [ "$FAST_BUILD" = "true" ]; then
+                echo "FAST_BUILD enabled: using static res"
+                sed -i "s/^res=.*/res=\"-${KANDROID_VERSION}-${SUFFIX}\"/" "$path"
+              else
+                echo "Standard build: injecting suffix via cut/echo"
+                if [[ -f ./kernel_platform/build_with_bazel.py ]]; then
+                  echo "使用官方脚本编译且当使用 build_with_bazel 时，可能受特殊符号数量限制，编译失败请修改"
+                  echo "When using the official script and building with build_with_bazel, the build may fail due to a limit on the number of special characters. Please modify the configuration if that happens."
+                fi
+                tac "$path" | sed "0,/echo \"\\\$res\"/s//res=\\\$(echo \\\$res | cut -d- -f1-2)-${SUFFIX}; echo \"\\\$res\";/" | tac > "$path.tmp" && mv "$path.tmp" "$path"
+              fi
+            else
+              echo "Unknown format, appending echo manually"
+              echo "echo \"\$res-${SUFFIX}\"" >> "$path"
+            fi
+
+            chmod +x "$path"
+          done
+
+          git add -A
+          git commit -m "Custom suffix & removed -dirty"
+
+      # 伪官方格式的随机后缀（仅在 SUFFIX 未设置时生效）*
+      - name: Custom Kernel Random Suffix if empty
+        if: ${{ github.event.inputs.SUFFIX == '' }}
+        run: |
+          cd kernel_workspace
+          KANDROID_VERSION="${{ env.KANDROID_VERSION }}"
+          FAST_BUILD="${{ github.event.inputs.FAST_BUILD }}"
+
+          # 生成随机数字和随机hash
+          RANDOM_DIGIT=$(od -An -N1 -tu1 < /dev/urandom | tr -d '[:space:]' | awk '{print $1 % 11}')
+          RANDOM_HASH=$(od -An -N7 -tx1 /dev/urandom | tr -d ' \n')
+          RANDOM_SUFFIX="${RANDOM_DIGIT}-o-g${RANDOM_HASH}"
+
+          for path in \
+            kernel_platform/common/scripts/setlocalversion \
+            kernel_platform/msm-kernel/scripts/setlocalversion \
+            kernel_platform/external/dtc/scripts/setlocalversion; do
+
+            [ -f "$path" ] || continue
+
+            echo "Modifying: $path"
+
+            # Remove -dirty
+            sed -i 's/ -dirty//g' "$path"
+            sed -i '$i res=$(echo "$res" | sed '\''s/-dirty//g'\'')' "$path"
+
+            if grep -q 'KERNELVERSION.*scm_version' "$path"; then
+              echo "Detected NEW setlocalversion format"
+              sed -i "s|echo \"\${KERNELVERSION}.*scm_version}\"|echo \"\${KERNELVERSION}-${KANDROID_VERSION}-${RANDOM_SUFFIX}\"|" "$path"
+
+            elif grep -q 'echo "\$res"' "$path"; then
+              echo "Detected OLD setlocalversion format"
+              if [ "$FAST_BUILD" = "true" ]; then
+                echo "FAST_BUILD enabled: using static res with random suffix"
+                sed -i "s/^res=.*/res=\"-${KANDROID_VERSION}-${RANDOM_SUFFIX}\"/" "$path"
+              else
+                echo "Standard build: injecting random suffix via cut/echo"
+                tac "$path" | sed "0,/echo \"\\\$res\"/s//res=\\\$(echo \\\$res | cut -d- -f1-2)-${RANDOM_SUFFIX}; echo \"\\\$res\";/" | tac > "$path.tmp" && mv "$path.tmp" "$path"
+              fi
+            else
+              echo "Unknown format, appending echo manually"
+              echo "echo \"\$res-${RANDOM_SUFFIX}\"" >> "$path"
+            fi
+
+            chmod +x "$path"
+          done
+
+          git add -A
+          git commit -m "Random suffix & remove -dirty"
 
       - name: Add SukiSU Ultra
         run: |
@@ -641,7 +717,7 @@ jobs:
 
           sed -i 's/check_defconfig//' ./common/build.config.gki
 
-      - name: Disable BTF when FAST (if you later decide not to install pahole)
+      - name: Disable BTF when FAST
         if: ${{ github.event.inputs.FAST_BUILD == 'true' }}
         run: |
           if ! command -v pahole >/dev/null 2>&1; then
