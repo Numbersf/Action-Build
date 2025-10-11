@@ -601,18 +601,19 @@ jobs:
           KERNEL_VERSION="${{ env.KERNEL_VERSION }}"
           echo "CONFIG_KSU=y" >> "$CONFIG_FILE"
           echo "CONFIG_KPM=y" >> "$CONFIG_FILE"
+          
           if [ "${{ github.event.inputs.HOOK }}" = "kprobe" ]; then
             echo "CONFIG_KSU_SUSFS_SUS_SU=y" >> "$CONFIG_FILE"
             echo "CONFIG_KPROBES=y" >> "$CONFIG_FILE"
-            echo "CONFIG_KSU_KPROBES Pict
             echo "CONFIG_KSU_KPROBES_HOOK=y" >> "$CONFIG_FILE"
           elif [ "${{ github.event.inputs.HOOK }}" = "manual" ]; then
             echo "CONFIG_KSU_SUSFS_SUS_SU=n" >> "$CONFIG_FILE"
             echo "CONFIG_KSU_MANUAL_HOOK=y" >> "$CONFIG_FILE"
           elif [ "${{ github.event.inputs.HOOK }}" = "tracepoint" ]; then
             echo "CONFIG_KSU_SUSFS_SUS_SU=n" >> "$CONFIG_FILE"
-            echo "CONFIG_KSU_TRACEPOINT_HOOK=y" >> "$CONFIG_FILE"
+            echo "CONFIG_KSU_TRACEPOINT_HOOK=y" >> "$CONFIG_FILE" 
           fi
+          
           echo "CONFIG_KSU_SUSFS=y" >> "$CONFIG_FILE"
           echo "CONFIG_KSU_SUSFS_SUS_PATH=y" >> "$CONFIG_FILE"
           echo "CONFIG_KSU_SUSFS_SUS_MOUNT=y" >> "$CONFIG_FILE"
