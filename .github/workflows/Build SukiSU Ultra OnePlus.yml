@@ -62,7 +62,7 @@ on:
           - NoN
       KSU_META:
         type: string
-        description: "分支名(必填)/自定义版本标识(留空不修改)/调整提交hash(留空不修改) 例: susfs-main/Numbersf/abc1234"
+        description: "分支名(必填)/自定义版本标识(留空不修改)/调整提交hash(留空不修改) 例: susfs-main/Numbersf/"
         required: false
         default: "susfs-main/Numbersf/"
       BUILD_TIME:
