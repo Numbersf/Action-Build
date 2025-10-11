@@ -50,7 +50,7 @@ on:
         options:
           - kprobe
           - manual
-          - tracepoint      
+          - tracepoint
       KSU_META:
         type: string
         description: "分支名(必填)/自定义版本标识(留空不修改)/调整提交hash(留空不修改) 例: susfs-main/Numbersf/"
@@ -236,7 +236,6 @@ jobs:
           echo "Custom SUFFIX: ${{ github.event.inputs.SUFFIX }}"
           echo -n "SUFFIX Unicode: "
           python3 -c "print(''.join(f'U+{ord(c):04X} ' for c in '''${{ github.event.inputs.SUFFIX }}'''))"
-          echo "Selected SUSFS_CI: ${{ github.event.inputs.SUSFS_CI }}"
           echo "Selected HOOK: ${{ github.event.inputs.HOOK }}"
           echo "Selected LSM: ${{ github.event.inputs.LSM }}"
           echo "Selected FAST_BUILD: ${{ github.event.inputs.FAST_BUILD }}"
@@ -464,7 +463,7 @@ jobs:
           echo "分支名: $BRANCH_NAME"
           [[ -n "$CUSTOM_TAG" ]] && echo "自定义版本标识: $CUSTOM_TAG" || echo "自定义版本标识: 未启用"
           [[ -n "$MANUAL_HASH" ]] && echo "手动指定 hash: $MANUAL_HASH" || echo "手动指定 hash: 未启用"
-          curl -LSs --retry 5 --retry-delay 2 --retry-connrefused "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash -s "$BRANCH_NAME"
+          curl -LSs --retry中有5 --retry-delay 2 --retry-connrefused "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash -s "$BRANCH_NAME"
           cd ./KernelSU
           if [[ -n "$MANUAL_HASH" ]]; then
             git fetch origin "$BRANCH_NAME" --depth=50
@@ -519,8 +518,9 @@ jobs:
           cd kernel_platform
           echo "正在拉取susfs补丁"
           cp ../susfs4ksu/kernel_patches/50_add_susfs_in_gki-${{ env.KANDROID_VERSION }}-${{ env.KERNEL_VERSION }}.patch ./common/
-          cp ../susfs4ksu/kernel_patches/fs/* ./common/fs/
-          cp ../susfs4ksu/kernel_patches/include/linux/* ./common/include/linux/
+          mkdir -p ./common/fs ./common/include/linux ./common/lib ./common/crypto
+          cp ../susfs4ksu/kernel_patches/fs/* ./common/fs/ || true
+          cp ../susfs4ksu/kernel_patches/include/linux/* ./common/include/linux/ || true
           if [ "${{ github.event.inputs.ZRAM }}" = "true" ]; then
             echo "正在拉取zram补丁"
             cp -r ../SukiSU_patch/other/zram/lz4k/include/linux/* ./common/include/linux/
@@ -553,7 +553,7 @@ jobs:
             fi
           fi
           echo "正在打susfs补丁"
-          patch -p1 < 50_add_susfs_in_gki-${{ env.KANDROID_VERSION }}-${{ env.KERNEL_VERSION }}.patch || true
+          patch -p1 < 50_add_susfs_in_gki-${{ env.KANDROID_VERSION }}-${{ env.KERNEL_VERSION }}.patch || echo "Patch already applied or partial; continuing."
           echo "susfs_patch完成"
 
       - name: Apply Hide Stuff Patches
@@ -676,7 +676,7 @@ jobs:
             echo "CONFIG_BBG=y" >> "$CONFIG_FILE"
           fi
           sed -i 's/check_defconfig//' ./common/build.config.gki
-      
+
       - name: Custom BUILD_TIME
         shell: bash
         run: |
@@ -711,7 +711,124 @@ jobs:
           sed -i 's/^CONFIG_LTO_CLANG_NONE=y/CONFIG_LTO_CLANG_THIN=y/' "$DEFCONFIG" || true
           grep -q '^CONFIG_LTO_CLANG_THIN=y' "$DEFCONFIG" || echo 'CONFIG_LTO_CLANG_THIN=y' >> "$DEFCONFIG"
 
-      - name: Build Kernel
+      - name: Build Kernel FAST
+        if: ${{ github.event.inputs.FAST_BUILD == 'true' }}
+        id: fast_build
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd kernel_workspace/kernel_platform
+
+          # Detect LLVM_IAS from tree
+          USE_LLVM_IAS=false
+          if [[ -f ./common/build.config.arm ]] && grep -q '^LLVM_IAS=1' ./common/build.config.arm; then
+            USE_LLVM_IAS=true
+          fi
+
+          # Resolve CLANG_PREBUILT_BIN and CLANG_VERSION
+          CLANG_PREBUILT_BIN=$(grep -m1 '^CLANG_PREBUILT_BIN=' ./common/build.config.common | cut -d'=' -f2- | tr -d '"')
+          if [[ -z "${CLANG_PREBUILT_BIN:-}" ]]; then
+            echo "fallback=true" >> "$GITHUB_OUTPUT"
+            echo "CLANG_PREBUILT_BIN not found, falling back."
+            exit 0
+          fi
+          if [[ "$CLANG_PREBUILT_BIN" =~ (clang-r[0-9a-z.+-]+) ]]; then
+            CLANG_VERSION="${BASH_REMATCH[1]}"
+          elif [[ -f ./common/build.config.constants ]]; then
+            CLANG_VERSION=$(grep -m1 '^CLANG_VERSION=' ./common/build.config.constants | cut -d'=' -f2- | tr -d '"')
+          else
+            CLANG_VERSION=""
+          fi
+          if [[ -z "${CLANG_VERSION:-}" ]]; then
+            echo "fallback=true" >> "$GITHUB_OUTPUT"
+            echo "Unable to determine CLANG_VERSION, falling back."
+            exit 0
+          fi
+
+          # Substitute ${CLANG_VERSION}
+          CLANG_PREBUILT_BIN=${CLANG_PREBUILT_BIN/\$\{CLANG_VERSION\}/$CLANG_VERSION}
+          if [[ ! -x "$CLANG_PREBUILT_BIN/clang" ]]; then
+            echo "Resolved clang not executable at: $CLANG_PREBUILT_BIN/clang"
+            echo "fallback=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # Probe prebuilts for pahole and rustc
+          probe() { for p in "$@"; do [[ -x "$p" ]] && echo "$p" && return 0; done; return 1; }
+          PAHOLE_BIN=$(probe \
+            "$PWD/prebuilts/kernel-build-tools/linux-x86/bin/pahole" \
+            "$PWD/prebuilts/build-tools/path/linux-x86/bin/pahole" \
+            "$PWD/prebuilts/build-tools/linux-x86/bin/pahole" || true)
+          RUSTC_BIN=$(probe \
+            "$PWD/prebuilts/rust/linux-x86/1.73.0b/bin/rustc" \
+            "$PWD/prebuilts/rust/linux-x86/1.73.0/bin/rustc" \
+            "$PWD/prebuilts/rust/linux-x86/1.72.1/bin/rustc" || true)
+
+          export PATH="$CLANG_PREBUILT_BIN:$PATH"
+          export PATH="/usr/lib/ccache:$PATH"
+
+          COMMON=./common
+          OUT="$COMMON/out"
+          mkdir -p "$OUT"
+          : > "$COMMON/.scmversion" || true
+
+          MAKE_ARGS=(ARCH=arm64 O="$OUT" LLVM=1 KCFLAGS+=-Wno-error)
+
+          $USE_LLVM_IAS && MAKE_ARGS+=(LLVM_IAS=1)
+
+          if command -v ld.lld >/dev/null 2>&1; then
+            MAKE_ARGS+=(LD=ld.lld HOSTLD=ld.lld)
+          fi
+          if [[ -n "${PAHOLE_BIN:-}" ]]; then
+            MAKE_ARGS+=(PAHOLE="$PAHOLE_BIN")
+          fi
+          if [[ -n "${RUSTC_BIN:-}" ]]; then
+            MAKE_ARGS+=(RUSTC="$RUSTC_BIN")
+          fi
+
+          if command -v ccache >/dev/null 2>&1; then
+            export CC="ccache clang"
+            export HOSTCC="ccache clang"
+            export HOSTCXX="ccache clang++"
+          else
+            export CC=clang HOSTCC=clang HOSTCXX=clang++
+          fi
+
+          # Config and optimization toggles
+          make "${MAKE_ARGS[@]}" gki_defconfig
+          if [ "${{ github.event.inputs.optimize_level }}" = "O3" ]; then
+            "$COMMON/scripts/config" --file "$OUT/.config" -d CC_OPTIMIZE_FOR_PERFORMANCE || true
+            "$COMMON/scripts/config" --file "$OUT/.config" -e CC_OPTIMIZE_FOR_PERFORMANCE_O3 || true
+            export KCFLAGS="${KCFLAGS:-} -O3 -pipe -fno-stack-protector"
+          else
+            "$COMMON/scripts/config" --file "$OUT/.config" -e CC_OPTIMIZE_FOR_PERFORMANCE || true
+            "$COMMON/scripts/config" --file "$OUT/.config" -d CC_OPTIMIZE_FOR_PERFORMANCE_O3 || true
+            export KCFLAGS="${KCFLAGS:-} -O2 -pipe -fno-stack-protector"
+          fi
+          export KCPPFLAGS="-DCONFIG_OPTIMIZE_INLINING"
+          make "${MAKE_ARGS[@]}" olddefconfig
+
+          # If FAST and no pahole path found, disable BTF
+          if [ -z "${PAHOLE_BIN:-}" ]; then
+            "$COMMON/scripts/config" --file "$OUT/.config" -d DEBUG_INFO_BTF || true
+            make "${MAKE_ARGS[@]}" olddefconfig
+          fi
+
+          echo "Starting FAST build with $(nproc --all) threads..."
+          set -o pipefail
+          make -j"$(nproc --all)" "${MAKE_ARGS[@]}" 2>&1 | tee "$COMMON/build_opt.log"
+
+          IMG="$OUT/arch/arm64/boot/Image"
+          if [ ! -f "$IMG" ]; then
+            echo "Kernel Image missing under FAST build"; exit 1
+          fi
+          sha256sum "$IMG" | tee "$OUT/Image.sha256"
+          CLANG_VER=$("$CLANG_PREBUILT_BIN/clang" --version | head -n1 || true)
+          echo "CLANG_VERSION=$CLANG_VER" >> "$GITHUB_ENV"
+          echo "fallback=false" >> "$GITHUB_OUTPUT"
+
+      - name: Build Kernel (System Toolchain)
+        if: ${{ github.event.inputs.FAST_BUILD == 'false' || steps.fast_build.outputs.fallback == 'true' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -755,13 +872,13 @@ jobs:
           echo "CLANG_VERSION=$CLANG_VER" >> "$GITHUB_ENV"
 
       - name: Prep dirs for fallback script
-        if: ${{ github.event.inputs.FAST_BUILD == 'false' }}
+        if: ${{ github.event.inputs.FAST_BUILD == 'false' && false }}
         run: |
           mkdir -p kernel_workspace/kernel_platform/out/target/product/${{ env.CPUD }}
           mkdir -p kernel_workspace/device/qcom/${{ env.CPUD }}-kernel
 
-      - name: Fallback to Build Kernel
-        if: ${{ github.event.inputs.FAST_BUILD == 'false' }}
+      - name: Fallback to Build Kernel (Official Script)
+        if: ${{ github.event.inputs.FAST_BUILD == 'false' && false }}
         run: |
           cd kernel_workspace
           if [ -f ./kernel_platform/build_with_bazel.py ]; then
@@ -778,16 +895,12 @@ jobs:
           git clone https://github.com/Numbersf/AnyKernel3 --depth=1
           rm -rf ./AnyKernel3/.git
           mkdir -p kernel_workspace/kernel_platform/out/Final-Image-Find/
-          dir1=""
-          dir2=""
           image_path=$(find "./kernel_workspace/kernel_platform/common/out/" -name "Image" -size +10485760c 2>/dev/null | head -n 1)
           if [ -n "$image_path" ]; then
-            dir1=$(dirname "$image_path")/
             echo "使用 make 编译的统一路径，成功找到 Image 文件"
           else
             image_path=$(find "./kernel_workspace/kernel_platform/out/" -name "Image" -size +10485760c 2>/dev/null | head -n 1)
             if [ -n "$image_path" ]; then
-              dir2=$(dirname "$image_path")/
               echo "使用官方脚本编译，成功找到 Image 文件"
             else
               echo "未找到有效 Image 文件(>10MB)，构建失败" >&2
@@ -799,19 +912,10 @@ jobs:
             cp "$image_path" ./AnyKernel3/Image
             cp "$image_path" kernel_workspace/kernel_platform/out/Final-Image-Find/Image
           fi
-          if [ -n "$dir2" ] && [ "${{ env.CPU }}" = "sm8750" ] && [ "${{ github.event.inputs.FAST_BUILD }}" = "false" ]; then
-            echo "当前正在使用官方脚本构建 sm8750，需额外复制一些其它镜像文件：dtbo.img、system_dlkm.img。请注意，如果你在刷完官方脚本构建后想换成极速构建，请还原这些分区！"
-            echo "You are currently building sm8750 with the official script. Additional image files will be copied: dtbo.img, system_dlkm.img. Please note: If you switch to fast build after flashing this build, make sure to restore these partitions!"
+          # Extra images for sm8750 official script builds (kept for reference, disabled when official fallback disabled)
+          if false && [ "${{ env.CPU }}" = "sm8750" ] && [ "${{ github.event.inputs.FAST_BUILD }}" = "false" ]; then
             for file in dtbo.img system_dlkm.erofs.img; do
-              if [ -f "$dir2$file" ]; then
-                target_name="$file"
-                if [ "$file" = "system_dlkm.erofs.img" ]; then
-                  target_name="system_dlkm.img"
-                fi
-                cp "$dir2$file" "./AnyKernel3/$target_name"
-              else
-                echo "$file 不存在，跳过复制"
-              fi
+              [ -f "$file" ] && cp "$file" "./AnyKernel3/${file/system_dlkm.erofs.img/system_dlkm.img}"
             done
           fi
           cat > ./AnyKernel3/metadata.txt <<EOF
@@ -825,11 +929,11 @@ jobs:
           LSM=${{ github.event.inputs.LSM }}
           ZRAM=${{ github.event.inputs.ZRAM }}
           SCHED=${{ github.event.inputs.SCHED }}
-          LOCALVERSION=${{ steps.extract_info.outputs.value }}
+          LOCALVERSION={{ steps.extract_info.outputs.value }}
           BUILD_TIME=${{ env.KBUILD_BUILD_TIMESTAMP }}
           EOF
 
-      - name: Download Latest SUSFS Module from CI       
+      - name: Download Latest SUSFS Module from CI
         continue-on-error: true
         run: |
           LATEST_RUN_ID=$(curl -s -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
@@ -847,7 +951,7 @@ jobs:
               echo "Failed to fetch artifact URL"
             fi
           fi
-     
+
       - name: Download Latest SukiSU-Ultra APK from CI
         continue-on-error: true
         env:
@@ -966,7 +1070,7 @@ jobs:
           fi
           MIN_SIZE=$((6*1024*1024))
           ACTUAL_SIZE=$(stat -c %s "$IMG")
-          if [ "$ACTUAL_SIZE" -lt "$MIN_SIZE" ]; then
+          if [ "$ACTUAL_SIZE" < "$MIN_SIZE" ]; then
             echo "Image size $ACTUAL_SIZE < $MIN_SIZE (suspicious)"; exit 1
           fi
           IMAGE_SHA256=$(cut -d' ' -f1 "$OUT/Image.sha256")
