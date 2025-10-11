@@ -660,20 +660,7 @@ jobs:
             echo "CONFIG_BBG=y" >> "$CONFIG_FILE"
           fi
           sed -i 's/check_defconfig//' ./common/build.config.gki
-
-      - name: Disable BTF when FAST
-        if: ${{ github.event.inputs.FAST_BUILD == 'true' }}
-        run: |
-          if ! command -v pahole >/dev/null 2>&1; then
-            echo "pahole not found; disabling BTF for FAST build"
-            cd kernel_workspace/kernel_platform
-            DEFCONFIG=./common/arch/arm64/configs/gki_defconfig
-            sed -i 's/^CONFIG_DEBUG_INFO_BTF=y/CONFIG_DEBUG_INFO_BTF=n/' "$DEFCONFIG" || true
-            grep -q '^CONFIG_DEBUG_INFO_BTF=n' "$DEFCONFIG" || echo 'CONFIG_DEBUG_INFO_BTF=n' >> "$DEFCONFIG"
-          else
-            echo "pahole found; keeping BTF enabled"
-          fi
-
+      
       - name: Custom BUILD_TIME
         shell: bash
         run: |
