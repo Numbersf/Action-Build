@@ -50,16 +50,7 @@ on:
         options:
           - kprobe
           - manual
-          - tracepoint
-      SUSFS_CI:
-        type: choice
-        description: "下载SUSFS模块调用方式"
-        required: true
-        default: NoN
-        options:
-          - CI
-          - Release
-          - NoN
+          - tracepoint      
       KSU_META:
         type: string
         description: "分支名(必填)/自定义版本标识(留空不修改)/调整提交hash(留空不修改) 例: susfs-main/Numbersf/"
@@ -813,8 +804,7 @@ jobs:
           BUILD_TIME=${{ env.KBUILD_BUILD_TIMESTAMP }}
           EOF
 
-      - name: Download Latest SUSFS Module from CI
-        if: ${{ github.event.inputs.SUSFS_CI == 'CI' }}
+      - name: Download Latest SUSFS Module from CI       
         continue-on-error: true
         run: |
           LATEST_RUN_ID=$(curl -s -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
@@ -832,14 +822,7 @@ jobs:
               echo "Failed to fetch artifact URL"
             fi
           fi
-
-      - name: Download Latest SUSFS Module from Release
-        if: ${{ github.event.inputs.SUSFS_CI == 'Release' }}
-        continue-on-error: true
-        run: |
-          wget -O ksu_module_susfs_1.5.2+_Release.zip https://github.com/sidex15/ksu_module_susfs/releases/latest/download/ksu_module_susfs_1.5.2+.zip
-          cp ksu_module_susfs_1.5.2+_Release.zip ./AnyKernel3/
-
+     
       - name: Download Latest SukiSU-Ultra APK from CI
         continue-on-error: true
         env:
