@@ -275,11 +275,19 @@ jobs:
           git config --global user.name "Numbersf"
           git config --global user.email "263623064@qq.com"
 
-      - name: Install Dependencies + APTC
-        uses: awalsh128/cache-apt-pkgs-action@latest 
-        with: 
-          packages: python3 git curl ccache libelf-dev build-essential flex bison libssl-dev libncurses-dev liblz4-tool zlib1g-dev libxml2-utils rsync unzip gawk dos2unix
-          execute_install_scripts: true
+      - name: Install Minimal Dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "::group::Install dependencies"
+          sudo apt-get -qq update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            clang lld libelf-dev libssl-dev dwarves bc dos2unix
+          sudo apt-get clean
+          clang --version | head -1
+          pahole --version || echo "⚠️ pahole not found"
+          echo "✅ Dependencies installed"
+          echo "::endgroup::"
 
       - name: Setup ccache
         run: |
@@ -853,7 +861,7 @@ jobs:
             KCFLAGS_EXTRA="-O2"
           fi
 
-          KCFLAGS="$KCFLAGS -Wno-error -pipe -fno-stack-protector ${KCFLAGS_EXTRA}"
+          KCFLAGS="$KCFLAGS -Wno-error -pipe -fno-stack-protector -Wframe-larger-than=8192 ${KCFLAGS_EXTRA}"
           KCPPFLAGS="$KCPPFLAGS -DCONFIG_OPTIMIZE_INLINING"
 
           echo "============================================"
