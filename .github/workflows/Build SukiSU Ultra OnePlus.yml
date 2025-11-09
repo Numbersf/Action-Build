@@ -1460,172 +1460,67 @@ jobs:
           set -euo pipefail
           echo "::group::Configure kernel version string"
           
-          KERNEL_PATH="$GITHUB_WORKSPACE/kernel_workspace/kernel_platform"
-          cd "$KERNEL_PATH/common"
-          mkdir -p out
+          cd kernel_workspace/kernel_platform/common
           
           # ═══════════════════════════════════════════════════════════════
-          # Use Pre-Normalized Android Version
+          # Build Dynamic Custom Brand
           # ═══════════════════════════════════════════════════════════════
           
-          ANDROID_VER="${{ env.ANDROID_VERSION_KERNEL }}"
+          ANDROID_BASE="${{ env.KANDROID_VERSION }}"
           
-          if [ -z "$ANDROID_VER" ]; then
-            echo "::error::ANDROID_VERSION_KERNEL not set from manifest extraction"
-            echo "This indicates the 'Extract Manifest Info' step failed"
+          if [ -z "$ANDROID_BASE" ]; then
+            echo "::error::KANDROID_VERSION not set"
             exit 1
           fi
           
-          # Validate format (should already be androidNN)
-          if [[ ! "$ANDROID_VER" =~ ^android[0-9]+$ ]]; then
-            echo "::error::Invalid Android version format: $ANDROID_VER"
-            echo "::error::Expected format: androidNN (e.g., android15)"
-            exit 1
-          fi
+          CUSTOM_BRAND="-${ANDROID_BASE}-OP-Numbersf"
           
-          echo "✅ Using Android version: $ANDROID_VER"
+          echo "$CUSTOM_BRAND" > .scmversion
+          echo "✅ Created .scmversion: $(cat .scmversion)"
           
           # ═══════════════════════════════════════════════════════════════
-          # Set Clean LOCALVERSION
+          # Disable Auto Versioning
           # ═══════════════════════════════════════════════════════════════
           
-          CUSTOM_LOCALVERSION="-${ANDROID_VER}"
+          # Disable in defconfig
+          sed -i 's/CONFIG_LOCALVERSION_AUTO=y/# CONFIG_LOCALVERSION_AUTO is not set/' \
+            arch/arm64/configs/gki_defconfig 2>/dev/null || true
           
-          echo "CUSTOM_LOCALVERSION=$CUSTOM_LOCALVERSION" >> $GITHUB_ENV
-          echo "NORMALIZED_ANDROID_VERSION=$ANDROID_VER" >> $GITHUB_ENV
-          
-          # ═══════════════════════════════════════════════════════════════
-          # Create .scmversion
-          # ═══════════════════════════════════════════════════════════════
-          
-          echo "$CUSTOM_LOCALVERSION" > .scmversion
-          echo "  ✓ Created .scmversion: $(cat .scmversion)"
-          
-          # ═══════════════════════════════════════════════════════════════
-          # Patch setlocalversion (IMPROVED)
-          # ═══════════════════════════════════════════════════════════════
-          
+          # Neutralize setlocalversion script
           if [ -f "scripts/setlocalversion" ]; then
-            echo "  ✓ Patching scripts/setlocalversion..."
-            
-            # Backup original
-            cp scripts/setlocalversion scripts/setlocalversion.orig
-            
-            # Apply patches
-            sed -i 's/scm_version="$(scm_version --short)"/scm_version=""/' scripts/setlocalversion
-            sed -i 's/\${LOCALVERSION_AUTO}//' scripts/setlocalversion 2>/dev/null || true
-            
-            # Verify changes were applied
-            if ! diff -q scripts/setlocalversion.orig scripts/setlocalversion >/dev/null 2>&1; then
-              echo "  ✅ setlocalversion successfully modified"
-              rm scripts/setlocalversion.orig
-            else
-              echo "  ⚠️ setlocalversion unchanged (may already be patched)"
-              rm scripts/setlocalversion.orig
-            fi
+            cat > scripts/setlocalversion << 'EOF'
+          #!/bin/sh
+          echo ""
+          EOF
+            chmod +x scripts/setlocalversion
+            echo "✅ setlocalversion neutralized"
           fi
           
           # ═══════════════════════════════════════════════════════════════
-          # Disable CONFIG_LOCALVERSION_AUTO in defconfig
+          # Set Build Timestamp
           # ═══════════════════════════════════════════════════════════════
-          
-          DEFCONFIG_PATH="arch/arm64/configs"
-          DEFCONFIG_FILE="gki_defconfig"
-          
-          if [ -f "$DEFCONFIG_PATH/$DEFCONFIG_FILE" ]; then
-            echo "  ✓ Disabling CONFIG_LOCALVERSION_AUTO in defconfig..."
-            sed -i 's/CONFIG_LOCALVERSION_AUTO=y/# CONFIG_LOCALVERSION_AUTO is not set/' "$DEFCONFIG_PATH/$DEFCONFIG_FILE"
-          fi
-          
-          # ═══════════════════════════════════════════════════════════════
-          # Set Reproducible Build Timestamp
-          # ═══════════════════════════════════════════════════════════════
-          
-          COMMIT_TIMESTAMP=$(git log -1 --format=%ct 2>/dev/null || echo "$(date +%s)")
-          COMMIT_DATE=$(git log -1 --format=%cd --date=format:'%Y-%m-%d %H:%M:%S' 2>/dev/null || date -u '+%Y-%m-%d %H:%M:%S')
-          COMMIT_HASH=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")
           
           {
-            echo "SOURCE_DATE_EPOCH=$COMMIT_TIMESTAMP"
-            echo "KBUILD_BUILD_TIMESTAMP=$COMMIT_DATE UTC"
+            echo "SOURCE_DATE_EPOCH=$(date +%s)"
+            echo "KBUILD_BUILD_TIMESTAMP=$(date -u '+%Y-%m-%d %H:%M:%S UTC')"
             echo "KBUILD_BUILD_USER=builder"
             echo "KBUILD_BUILD_HOST=github-actions"
+            echo "CUSTOM_LOCALVERSION=$CUSTOM_BRAND"
           } >> $GITHUB_ENV
-          
-          # ═══════════════════════════════════════════════════════════════
-          # Display Configuration
-          # ═══════════════════════════════════════════════════════════════
           
           KERNEL_VER=$(make kernelversion 2>/dev/null || echo "${{ env.TKERNEL_VERSION }}")
           
           echo ""
-          echo "╔════════════════════════════════════════════════════════════╗"
-          echo "║          📋 Kernel Version Configuration                  ║"
-          echo "╚════════════════════════════════════════════════════════════╝"
+          echo "============================================"
+          echo "📋 Kernel Version Configuration"
+          echo "============================================"
+          echo "Kernel Version: $KERNEL_VER"
+          echo "Android Base: $ANDROID_BASE"
+          echo "Custom Brand: $CUSTOM_BRAND"
           echo ""
-          echo "  Device:           ${{ github.event.inputs.FILE }}"
-          echo "  Platform:         ${{ env.CPU }} (${{ env.CPUD }})"
-          echo "  Kernel Version:   $KERNEL_VER"
-          echo "  Android Version:  $ANDROID_VER"
-          echo "  Git Commit:       $COMMIT_HASH"
-          echo "  Build Timestamp:  $COMMIT_DATE UTC"
-          echo ""
-          echo "  ┌─────────────────────────────────────────────────────────┐"
-          echo "  │ Expected Kernel Version String:                         │"
-          echo "  │   ${KERNEL_VER}-${ANDROID_VER}-g${COMMIT_HASH}          │"
-          echo "  └─────────────────────────────────────────────────────────┘"
-          echo ""
-          echo "  LOCALVERSION:     $CUSTOM_LOCALVERSION"
-          echo "  .scmversion:      $(cat .scmversion)"
-          echo ""
-          echo "════════════════════════════════════════════════════════════"
-          
-          # ═══════════════════════════════════════════════════════════════
-          # Verification (IMPROVED)
-          # ═══════════════════════════════════════════════════════════════
-          
-          echo ""
-          echo "🔍 Verification Checks:"
-          echo ""
-          
-          # Check 1: .scmversion exists
-          [ -f ".scmversion" ] && echo "  ✅ .scmversion exists" || echo "  ❌ .scmversion missing"
-          
-          # Check 2: setlocalversion patched (IMPROVED - checks for empty scm_version assignment)
-          if [ -f "scripts/setlocalversion" ]; then
-            if grep -qE 'scm_version=["\047]{0,2}["\047]' scripts/setlocalversion || \
-               ! grep -q 'scm_version.*scm_version --short' scripts/setlocalversion; then
-              echo "  ✅ setlocalversion patched (scm_version neutralized)"
-            else
-              echo "  ⚠️ setlocalversion may not be fully patched"
-              echo "     (This is usually safe if .scmversion exists)"
-            fi
-          fi
-          
-          # Check 3: Android version format
-          [[ "$ANDROID_VER" =~ ^android[0-9]+$ ]] && \
-            echo "  ✅ Android version format valid: $ANDROID_VER" || \
-            echo "  ❌ Android version format invalid: $ANDROID_VER"
-          
-          # Check 4: LOCALVERSION set
-          [ -n "$CUSTOM_LOCALVERSION" ] && \
-            echo "  ✅ LOCALVERSION set: $CUSTOM_LOCALVERSION" || \
-            echo "  ❌ LOCALVERSION not set"
-          
-          # Check 5: CONFIG_LOCALVERSION_AUTO disabled
-          if [ -f "$DEFCONFIG_PATH/$DEFCONFIG_FILE" ]; then
-            if grep -q "# CONFIG_LOCALVERSION_AUTO is not set" "$DEFCONFIG_PATH/$DEFCONFIG_FILE"; then
-              echo "  ✅ CONFIG_LOCALVERSION_AUTO disabled in defconfig"
-            elif ! grep -q "CONFIG_LOCALVERSION_AUTO=y" "$DEFCONFIG_PATH/$DEFCONFIG_FILE"; then
-              echo "  ✅ CONFIG_LOCALVERSION_AUTO not enabled (safe)"
-            else
-              echo "  ⚠️ CONFIG_LOCALVERSION_AUTO still enabled in defconfig"
-            fi
-          fi
-          
-          echo ""
-          echo "════════════════════════════════════════════════════════════"
-          echo ""
+          echo "Expected format: ${KERNEL_VER}${CUSTOM_BRAND}"
+          echo "Example: 6.1.118-android14-OP-Numbersf"
+          echo "============================================"
           
           echo "::endgroup::"
 
@@ -2056,19 +1951,7 @@ jobs:
           # Find Kernel Image
           # ═══════════════════════════════════════════════════════════════
           
-          IMG_PATHS=(
-            "out/arch/arm64/boot/Image"
-            "../out/arch/arm64/boot/Image"
-            "$(find . -type f -name 'Image' -path '*/arch/arm64/boot/*' -printf '%T@ %p\n' 2>/dev/null | sort -rn | awk 'NR==1{print $2}' || echo '')"
-          )
-          
-          IMG=""
-          for path in "${IMG_PATHS[@]}"; do
-            if [ -n "$path" ] && [ -f "$path" ]; then
-              IMG="$path"
-              break
-            fi
-          done
+          IMG=$(find . -type f -name 'Image' -path '*/arch/arm64/boot/*' -print -quit 2>/dev/null)
           
           if [ -z "$IMG" ] || [ ! -f "$IMG" ]; then
             echo "⚠️ Kernel Image not found, skipping verification"
@@ -2081,36 +1964,23 @@ jobs:
           # ═══════════════════════════════════════════════════════════════
           
           VERSION=$(strings "$IMG" | grep "Linux version" | head -n1)
-          
-          if [ -z "$VERSION" ]; then
-            echo "::error::Could not extract version string from Image"
-            echo "::endgroup::"
-            exit 1
-          fi
+          KERNEL_VERSION=$(echo "$VERSION" | grep -oP 'Linux version \K[^ ]+' || echo "unknown")
           
           echo ""
           echo "============================================"
           echo "✅ Kernel Version Verification"
           echo "============================================"
-          echo "Full version string:"
-          echo "$VERSION"
+          echo "Full version: $VERSION"
           echo ""
-          
-          # ═══════════════════════════════════════════════════════════════
-          # Parse Version Components
-          # ═══════════════════════════════════════════════════════════════
-          
-          # Extract just the version number (e.g., "6.1.118-android15-gbe22e816e834")
-          KERNEL_VERSION=$(echo "$VERSION" | grep -oP 'Linux version \K[^ ]+' || echo "unknown")
-          
           echo "Kernel version: $KERNEL_VERSION"
           echo ""
           
           # ═══════════════════════════════════════════════════════════════
-          # Validation Checks
+          # Dynamic Validation
           # ═══════════════════════════════════════════════════════════════
           
           VALIDATION_PASSED=true
+          ANDROID_BASE="${{ env.KANDROID_VERSION }}"
           
           # Check 1: No -dirty flag
           if echo "$KERNEL_VERSION" | grep -q "dirty"; then
@@ -2120,72 +1990,49 @@ jobs:
             echo "✅ PASS: No -dirty flag"
           fi
           
-          # Check 2: Android kernel version present (UPDATED - now uses ANDROID_VERSION_KERNEL)
-          EXPECTED_ANDROID_K="${{ env.ANDROID_VERSION_KERNEL }}"
-          if [ -n "$EXPECTED_ANDROID_K" ] && echo "$KERNEL_VERSION" | grep -qE "\-${EXPECTED_ANDROID_K}(/|$|-)"; then
-            echo "✅ PASS: Android kernel tag present (-${EXPECTED_ANDROID_K})"
+          # Check 2: Contains Android base
+          if echo "$KERNEL_VERSION" | grep -q "$ANDROID_BASE"; then
+            echo "✅ PASS: Android base present ($ANDROID_BASE)"
           else
-            echo "❌ FAIL: Android kernel tag (-androidNN) not found (expected: -${EXPECTED_ANDROID_K})"
-            echo "   Actual version: $KERNEL_VERSION"
+            echo "❌ FAIL: Android base not found (expected: $ANDROID_BASE)"
             VALIDATION_PASSED=false
           fi
           
-          # Check 3: Git hash present
-          if echo "$KERNEL_VERSION" | grep -qE '\-g[0-9a-f]{7,12}'; then
-            GIT_HASH=$(echo "$KERNEL_VERSION" | grep -oE 'g[0-9a-f]{7,12}' | head -1)
-            echo "✅ PASS: Git hash present ($GIT_HASH)"
+          # Check 3: Contains OP-Numbersf
+          if echo "$KERNEL_VERSION" | grep -q "OP-Numbersf"; then
+            echo "✅ PASS: Custom brand present (OP-Numbersf)"
           else
-            echo "⚠️ WARNING: Git hash not found"
+            echo "❌ FAIL: Custom brand not found"
+            VALIDATION_PASSED=false
           fi
           
-          # Check 4: No custom branding (should only have android version)
-          if echo "$KERNEL_VERSION" | grep -qE '\-(Numbersf|UltraBolt|custom)'; then
-            echo "⚠️ WARNING: Custom branding detected (expected clean format)"
+          # Check 4: Expected format (X.Y.Z-androidNN-OP-Numbersf)
+          if echo "$KERNEL_VERSION" | grep -qE "^[0-9]+\.[0-9]+\.[0-9]+-android[0-9]+-OP-Numbersf$"; then
+            echo "✅ PASS: Perfect format (X.Y.Z-${ANDROID_BASE}-OP-Numbersf)"
           else
-            echo "✅ PASS: Clean format (no custom branding)"
-          fi
-          
-          # Check 5: Expected format
-          if echo "$KERNEL_VERSION" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+-android[0-9]+-g[0-9a-f]+$'; then
-            echo "✅ PASS: Matches expected format (X.Y.Z-androidNN-gHASH)"
-          else
-            echo "ℹ️ INFO: Format differs from expected (may have additional components)"
+            echo "⚠️ INFO: Format differs slightly (may have extra components)"
           fi
           
           echo ""
           echo "============================================"
           
           if [ "$VALIDATION_PASSED" = true ]; then
-            echo "✅ All critical validations passed"
+            echo "✅ All validations passed"
           else
-            echo "❌ Critical validations failed (see above)"
+            echo "❌ Validation failed"
             echo ""
-            echo "::group::Debugging Information"
-            echo "Expected Android kernel tag: -${EXPECTED_ANDROID_K}"
-            echo "Actual kernel version: $KERNEL_VERSION"
+            echo "Expected: X.Y.Z-${ANDROID_BASE}-OP-Numbersf"
+            echo "Actual: $KERNEL_VERSION"
             echo ""
-            echo "Environment variables:"
-            echo "  ANDROID_VERSION: ${{ env.ANDROID_VERSION }}"
-            echo "  ANDROID_VERSION_KERNEL: ${{ env.ANDROID_VERSION_KERNEL }}"
-            echo "  CUSTOM_LOCALVERSION: ${{ env.CUSTOM_LOCALVERSION }}"
-            echo ""
-            echo "Branding files:"
-            [ -f ".scmversion" ] && echo "  .scmversion: $(cat .scmversion)" || echo "  .scmversion: NOT FOUND"
-            echo "::endgroup::"
-            echo ""
-            echo "::error::Kernel version validation failed - version string does not match expected format"
+            echo "::error::Kernel version validation failed"
             exit 1
           fi
           
           echo "============================================"
-          echo ""
           
-          # ═══════════════════════════════════════════════════════════════
-          # Export for Summary
-          # ═══════════════════════════════════════════════════════════════
-          
+          # Export for summary
           echo "FINAL_KERNEL_VERSION=$KERNEL_VERSION" >> $GITHUB_ENV
-      
+          
           echo "::endgroup::"
           
       - name: Make AnyKernel3
