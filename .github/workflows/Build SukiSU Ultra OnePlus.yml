@@ -1015,6 +1015,18 @@ jobs:
           done
           
           # ═══════════════════════════════════════════════════════════════
+          # Normalize CLANG_VERSION (add "clang-" prefix if missing)
+          # ═══════════════════════════════════════════════════════════════
+          
+          if [ -n "$CLANG_VERSION" ]; then
+            # Check if it already has "clang-" prefix
+            if [[ ! "$CLANG_VERSION" =~ ^clang- ]]; then
+              echo "  → Normalizing version: $CLANG_VERSION → clang-$CLANG_VERSION"
+              CLANG_VERSION="clang-$CLANG_VERSION"
+            fi
+          fi
+          
+          # ═══════════════════════════════════════════════════════════════
           # Fallback: Detect from available prebuilts
           # ═══════════════════════════════════════════════════════════════
           
@@ -1024,7 +1036,7 @@ jobs:
             PREBUILTS_DIR="./prebuilts/clang/host/linux-x86"
             
             if [ -d "$PREBUILTS_DIR" ]; then
-              # Find the newest clang directory
+              # Find the newest clang directory (with clang- prefix)
               CLANG_VERSION=$(ls -1 "$PREBUILTS_DIR" 2>/dev/null | \
                 grep -E '^clang-r[0-9]+' | sort -V | tail -n1 || true)
               
@@ -1053,7 +1065,19 @@ jobs:
             echo "::group::Available paths"
             find ./prebuilts/clang/host/linux-x86 -maxdepth 2 -type d -name "bin" 2>/dev/null || true
             echo "::endgroup::"
-            exit 1
+            
+            # Try one more fallback: find any clang-r* directory
+            echo "::group::Attempting emergency fallback"
+            FALLBACK_CLANG=$(find ./prebuilts/clang/host/linux-x86 -maxdepth 1 -type d -name "clang-r*" | head -n1)
+            if [ -n "$FALLBACK_CLANG" ]; then
+              CLANG_VERSION=$(basename "$FALLBACK_CLANG")
+              CLANG_PATH="$FALLBACK_CLANG/bin"
+              echo "⚠️ Using fallback: $CLANG_VERSION"
+              echo "::endgroup::"
+            else
+              echo "::endgroup::"
+              exit 1
+            fi
           fi
           
           if [ ! -f "$CLANG_PATH/clang" ]; then
