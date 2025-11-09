@@ -254,16 +254,7 @@ jobs:
 
       - name: Check Disk Space
         run: df -h
-
-      - name: Create and Enable 3G Swap
-        run: |
-          sudo swapoff -a
-          sudo fallocate -l 3G /swapfile
-          sudo chmod 600 /swapfile
-          sudo mkswap /swapfile
-          sudo swapon /swapfile
-          free -h
-
+      
       - name: Set Cache Environment
         run: |
           echo "CCACHE_DIR=$HOME/.ccache_${{ github.event.inputs.FILE }}" >> $GITHUB_ENV
@@ -280,12 +271,18 @@ jobs:
         run: |
           set -euo pipefail
           echo "::group::Install dependencies"
+          
           sudo apt-get -qq update
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-            clang lld libelf-dev libssl-dev dwarves bc dos2unix
+            clang lld libelf-dev libssl-dev dwarves bc dos2unix ccache
+          
           sudo apt-get clean
+          
+          echo "Verifying installations:"
           clang --version | head -1
-          pahole --version || echo "⚠️ pahole not found"
+          pahole --version
+          ccache --version | head -1
+          
           echo "✅ Dependencies installed"
           echo "::endgroup::"
 
