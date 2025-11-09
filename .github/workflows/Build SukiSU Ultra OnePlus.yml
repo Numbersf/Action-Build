@@ -65,7 +65,7 @@ on:
         type: string
         description: "分支名(必填)/自定义版本标识(留空不修改)/调整提交hash(留空不修改)"
         required: false
-        default: "susfs-main/Numbersf/"
+        default: "susfs-main/Numbersf/343c6452cf84daaa1cfe44643505a09b61a7b762"
       BUILD_TIME:
         type: string
         description: "自定义构建时间 (输入F使用当前时间)"
