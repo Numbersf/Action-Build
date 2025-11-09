@@ -66,16 +66,6 @@ on:
         description: "分支名(必填)/自定义版本标识(留空不修改)/调整提交hash(留空不修改)"
         required: false
         default: "susfs-main/Numbersf/"
-      BUILD_TIME:
-        type: string
-        description: "自定义构建时间 (输入F使用当前时间)"
-        required: false
-        default: "Mon Aug 18 09:30:24 UTC 2025"
-      SUFFIX:
-        type: string
-        description: "自定义内核后缀 (不输入使用随机字符串)"
-        required: false
-        default: ""
       FAST_BUILD:
         type: boolean
         description: "是否启用极速构建？"
@@ -96,16 +86,29 @@ on:
         description: "是否添加更多ZRAM算法？"
         required: true
         default: false
+      optimize_level:
+        type: choice
+        description: "编译器优化等级: O2 (平衡) 或 O3 (激进)"
+        required: false
+        default: 'O2'
+        options:
+          - O2
+          - O3
+      clean:
+        type: boolean
+        description: "强制清洁构建(不使用ccache加速)"
+        required: false
+        default: false
 
 jobs:
   build:
-    name: ${{ github.event.inputs.FAST_BUILD == 'true' && ' [FAST]' || '' }}${{ github.event.inputs.SCHED == 'true' && ' [SCHED]' || '' }}${{ github.event.inputs.ZRAM == 'true' && ' [ZRAM]' || '' }}${{ github.event.inputs.LSM == 'true' && ' [LSM]' || '' }}For ${{ github.event.inputs.FILE }} ${{ github.event.inputs.SUFFIX }}
-    runs-on: ubuntu-latest
+    name: ${{ github.event.inputs.FAST_BUILD == 'true' && ' [FAST]' || '' }}${{ github.event.inputs.SCHED == 'true' && ' [SCHED]' || '' }}${{ github.event.inputs.ZRAM == 'true' && ' [ZRAM]' || '' }}${{ github.event.inputs.LSM == 'true' && ' [LSM]' || '' }}${{ github.event.inputs.optimize_level }}${{ github.event.inputs.clean == 'true' && ' [CLEAN]' || '' }}For ${{ github.event.inputs.FILE }}
+    runs-on: ubuntu-24.04
     env:
-      CCACHE_COMPILERCHECK: "%compiler% -dumpmachine; %compiler% -dumpversion"
+      CCACHE_COMPILERCHECK: "content"
       CCACHE_NOHASHDIR: "true"
       CCACHE_HARDLINK: "true"
-      CCACHE_MAXSIZE: 8G
+      CCACHE_MAXSIZE: 3G
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -239,18 +242,14 @@ jobs:
           echo "Selected BUILD_METHOD: ${{ env.BUILD_METHOD }}"
           echo "Selected FILE: ${{ github.event.inputs.FILE }}"
           echo "Custom KSU_META: ${{ github.event.inputs.KSU_META }}"
-          echo "Custom BUILD_TIME: ${{ github.event.inputs.BUILD_TIME }}"
-          echo -n "BUILD_TIME Unicode: "
-          python3 -c "print(''.join(f'U+{ord(c):04X} ' for c in '''${{ github.event.inputs.BUILD_TIME }}'''))"
-          echo "Custom SUFFIX: ${{ github.event.inputs.SUFFIX }}"
-          echo -n "SUFFIX Unicode: "
-          python3 -c "print(''.join(f'U+{ord(c):04X} ' for c in '''${{ github.event.inputs.SUFFIX }}'''))"
           echo "Selected SUSFS_CI: ${{ github.event.inputs.SUSFS_CI }}"
           echo "Selected HOOK: ${{ github.event.inputs.HOOK }}"
           echo "Selected LSM: ${{ github.event.inputs.LSM }}"
           echo "Selected FAST_BUILD: ${{ github.event.inputs.FAST_BUILD }}"
           echo "Selected SCHED: ${{ github.event.inputs.SCHED }}"
           echo "Selected ZRAM: ${{ github.event.inputs.ZRAM }}"
+          echo "Selected optimize_level: ${{ github.event.inputs.optimize_level }}"
+          echo "Selected clean: ${{ github.event.inputs.clean }}"
           echo "-----------------------"
 
       - name: Check Disk Space
@@ -282,29 +281,82 @@ jobs:
           packages: python3 git curl ccache libelf-dev build-essential flex bison libssl-dev libncurses-dev liblz4-tool zlib1g-dev libxml2-utils rsync unzip gawk dos2unix
           execute_install_scripts: true
 
+      - name: Setup ccache
+        run: |
+          set -euo pipefail
+          echo "::group::Setup ccache"
+          
+          CACHE_DIR="$HOME/.ccache_${{ github.event.inputs.FILE }}"
+          mkdir -p "$CACHE_DIR"
+          
+          {
+            echo "CCACHE_DIR=$CACHE_DIR"
+            echo "CCACHE_MAXSIZE=3G"
+            echo "CCACHE_BASEDIR=${GITHUB_WORKSPACE}"
+            echo "CCACHE_COMPILERCHECK=content"
+            echo "CCACHE_NOHASHDIR=true"
+            echo "CCACHE_IGNOREOPTIONS=--sysroot*"
+          } >> "$GITHUB_ENV"
+          
+          ccache -M 3G
+          ccache -o compression=true
+          ccache -o compression_level=6
+          ccache -o direct_mode=true
+          ccache -o hash_dir=false
+          ccache -o file_clone=true || true
+          ccache -o inode_cache=true || true
+          ccache -o umask=002
+          ccache -o sloppiness=file_macro,time_macros,include_file_mtime,include_file_ctime,pch_defines,system_headers,locale
+          
+          if ccache --help 2>&1 | grep -q 'depend_mode'; then
+            ccache -o depend_mode=true
+          fi
+          
+          if [ "${{ github.event.inputs.clean }}" = "true" ]; then
+            echo "CCACHE_DISABLE=1" >> "$GITHUB_ENV"
+            echo "⚠️ Clean build mode - ccache disabled"
+          else
+            echo "✅ ccache enabled (3G max)"
+          fi
+          
+          echo ""
+          echo "Cache configuration:"
+          echo "  Directory: $CACHE_DIR"
+          echo "  Max size: 3G"
+          echo "  File: ${{ github.event.inputs.FILE }}"
+          echo "  Android: ${{ env.ANDROID_VERSION }}"
+          echo "  Optimize: ${{ github.event.inputs.optimize_level }}"
+          echo "::endgroup::"
+
       - name: Restore Ccache
-        uses: actions/cache@v3
+        if: ${{ github.event.inputs.clean != 'true' }}
+        uses: actions/cache@v4
         with:
           path: ${{ env.CCACHE_DIR }}
-          key: ccache-${{ runner.os }}-${{ github.ref_name }}-${{ github.event.inputs.FILE }}-${{ env.BUILD_METHOD }}-${{ github.event.inputs.FAST_BUILD == 'true' && 'alpha' || 'beta' }}-16
+          key: ccache-suki-v5-${{ github.event.inputs.FILE }}-${{ env.ANDROID_VERSION }}-${{ env.KERNEL_VERSION }}-${{ github.event.inputs.optimize_level }}-${{ github.event.inputs.FAST_BUILD == 'true' && 'fast' || 'standard' }}
+          restore-keys: |
+            ccache-suki-v5-${{ github.event.inputs.FILE }}-${{ env.ANDROID_VERSION }}-${{ env.KERNEL_VERSION }}-
+            ccache-suki-v5-${{ github.event.inputs.FILE }}-${{ env.ANDROID_VERSION }}-
+            ccache-suki-v5-${{ github.event.inputs.FILE }}-
 
-      - name: Initialize Ccache
+      - name: Verify ccache
+        if: ${{ github.event.inputs.clean != 'true' }}
         run: |
-          INIT_FLAG="${{ env.CCACHE_DIR }}/.ccache_initialized"
-          if command -v ccache >/dev/null 2>&1; then
-            if [ ! -f "$INIT_FLAG" ]; then
-              echo "初始化 ccache (${{ env.CCACHE_DIR }})..."
-              mkdir -p "${{ env.CCACHE_DIR }}"
-              ccache -M ${{ env.CCACHE_MAXSIZE }}
-              touch "$INIT_FLAG"
-              echo "✅ ccache 初始化完成"
-            else
-              echo "✅ ccache 已初始化，跳过"
-            fi
+          set -euo pipefail
+          echo "::group::Verify ccache"
+          
+          if [ -d "$CCACHE_DIR" ] && find "$CCACHE_DIR" -type f -print -quit 2>/dev/null | grep -q .; then
+            echo "✅ Cache restored successfully"
+            echo ""
+            ccache -s | head -n 20
+            echo ""
+            echo "Cache size: $(du -sh "$CCACHE_DIR" 2>/dev/null | cut -f1)"
           else
-            echo "❌ 未安装 ccache，跳过"
+            echo "ℹ️ No cache restored - cold build"
+            echo "Cache will be populated for future builds"
           fi
-          ccache -s
+          
+          echo "::endgroup::"
 
       - name: Install Repo Tool
         run: |
@@ -357,122 +409,11 @@ jobs:
             echo "No BRANCH found in build.config files"
           fi
 
-          # 从 Makefile 获取完整内核版本号(TKERNEL_VERSION)以及可选的修改内核等级
+          # 从 Makefile 获取完整内核版本号(TKERNEL_VERSION)
           ORIG_VERSION=$(awk '/^VERSION =/ {v=$3} /^PATCHLEVEL =/ {p=$3} /^SUBLEVEL =/ {s=$3} END {print v"."p"."s}' ./common/Makefile)
 
-          # 强制修改 SUBLEVEL(内核等级)，默认关闭
-          # sed -i 's/^SUBLEVEL[[:space:]]*=[[:space:]]*.*/SUBLEVEL = 99/' ./common/Makefile
-
-          # 读取修改后的版本
-          NEW_VERSION=$(awk '/^VERSION =/ {v=$3} /^PATCHLEVEL =/ {p=$3} /^SUBLEVEL =/ {s=$3} END {print v"."p"."s}' ./common/Makefile)
-
-          if [ "$ORIG_VERSION" != "$NEW_VERSION" ]; then
-            echo "Kernel Version:$ORIG_VERSION->$NEW_VERSION"
-            echo "TKERNEL_VERSION=$NEW_VERSION" >> $GITHUB_ENV
-          else
-            echo "Kernel Version:$ORIG_VERSION No changes"
-            echo "TKERNEL_VERSION=$ORIG_VERSION" >> $GITHUB_ENV
-          fi
-
-      # 自定义内核后缀
-      - name: Custom Kernel Suffix if set
-        if: ${{ github.event.inputs.SUFFIX != '' }}
-        run: |
-          cd kernel_workspace
-          SUFFIX="${{ github.event.inputs.SUFFIX }}"
-          KANDROID_VERSION="${{ env.KANDROID_VERSION }}"
-          FAST_BUILD="${{ github.event.inputs.FAST_BUILD }}"
-
-          for path in \
-            kernel_platform/common/scripts/setlocalversion \
-            kernel_platform/msm-kernel/scripts/setlocalversion \
-            kernel_platform/external/dtc/scripts/setlocalversion; do
-
-            [ -f "$path" ] || continue
-
-            echo "Modifying: $path"
-
-            # Remove -dirty
-            sed -i 's/ -dirty//g' "$path"
-            sed -i '$i res=$(echo "$res" | sed '\''s/-dirty//g'\'')' "$path"
-
-            if grep -q 'KERNELVERSION.*scm_version' "$path"; then
-              echo "Detected NEW setlocalversion format"
-              sed -i "s|echo \"\${KERNELVERSION}.*scm_version}\"|echo \"\${KERNELVERSION}-${KANDROID_VERSION}-${SUFFIX}\"|" "$path"
-
-            elif grep -q 'echo "\$res"' "$path"; then
-              echo "Detected OLD setlocalversion format"
-              if [ "$FAST_BUILD" = "true" ]; then
-                echo "FAST_BUILD enabled: using static res"
-                sed -i "s/^res=.*/res=\"-${KANDROID_VERSION}-${SUFFIX}\"/" "$path"
-              else
-                echo "Standard build: injecting suffix via cut/echo"
-                if [[ -f ./kernel_platform/build_with_bazel.py ]]; then
-                  echo "使用官方脚本编译且当使用 build_with_bazel 时，可能受特殊符号数量限制，编译失败请修改"
-                  echo "When using the official script and building with build_with_bazel, the build may fail due to a limit on the number of special characters. Please modify the configuration if that happens."
-                fi
-                tac "$path" | sed "0,/echo \"\\\$res\"/s//res=\\\$(echo \\\$res | cut -d- -f1-2)-${SUFFIX}; echo \"\\\$res\";/" | tac > "$path.tmp" && mv "$path.tmp" "$path"
-              fi
-            else
-              echo "Unknown format, appending echo manually"
-              echo "echo \"\$res-${SUFFIX}\"" >> "$path"
-            fi
-
-            chmod +x "$path"
-          done
-
-          git add -A
-          git commit -m "Custom suffix & removed -dirty"
-
-      # 伪官方格式的随机后缀（仅在 SUFFIX 未设置时生效）*
-      - name: Custom Kernel Random Suffix if empty
-        if: ${{ github.event.inputs.SUFFIX == '' }}
-        run: |
-          cd kernel_workspace
-          KANDROID_VERSION="${{ env.KANDROID_VERSION }}"
-          FAST_BUILD="${{ github.event.inputs.FAST_BUILD }}"
-
-          # 生成随机数字和随机hash
-          RANDOM_DIGIT=$(od -An -N1 -tu1 < /dev/urandom | tr -d '[:space:]' | awk '{print $1 % 11}')
-          RANDOM_HASH=$(od -An -N7 -tx1 /dev/urandom | tr -d ' \n')
-          RANDOM_SUFFIX="${RANDOM_DIGIT}-o-g${RANDOM_HASH}"
-
-          for path in \
-            kernel_platform/common/scripts/setlocalversion \
-            kernel_platform/msm-kernel/scripts/setlocalversion \
-            kernel_platform/external/dtc/scripts/setlocalversion; do
-
-            [ -f "$path" ] || continue
-
-            echo "Modifying: $path"
-
-            # Remove -dirty
-            sed -i 's/ -dirty//g' "$path"
-            sed -i '$i res=$(echo "$res" | sed '\''s/-dirty//g'\'')' "$path"
-
-            if grep -q 'KERNELVERSION.*scm_version' "$path"; then
-              echo "Detected NEW setlocalversion format"
-              sed -i "s|echo \"\${KERNELVERSION}.*scm_version}\"|echo \"\${KERNELVERSION}-${KANDROID_VERSION}-${RANDOM_SUFFIX}\"|" "$path"
-
-            elif grep -q 'echo "\$res"' "$path"; then
-              echo "Detected OLD setlocalversion format"
-              if [ "$FAST_BUILD" = "true" ]; then
-                echo "FAST_BUILD enabled: using static res with random suffix"
-                sed -i "s/^res=.*/res=\"-${KANDROID_VERSION}-${RANDOM_SUFFIX}\"/" "$path"
-              else
-                echo "Standard build: injecting random suffix via cut/echo"
-                tac "$path" | sed "0,/echo \"\\\$res\"/s//res=\\\$(echo \\\$res | cut -d- -f1-2)-${RANDOM_SUFFIX}; echo \"\\\$res\";/" | tac > "$path.tmp" && mv "$path.tmp" "$path"
-              fi
-            else
-              echo "Unknown format, appending echo manually"
-              echo "echo \"\$res-${RANDOM_SUFFIX}\"" >> "$path"
-            fi
-
-            chmod +x "$path"
-          done
-
-          git add -A
-          git commit -m "Random suffix & remove -dirty"
+          echo "Kernel Version: $ORIG_VERSION"
+          echo "TKERNEL_VERSION=$ORIG_VERSION" >> $GITHUB_ENV
 
       - name: Add SukiSU Ultra
         run: |
@@ -787,31 +728,15 @@ jobs:
           # 移除构建审查
           sed -i 's/check_defconfig//' ./common/build.config.gki
 
-      # Custom kernel build time, without adding #1 SMP PREEMPT 自定义内核构建时间，不要加入#1 SMP PREEMPT
-      - name: Custom BUILD_TIME
-        shell: bash
+      - name: Customize Kernel Branding
         run: |
-          INPUT_TIME="${{ github.event.inputs.BUILD_TIME }}"
-          if [[ -n "$INPUT_TIME" && "$INPUT_TIME" != "F" && "$INPUT_TIME" != "f" ]]; then
-            DATESTR="$INPUT_TIME"
-            echo "Using input BUILD_TIME: $DATESTR"
-          else
-            DATESTR="$(TZ='UTC' date +'%a %b %d %T %Z %Y')"
-            echo "Using UTC time as fallback: $DATESTR"
-          fi
-          echo "KBUILD_BUILD_TIMESTAMP=${DATESTR}" >> "$GITHUB_ENV"
-          echo "KBUILD_BUILD_VERSION=1" >> "$GITHUB_ENV"
-          cd kernel_workspace/kernel_platform/
-          for f in common/scripts/mkcompile_h msm-kernel/scripts/mkcompile_h; do
-            if [ -f "$f" ]; then
-              echo "Patching mkcompile_h with BUILD_TIME=$DATESTR"
-              if grep -q 'UTS_VERSION=' "$f"; then
-                perl -pi -e "s{UTS_VERSION=\"\\\$\\(.*?\\)\"}{UTS_VERSION=\"#1 SMP PREEMPT $DATESTR\"}" "$f"
-              else
-                perl -0777 -pi -e "s{cat <<EOF}{cat <<EOF\n#undef UTS_VERSION\n#define UTS_VERSION \"#1 SMP PREEMPT $DATESTR\" } unless /UTS_VERSION/" "$f"
-              fi
-            fi
-          done
+          set -euo pipefail
+          KERNEL_PATH="$GITHUB_WORKSPACE/kernel_workspace/kernel_platform"
+          cd "$KERNEL_PATH/common"
+          mkdir -p out
+          CUSTOM_LOCALVERSION="-${{ env.ANDROID_VERSION }}-${{ github.event.inputs.optimize_level }}-UltraBolt"
+          echo "CUSTOM_LOCALVERSION=$CUSTOM_LOCALVERSION" >> $GITHUB_ENV
+          echo "Kernel branding: $CUSTOM_LOCALVERSION"
 
       - name: Enable lto=thin For FAST
         if: ${{ (env.KERNEL_VERSION == '5.10' || env.KERNEL_VERSION == '5.15') && github.event.inputs.FAST_BUILD == 'true' }}
@@ -827,7 +752,12 @@ jobs:
       - name: Build Kernel FAST
         if: ${{ github.event.inputs.FAST_BUILD == 'true' }}
         id: fast_build
+        env:
+          PYTHONWARNINGS: "ignore:invalid escape sequence"
         run: |
+          set -euo pipefail
+          echo "::group::Build kernel with ccache optimization"
+          
           KERNEL_VERSION="${{ env.KERNEL_VERSION }}"
           cd kernel_workspace/kernel_platform
 
@@ -875,25 +805,142 @@ jobs:
           echo "✅ CLANG_DIR=$CLANG_DIR"
           echo "✅ CLANG_PATH=$CLANG_PATH"
           echo "✅ USE_LLVM_IAS=$USE_LLVM_IAS"
+          echo "CLANG_VERSION_SHORT=$CLANG_VERSION" >> $GITHUB_ENV
 
           export PATH="$GITHUB_WORKSPACE/kernel_workspace/kernel_platform/$CLANG_PREBUILT_BIN:$PATH"
           export PATH="/usr/lib/ccache:$PATH"
           export CC="ccache clang"
           sudo apt install -y libelf-dev ccache
 
+          # Get last commit timestamp
           cd ./common
+          COMMIT_TIMESTAMP=$(git log -1 --format=%ct 2>/dev/null || echo "$(date +%s)")
+          COMMIT_DATE=$(git log -1 --format=%cd --date=format:'%Y-%m-%d %H:%M:%S' 2>/dev/null || date -u '+%Y-%m-%d %H:%M:%S')
+          COMMIT_HASH=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")
+          
+          export SOURCE_DATE_EPOCH=$COMMIT_TIMESTAMP
+          export KBUILD_BUILD_TIMESTAMP="$COMMIT_DATE UTC"
+          export KBUILD_BUILD_USER="builder"
+          export KBUILD_BUILD_HOST="github-actions"
+          export KBUILD_BUILD_VERSION=1
+          
+          echo "📅 Build timestamp: $KBUILD_BUILD_TIMESTAMP (from commit $COMMIT_HASH)"
+          echo "🔢 SOURCE_DATE_EPOCH: $SOURCE_DATE_EPOCH"
+
+          : > .scmversion
+
+          WORKSPACE="${GITHUB_WORKSPACE}"
+          MAP="-fdebug-prefix-map=${WORKSPACE}=."
+          MPMAP="-fmacro-prefix-map=${WORKSPACE}=."
+          FPMAP="-ffile-prefix-map=${WORKSPACE}=."
+          
+          export KCFLAGS="${KCFLAGS:-} $MAP $MPMAP $FPMAP -no-canonical-prefixes -fdiagnostics-color=never -Qunused-arguments -Wno-unused-command-line-argument"
+          export KCPPFLAGS="${KCPPFLAGS:-} $MAP $MPMAP $FPMAP"
+
           MAKE_ARGS="LLVM=1 ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- \
             RUSTC=../../prebuilts/rust/linux-x86/1.73.0b/bin/rustc \
             PAHOLE=../../prebuilts/kernel-build-tools/linux-x86/bin/pahole \
-            LD=ld.lld HOSTLD=ld.lld KCFLAGS+=-Wno-error"
+            LD=ld.lld HOSTLD=ld.lld"
 
           if [[ "$USE_LLVM_IAS" == "true" ]]; then
             MAKE_ARGS="LLVM_IAS=1 $MAKE_ARGS"
           fi
 
+          # Optimization level
+          if [ "${{ github.event.inputs.optimize_level }}" = "O3" ]; then
+            KCFLAGS_EXTRA="-O3"
+          else
+            KCFLAGS_EXTRA="-O2"
+          fi
+
+          KCFLAGS="$KCFLAGS -Wno-error -pipe -fno-stack-protector ${KCFLAGS_EXTRA}"
+          KCPPFLAGS="$KCPPFLAGS -DCONFIG_OPTIMIZE_INLINING"
+
+          echo "============================================"
+          echo "🔧 Build Configuration"
+          echo "============================================"
+          echo "Device: ${{ github.event.inputs.FILE }}"
+          echo "Kernel: ${{ env.TKERNEL_VERSION }}"
+          echo "Threads: $(nproc --all)"
+          echo "Optimization: ${{ github.event.inputs.optimize_level }}"
+          echo "Timestamp: $KBUILD_BUILD_TIMESTAMP"
+          
+          if [ "${{ github.event.inputs.clean }}" != "true" ]; then
+            echo "ccache: ENABLED (3G max)"
+            echo ""
+            echo "ccache pre-build status:"
+            ccache -s | head -n 20
+          else
+            echo "ccache: DISABLED"
+          fi
+          echo "============================================"
+
           make -j$(nproc --all) O=out $MAKE_ARGS gki_defconfig
-          make -j$(nproc --all) O=out $MAKE_ARGS
-          ccache -s
+          
+          if [ -n "${CUSTOM_LOCALVERSION:-}" ]; then
+            scripts/config --file out/.config --set-str LOCALVERSION "${CUSTOM_LOCALVERSION}"
+            scripts/config --file out/.config -d LOCALVERSION_AUTO || true
+            sed -i 's/scm_version="$(scm_version --short)"/scm_version=""/' scripts/setlocalversion
+          fi
+
+          if [ "${{ github.event.inputs.optimize_level }}" = "O3" ]; then
+            scripts/config --file out/.config -d CC_OPTIMIZE_FOR_PERFORMANCE
+            scripts/config --file out/.config -e CC_OPTIMIZE_FOR_PERFORMANCE_O3
+          else
+            scripts/config --file out/.config -e CC_OPTIMIZE_FOR_PERFORMANCE
+            scripts/config --file out/.config -d CC_OPTIMIZE_FOR_PERFORMANCE_O3
+          fi
+          
+          scripts/config --file out/.config -e LTO_CLANG_THIN
+          scripts/config --file out/.config -e LTO_CLANG
+          make O=out olddefconfig
+
+          BUILD_START=$(date +%s)
+          set -o pipefail
+          
+          make -j$(nproc --all) O=out KCFLAGS="$KCFLAGS" KCPPFLAGS="$KCPPFLAGS" $MAKE_ARGS 2>&1 | tee build.log
+          
+          if [ -f build.log ]; then
+            LOG_SIZE=$(stat -c%s build.log)
+            if [ "$LOG_SIZE" -gt 8388608 ]; then
+              echo "⚠️ Build log is ${LOG_SIZE} bytes, trimming to last 8MB..."
+              tail -c 8388608 build.log > build.last8m.log
+              mv build.last8m.log build.log
+            fi
+          fi
+          
+          BUILD_END=$(date +%s)
+          BUILD_TIME=$((BUILD_END - BUILD_START))
+          
+          echo "BUILD_START=$BUILD_START" >> "$GITHUB_ENV"
+          echo "BUILD_END=$BUILD_END" >> "$GITHUB_ENV"
+          echo "BUILD_TIME=$BUILD_TIME" >> "$GITHUB_ENV"
+          
+          IMG="out/arch/arm64/boot/Image"
+          if [ ! -f "$IMG" ]; then
+            echo "::error::Kernel Image missing"
+            echo "::group::Last 100 lines of build log"
+            tail -n 100 build.log || echo "Build log not available"
+            echo "::endgroup::"
+            exit 1
+          fi
+          
+          IMG_SIZE=$(stat -c%s "$IMG")
+          
+          echo "============================================"
+          echo "✅ Build Completed Successfully"
+          echo "============================================"
+          echo "Duration: $((BUILD_TIME / 60))m $((BUILD_TIME % 60))s"
+          echo "Image: $(numfmt --to=iec-i --suffix=B "$IMG_SIZE")"
+          
+          if [ "${{ github.event.inputs.clean }}" != "true" ]; then
+            echo ""
+            echo "📊 ccache Post-Build Statistics"
+            echo "============================================"
+            ccache -s
+          fi
+          echo "============================================"
+          echo "::endgroup::"
 
       - name: Fallback to Build Kernel
         if: ${{ github.event.inputs.FAST_BUILD == 'false' || steps.fast_build.outputs.fallback == 'true' }}
@@ -999,16 +1046,25 @@ jobs:
             fi
           fi
 
+      
       - name: Set zip Suffix
         id: suffix
         run: |
-          echo "value=${{ github.event.inputs.ZRAM == 'true' && '_LZ4KD' || '' }}${{ github.event.inputs.LSM == 'true' && '_LSM' || '' }}${{ github.event.inputs.HOOK == 'kprobe' && '_KP' || github.event.inputs.HOOK == 'manual' && '_VFS' || github.event.inputs.HOOK == 'tracepoint' && '_TP' || '' }}${{ github.event.inputs.SCHED== 'true' && '_SCHED' || '' }}" >> $GITHUB_OUTPUT
+          echo "value=${{ github.event.inputs.ZRAM == 'true' && '_LZ4KD' || '' }}${{ github.event.inputs.LSM == 'true' && '_LSM' || '' }}${{ github.event.inputs.HOOK == 'kprobe' && '_KP' || github.event.inputs.HOOK == 'manual' && '_VFS' || github.event.inputs.HOOK == 'tracepoint' && '_TP' || '' }}${{ github.event.inputs.SCHED== 'true' && '_SCHED' || '' }}${{ github.event.inputs.optimize_level == 'O3' && '_O3' || '_O2' }}" >> $GITHUB_OUTPUT
 
       - name: Upload AnyKernel3
         uses: actions/upload-artifact@v4
         with:
           name: AnyKernel3_SukiSUUltra_${{ env.KSUVER }}_${{ steps.extract_info.outputs.value }}(${{ env.TKERNEL_VERSION }})${{ steps.suffix.outputs.value }}
           path: ./AnyKernel3/*
+
+      - name: Upload Build Log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log-${{ github.event.inputs.FILE }}-${{ github.run_number }}
+          path: kernel_workspace/kernel_platform/common/build.log
+          retention-days: 7
 
       - name: Download and Unzip ZRAM
         if: ${{ github.event.inputs.ZRAM == 'true' }}
@@ -1077,3 +1133,55 @@ jobs:
 
       - name: Post-build Disk Check
         run: df -h
+
+      - name: Build Summary
+        if: always()
+        run: |
+          echo "## 🎉 Build Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Parameter | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|-----------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Device | ${{ github.event.inputs.FILE }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Kernel Version | ${{ env.TKERNEL_VERSION }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Android Version | ${{ env.ANDROID_VERSION }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Optimization | ${{ github.event.inputs.optimize_level }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Fast Build | ${{ github.event.inputs.FAST_BUILD }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Clean Build | ${{ github.event.inputs.clean }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Hook Type | ${{ github.event.inputs.HOOK }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| LSM Enabled | ${{ github.event.inputs.LSM }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| SCHED Enabled | ${{ github.event.inputs.SCHED }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| ZRAM Enabled | ${{ github.event.inputs.ZRAM }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| KSU Meta | ${{ github.event.inputs.KSU_META }} |" >> $GITHUB_STEP_SUMMARY
+          
+          if [ -n "${{ env.BUILD_TIME }}" ]; then
+            echo "| Build Duration | ${{ env.BUILD_TIME }}s ($((env.BUILD_TIME / 60))m $((env.BUILD_TIME % 60))s) |" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          if [ -n "${{ env.CLANG_VERSION_SHORT }}" ]; then
+            echo "| Clang Version | ${{ env.CLANG_VERSION_SHORT }} |" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 📦 Artifacts" >> $GITHUB_STEP_SUMMARY
+          echo "- AnyKernel3 package with kernel image" >> $GITHUB_STEP_SUMMARY
+          if [ "${{ github.event.inputs.ZRAM }}" = "true" ]; then
+            echo "- ZRAM module" >> $GITHUB_STEP_SUMMARY
+          fi
+          if [ "${{ github.event.inputs.SUSFS_CI }}" != "NoN" ]; then
+            echo "- SUSFS module (${{ github.event.inputs.SUSFS_CI }})" >> $GITHUB_STEP_SUMMARY
+          fi
+          echo "- SukiSU-Ultra APK" >> $GITHUB_STEP_SUMMARY
+          echo "- Build log" >> $GITHUB_STEP_SUMMARY
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 🔧 Build Configuration" >> $GITHUB_STEP_SUMMARY
+          echo "- Kernel branding: \`${CUSTOM_LOCALVERSION}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- Optimization flags: ${{ github.event.inputs.optimize_level }}" >> $GITHUB_STEP_SUMMARY
+          
+          if [ "${{ github.event.inputs.clean }}" != "true" ] && [ "${{ github.event.inputs.FAST_BUILD }}" = "true" ]; then
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "### 📊 ccache Statistics" >> $GITHUB_STEP_SUMMARY
+            echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+            ccache -s 2>/dev/null | head -n 15 >> $GITHUB_STEP_SUMMARY || echo "ccache stats not available" >> $GITHUB_STEP_SUMMARY
+            echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          fi
