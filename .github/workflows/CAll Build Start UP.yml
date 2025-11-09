@@ -11,10 +11,23 @@ on:
         description: "我已看完README.md,了解此工作流的风险和作用,有能力取消卡住的工作流运行和删除缓存,并执意继续运行"
         required: true
         default: "请输入完整标题"
+      optimize_level:
+        type: choice
+        description: "编译器优化等级: O2 (平衡) 或 O3 (激进)"
+        required: false
+        default: 'O2'
+        options:
+          - O2
+          - O3
+      clean:
+        type: boolean
+        description: "强制清洁构建(不使用ccache加速)"
+        required: false
+        default: false
 
 jobs:
   generate-matrix:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     outputs:
       matrix: ${{ steps.set-matrix.outputs.matrix }}
     steps:
@@ -52,7 +65,7 @@ jobs:
               "oneplus_ace2_pro_v"
               "oneplus_ace3_v"
               "oneplus_open_v"
-              "oneplus12_v"
+              "oneplus_12_v"
               "oneplus_13r"
               "oneplus_ace3_pro_v"
               "oneplus_ace5"
@@ -63,11 +76,22 @@ jobs:
               "oneplus_pad2_v"
               "oneplus_nord_5"
               "oneplus_ace5_pro"
+              "oneplus_ace5_pro_b"
               "oneplus_13"
+              "oneplus_13_b"
+              "oneplus_13_global"
               "oneplus_13t"
+            )
+          elif [[ "$BATCH" == "4" ]]; then
+            FILE_LIST=(
+              "oneplus_13t_b"
               "oneplus_13s"
+              "oneplus_13s_b"
               "oneplus_pad_2_pro"
               "oneplus_pad_3"
+              "oneplus_ace5_ultra"
+              "oneplus_ace_6"
+              "oneplus_15"
             )
           else
             echo "无效的 BATCH 值: $BATCH"
@@ -82,8 +106,16 @@ jobs:
               enable_sched: (
                 . == "oneplus_pad_2_pro" or
                 . == "oneplus_13" or
+                . == "oneplus_13_b" or
+                . == "oneplus_13_global" or
                 . == "oneplus_13t" or
-                . == "oneplus_ace5_pro"
+                . == "oneplus_13t_b" or
+                . == "oneplus_13s" or
+                . == "oneplus_13s_b" or
+                . == "oneplus_ace5_pro" or
+                . == "oneplus_ace5_pro_b" or
+                . == "oneplus_ace5_ultra" or
+                . == "oneplus_15"
               )
             })
           ')
@@ -91,9 +123,10 @@ jobs:
 
   build:
     needs: generate-matrix
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
+      max-parallel: 9
       matrix:
         include: ${{ fromJson(needs.generate-matrix.outputs.matrix) }}
     steps:
@@ -107,13 +140,13 @@ jobs:
               "FILE": "${{ matrix.file }}",
               "SUSFS_CI": "NoN",
               "KSU_META": "susfs-main/Numbersf/",
-              "BUILD_TIME": "F",
-              "SUFFIX": "",
               "FAST_BUILD": "true",
               "HOOK": "manual",
               "LSM": "true",
               "SCHED": "${{ matrix.enable_sched }}",
-              "ZRAM": "false"
+              "ZRAM": "false",
+              "optimize_level": "${{ github.event.inputs.optimize_level }}",
+              "clean": "${{ github.event.inputs.clean }}"
             }
 
       - name: Wait for Builds to Finish or Exit Early
@@ -124,9 +157,16 @@ jobs:
           echo "等待目标构建 $FILE 上传对应 Artifact..."
 
           SECONDS=0
-          MAX_TIME=$((35 * 60))  # 最大等待35分钟
-          echo "优先等待生成...休息10min"
-          sleep 600
+          MAX_TIME=$((45 * 60))  # 最大等待45分钟（考虑到可能的clean build）
+          
+          # 如果是clean build，等待更久
+          if [[ "${{ github.event.inputs.clean }}" == "true" ]]; then
+            echo "检测到 clean build，延长初始等待时间..."
+            sleep 900  # 等待15分钟
+          else
+            echo "优先等待生成...休息10min"
+            sleep 600
+          fi
 
           while (( SECONDS < MAX_TIME )); do
             echo "查询已上传的 Artifact（已等待 $SECONDS 秒）..."
@@ -136,7 +176,7 @@ jobs:
 
             MATCHED=0
             for ART in $ALL_ARTIFACTS; do
-              if [[ "$ART" == *"$FILE"* ]]; then
+              if [[ "$ART" == *"$FILE"* && "$ART" == *"AnyKernel3"* ]]; then
                 echo "✅ 找到匹配的 Artifact: $ART，构建成功！"
                 MATCHED=1
                 break
@@ -144,6 +184,8 @@ jobs:
             done
 
             if [[ $MATCHED -eq 1 ]]; then
+              echo "构建完成，等待额外2分钟确保上传完整..."
+              sleep 120
               exit 0
             fi
 
@@ -155,13 +197,15 @@ jobs:
           exit 1
 
       - name: Clean ccache After Build
+        if: always()
+        continue-on-error: true
         run: |
           echo "Cleaning ccache for $HOME/.ccache_${{ matrix.file }} ..."
           rm -rf "$HOME/.ccache_${{ matrix.file }}"
 
   wait-and-download:
     needs: build
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
@@ -199,7 +243,7 @@ jobs:
               "oneplus_ace2_pro_v"
               "oneplus_ace3_v"
               "oneplus_open_v"
-              "oneplus12_v"
+              "oneplus_12_v"
               "oneplus_13r"
               "oneplus_ace3_pro_v"
               "oneplus_ace5"
@@ -210,11 +254,22 @@ jobs:
               "oneplus_pad2_v"
               "oneplus_nord_5"
               "oneplus_ace5_pro"
+              "oneplus_ace5_pro_b"
               "oneplus_13"
+              "oneplus_13_b"
+              "oneplus_13_global"
               "oneplus_13t"
+            )
+          elif [[ "$BATCH" == "4" ]]; then
+            FILE_LIST=(
+              "oneplus_13t_b"
               "oneplus_13s"
+              "oneplus_13s_b"
               "oneplus_pad_2_pro"
               "oneplus_pad_3"
+              "oneplus_ace5_ultra"
+              "oneplus_ace_6"
+              "oneplus_15"
             )
           else
             echo "无效的 BATCH 值: $BATCH"
@@ -228,22 +283,27 @@ jobs:
             SHORT_LIST+=("$SHORT")
           done
 
+          echo "等待所有构建完成，休息5分钟..."
+          sleep 300
+
           ALL_ARTIFACTS=$(gh api repos/${{ github.repository }}/actions/artifacts --jq '.artifacts[].name')
 
           MATCHED_ARTIFACTS=()
           for FILE in "${SHORT_LIST[@]}"; do
             for ART in $ALL_ARTIFACTS; do
-              if [[ "$ART" == *"$FILE"* ]]; then
+              if [[ "$ART" == *"$FILE"* && "$ART" == *"AnyKernel3"* ]]; then
                 MATCHED_ARTIFACTS+=("$ART")
+                break
               fi
             done
           done
 
           if [[ "${#MATCHED_ARTIFACTS[@]}" -eq 0 ]]; then
-            echo "没有匹配的 Artifact，终止"
+            echo "❌ 没有匹配的 Artifact，终止"
             exit 1
           fi
 
+          echo "✅ 找到 ${#MATCHED_ARTIFACTS[@]} 个匹配的 Artifacts"
           ARTIFACT_NAMES=$(IFS=";"; echo "${MATCHED_ARTIFACTS[*]}")
           echo "ARTIFACT_NAMES=$ARTIFACT_NAMES" >> "$GITHUB_OUTPUT"
 
@@ -253,26 +313,88 @@ jobs:
         run: |
           mkdir -p all_artifacts
           IFS=';' read -ra NAMES <<< "${{ steps.list-artifacts.outputs.ARTIFACT_NAMES }}"
+          
+          TOTAL=${#NAMES[@]}
+          CURRENT=0
+          
           for NAME in "${NAMES[@]}"; do
-            echo "查找 artifact $NAME 的 ID..."
+            CURRENT=$((CURRENT + 1))
+            echo "[$CURRENT/$TOTAL] 查找 artifact $NAME 的 ID..."
+            
             ARTIFACT_ID=$(gh api repos/${{ github.repository }}/actions/artifacts --jq ".artifacts[] | select(.name==\"$NAME\") | .id")
+            
             if [[ -n "$ARTIFACT_ID" ]]; then
               echo "下载 $NAME (ID: $ARTIFACT_ID)..."
-              curl -L -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
-                   -o "all_artifacts/${NAME}.zip" \
-                   "https://api.github.com/repos/${{ github.repository }}/actions/artifacts/${ARTIFACT_ID}/zip"
+              
+              # 重试机制
+              MAX_RETRIES=3
+              RETRY=0
+              while [ $RETRY -lt $MAX_RETRIES ]; do
+                if curl -L -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+                     -o "all_artifacts/${NAME}.zip" \
+                     "https://api.github.com/repos/${{ github.repository }}/actions/artifacts/${ARTIFACT_ID}/zip"; then
+                  echo "✅ 下载成功: $NAME"
+                  break
+                else
+                  RETRY=$((RETRY + 1))
+                  echo "⚠️ 下载失败，重试 $RETRY/$MAX_RETRIES..."
+                  sleep 5
+                fi
+              done
+              
+              if [ $RETRY -eq $MAX_RETRIES ]; then
+                echo "❌ 下载失败: $NAME"
+              fi
             else
-              echo "未找到 $NAME 的 ID，跳过"
+              echo "⚠️ 未找到 $NAME 的 ID，跳过"
             fi
           done
 
       - name: Create Final ZIP from Extracted ZIPS
         run: |
           cd all_artifacts
-          zip -r ../All-AnyKernel3-SukiSUUltra-${{ github.event.inputs.BATCH }}.zip ./*
+          
+          # 统计下载的文件
+          FILE_COUNT=$(ls -1 *.zip 2>/dev/null | wc -l)
+          echo "成功下载 $FILE_COUNT 个 Artifact ZIP 文件"
+          
+          if [ $FILE_COUNT -eq 0 ]; then
+            echo "❌ 没有可打包的文件"
+            exit 1
+          fi
+          
+          # 创建最终压缩包
+          FINAL_NAME="All-AnyKernel3-SukiSUUltra-Batch${{ github.event.inputs.BATCH }}-${{ github.event.inputs.optimize_level }}"
+          
+          if [[ "${{ github.event.inputs.clean }}" == "true" ]]; then
+            FINAL_NAME="${FINAL_NAME}-CLEAN"
+          fi
+          
+          zip -r "../${FINAL_NAME}.zip" ./*
+          
+          echo "✅ 最终压缩包创建完成: ${FINAL_NAME}.zip"
+          echo "FINAL_NAME=${FINAL_NAME}" >> $GITHUB_ENV
 
       - name: Upload Combined ZIP Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: All-AnyKernel3-SukiSUUltra-${{ github.event.inputs.BATCH }}
-          path: All-AnyKernel3-SukiSUUltra-${{ github.event.inputs.BATCH }}.zip
+          name: ${{ env.FINAL_NAME }}
+          path: ${{ env.FINAL_NAME }}.zip
+          retention-days: 7
+
+      - name: Build Summary
+        if: always()
+        run: |
+          echo "## 🎉 Batch Build Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Parameter | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|-----------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Batch Number | ${{ github.event.inputs.BATCH }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Optimization | ${{ github.event.inputs.optimize_level }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Clean Build | ${{ github.event.inputs.clean }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Devices Built | $(ls -1 all_artifacts/*.zip 2>/dev/null | wc -l) |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 📦 Downloaded Artifacts" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          ls -lh all_artifacts/*.zip 2>/dev/null || echo "No artifacts found" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
