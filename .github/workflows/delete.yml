@@ -1,196 +1,402 @@
-name: Workflow and Cache Cleanup
+name: Cache Management
 
 on:
   workflow_dispatch:
     inputs:
-      workflow_name:
-        type: choice
-        description: '清理的工作流名称'
+      action:
+        description: 'Cache Action'
         required: true
-        default: 'Build OnePlus_SukiSU Ultra All'
+        type: choice
         options:
-          - Build OnePlus_SukiSU Ultra All
-          - CAll Build Start UP
-          - Build TEST
-          - Build TEST2
-      count:
-        description: '最多访问的运行次数'
+          - 'list-all'
+          - 'list-ccache'
+          - 'list-apt'
+          - 'delete-ccache'
+          - 'delete-apt'
+          - 'delete-all'
+          - 'delete-old'
+          - 'delete-by-device'
+          - 'show-stats'
+      device_filter:
+        description: 'Device name filter (for delete-by-device)'
         required: false
-        default: '20'
-      delete_failed:
-        description: '删除指定工作流失败的运行记录？'
+        type: string
+      days_old:
+        description: 'Delete caches older than X days (for delete-old)'
         required: false
-        type: boolean
-        default: true
-      delete_success:
-        description: '删除指定工作流成功的运行记录？'
+        type: number
+        default: 7
+      confirmation:
+        description: 'Type "CONFIRM" to proceed with deletion'
         required: false
-        type: boolean
-        default: false
-      delete_cancelled:
-        description: '删除指定工作流取消的运行记录？'
-        required: false
-        type: boolean
-        default: false
-      reverse_order:
-        description: '从旧到新开始清理？'
-        required: false
-        type: boolean
-        default: false
-      clear_cache:
-        description: '是否删除所有缓存？'
-        required: false
-        type: boolean
-        default: false
-      cancel_all:
-        description: '是否一键取消指定工作流的所有运行？'
-        required: false
-        type: boolean
-        default: false
+        type: string
 
-permissions:
-  actions: write
+  schedule:
+    # Auto cleanup every Sunday at 00:00 UTC
+    - cron: '0 0 * * 0'
 
 jobs:
-  cleanup:
-    runs-on: ubuntu-latest
-
+  manage-cache:
+    runs-on: ubuntu-24.04
     steps:
-      - name: 安装环境
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup GitHub CLI
         run: |
-          sudo apt-get update
-          sudo apt-get install -y gh jq
+          sudo apt update && sudo apt install -y gh jq
+          echo "${{ secrets.GITHUB_TOKEN }}" | gh auth login --with-token
 
-      - name: 认证 GitHub CLI
-        run: echo "${{ secrets.GITHUB_TOKEN }}" | gh auth login --with-token
-
-      - name: 清理指定工作流运行记录
-        env:
-          REPO: ${{ github.repository }}
-          COUNT: ${{ inputs.count }}
-          DELETE_FAILED: ${{ inputs.delete_failed }}
-          DELETE_SUCCESS: ${{ inputs.delete_success }}
-          DELETE_CANCELLED: ${{ inputs.delete_cancelled }}
-          REVERSE_ORDER: ${{ inputs.reverse_order }}
-          CANCEL_ALL: ${{ inputs.cancel_all }}
-          WORKFLOW_NAME: ${{ inputs.workflow_name }}
-          CURRENT_RUN_ID: ${{ github.run_id }}
+      - name: List All Caches
+        if: github.event.inputs.action == 'list-all' || github.event.inputs.action == 'show-stats'
+        id: list-all
         run: |
-          set -e
+          echo "## 📦 All Caches" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          gh api -H "Accept: application/vnd.github+json" \
+            /repos/${{ github.repository }}/actions/caches \
+            --paginate | jq -r '.actions_caches[] | 
+            "\(.key)|\(.size_in_bytes)|\(.created_at)|\(.last_accessed_at)"' > all_caches.txt
+          
+          if [ ! -s all_caches.txt ]; then
+            echo "No caches found" >> $GITHUB_STEP_SUMMARY
+            exit 0
+          fi
+          
+          echo "| Cache Key | Size | Created | Last Accessed |" >> $GITHUB_STEP_SUMMARY
+          echo "|-----------|------|---------|---------------|" >> $GITHUB_STEP_SUMMARY
+          
+          while IFS='|' read -r key size created accessed; do
+            size_mb=$(echo "scale=2; $size / 1024 / 1024" | bc)
+            echo "| \`${key:0:50}...\` | ${size_mb} MB | $created | $accessed |" >> $GITHUB_STEP_SUMMARY
+          done < all_caches.txt
+          
+          total_size=$(awk -F'|' '{sum+=$2} END {print sum}' all_caches.txt)
+          total_mb=$(echo "scale=2; $total_size / 1024 / 1024" | bc)
+          total_gb=$(echo "scale=2; $total_size / 1024 / 1024 / 1024" | bc)
+          cache_count=$(wc -l < all_caches.txt)
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Total Caches:** $cache_count" >> $GITHUB_STEP_SUMMARY
+          echo "**Total Size:** ${total_mb} MB (${total_gb} GB)" >> $GITHUB_STEP_SUMMARY
+          
+          echo "TOTAL_CACHES=$cache_count" >> $GITHUB_ENV
+          echo "TOTAL_SIZE_MB=$total_mb" >> $GITHUB_ENV
+          echo "TOTAL_SIZE_GB=$total_gb" >> $GITHUB_ENV
 
-          echo "查找工作流 \"$WORKFLOW_NAME\" 的 ID..."
-          WORKFLOW_ID=$(gh api repos/$REPO/actions/workflows | jq -r ".workflows[] | select(.name == \"$WORKFLOW_NAME\") | .id")
-          if [ -z "$WORKFLOW_ID" ]; then
-            echo "未找到工作流 \"$WORKFLOW_NAME\"，退出。"
+      - name: List ccache Only
+        if: github.event.inputs.action == 'list-ccache'
+        run: |
+          echo "## 🔨 ccache Caches" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          gh api -H "Accept: application/vnd.github+json" \
+            /repos/${{ github.repository }}/actions/caches \
+            --paginate | jq -r '.actions_caches[] | select(.key | startswith("ccache-suki")) | 
+            "\(.key)|\(.size_in_bytes)|\(.created_at)|\(.last_accessed_at)"' > ccache_only.txt
+          
+          if [ ! -s ccache_only.txt ]; then
+            echo "No ccache caches found" >> $GITHUB_STEP_SUMMARY
+            exit 0
+          fi
+          
+          echo "| Cache Key | Size | Created | Last Accessed |" >> $GITHUB_STEP_SUMMARY
+          echo "|-----------|------|---------|---------------|" >> $GITHUB_STEP_SUMMARY
+          
+          while IFS='|' read -r key size created accessed; do
+            size_mb=$(echo "scale=2; $size / 1024 / 1024" | bc)
+            device=$(echo "$key" | grep -oP 'oneplus_[^-]+' || echo "unknown")
+            echo "| \`$device\` | ${size_mb} MB | $created | $accessed |" >> $GITHUB_STEP_SUMMARY
+          done < ccache_only.txt
+          
+          total_size=$(awk -F'|' '{sum+=$2} END {print sum}' ccache_only.txt)
+          total_mb=$(echo "scale=2; $total_size / 1024 / 1024" | bc)
+          cache_count=$(wc -l < ccache_only.txt)
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Total ccache:** $cache_count" >> $GITHUB_STEP_SUMMARY
+          echo "**Total Size:** ${total_mb} MB" >> $GITHUB_STEP_SUMMARY
+
+      - name: List APT Cache Only
+        if: github.event.inputs.action == 'list-apt'
+        run: |
+          echo "## 📦 APT Package Caches" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          gh api -H "Accept: application/vnd.github+json" \
+            /repos/${{ github.repository }}/actions/caches \
+            --paginate | jq -r '.actions_caches[] | select(.key | contains("apt-cache")) | 
+            "\(.key)|\(.size_in_bytes)|\(.created_at)|\(.last_accessed_at)"' > apt_only.txt
+          
+          if [ ! -s apt_only.txt ]; then
+            echo "No APT caches found" >> $GITHUB_STEP_SUMMARY
+            exit 0
+          fi
+          
+          echo "| Cache Key | Size | Created | Last Accessed |" >> $GITHUB_STEP_SUMMARY
+          echo "|-----------|------|---------|---------------|" >> $GITHUB_STEP_SUMMARY
+          
+          while IFS='|' read -r key size created accessed; do
+            size_mb=$(echo "scale=2; $size / 1024 / 1024" | bc)
+            echo "| \`${key:0:60}...\` | ${size_mb} MB | $created | $accessed |" >> $GITHUB_STEP_SUMMARY
+          done < apt_only.txt
+          
+          total_size=$(awk -F'|' '{sum+=$2} END {print sum}' apt_only.txt)
+          total_mb=$(echo "scale=2; $total_size / 1024 / 1024" | bc)
+          cache_count=$(wc -l < apt_only.txt)
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Total APT caches:** $cache_count" >> $GITHUB_STEP_SUMMARY
+          echo "**Total Size:** ${total_mb} MB" >> $GITHUB_STEP_SUMMARY
+
+      - name: Show Cache Statistics
+        if: github.event.inputs.action == 'show-stats'
+        run: |
+          echo "## 📊 Cache Statistics" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          # ccache stats
+          ccache_count=$(gh api /repos/${{ github.repository }}/actions/caches --paginate | \
+            jq '[.actions_caches[] | select(.key | startswith("ccache-suki"))] | length')
+          ccache_size=$(gh api /repos/${{ github.repository }}/actions/caches --paginate | \
+            jq '[.actions_caches[] | select(.key | startswith("ccache-suki")) | .size_in_bytes] | add // 0')
+          ccache_mb=$(echo "scale=2; $ccache_size / 1024 / 1024" | bc)
+          
+          # APT stats
+          apt_count=$(gh api /repos/${{ github.repository }}/actions/caches --paginate | \
+            jq '[.actions_caches[] | select(.key | contains("apt-cache"))] | length')
+          apt_size=$(gh api /repos/${{ github.repository }}/actions/caches --paginate | \
+            jq '[.actions_caches[] | select(.key | contains("apt-cache")) | .size_in_bytes] | add // 0')
+          apt_mb=$(echo "scale=2; $apt_size / 1024 / 1024" | bc)
+          
+          # Other caches
+          other_count=$(gh api /repos/${{ github.repository }}/actions/caches --paginate | \
+            jq '[.actions_caches[] | select(.key | startswith("ccache-suki") | not) | select(.key | contains("apt-cache") | not)] | length')
+          other_size=$(gh api /repos/${{ github.repository }}/actions/caches --paginate | \
+            jq '[.actions_caches[] | select(.key | startswith("ccache-suki") | not) | select(.key | contains("apt-cache") | not) | .size_in_bytes] | add // 0')
+          other_mb=$(echo "scale=2; $other_size / 1024 / 1024" | bc)
+          
+          echo "| Cache Type | Count | Size (MB) | Percentage |" >> $GITHUB_STEP_SUMMARY
+          echo "|------------|-------|-----------|------------|" >> $GITHUB_STEP_SUMMARY
+          
+          total_size=$((ccache_size + apt_size + other_size))
+          if [ $total_size -gt 0 ]; then
+            ccache_pct=$(echo "scale=2; $ccache_size * 100 / $total_size" | bc)
+            apt_pct=$(echo "scale=2; $apt_size * 100 / $total_size" | bc)
+            other_pct=$(echo "scale=2; $other_size * 100 / $total_size" | bc)
+          else
+            ccache_pct=0
+            apt_pct=0
+            other_pct=0
+          fi
+          
+          echo "| 🔨 ccache | $ccache_count | $ccache_mb | ${ccache_pct}% |" >> $GITHUB_STEP_SUMMARY
+          echo "| 📦 APT | $apt_count | $apt_mb | ${apt_pct}% |" >> $GITHUB_STEP_SUMMARY
+          echo "| 📁 Other | $other_count | $other_mb | ${other_pct}% |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Total** | **${{ env.TOTAL_CACHES }}** | **${{ env.TOTAL_SIZE_MB }}** | **100%** |" >> $GITHUB_STEP_SUMMARY
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 💾 Storage Usage" >> $GITHUB_STEP_SUMMARY
+          echo "- **Used:** ${{ env.TOTAL_SIZE_GB }} GB" >> $GITHUB_STEP_SUMMARY
+          echo "- **Limit:** 10 GB (GitHub Actions default)" >> $GITHUB_STEP_SUMMARY
+          
+          usage_pct=$(echo "scale=2; ${{ env.TOTAL_SIZE_GB }} * 100 / 10" | bc)
+          echo "- **Usage:** ${usage_pct}%" >> $GITHUB_STEP_SUMMARY
+          
+          if (( $(echo "${{ env.TOTAL_SIZE_GB }} > 8" | bc -l) )); then
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "⚠️ **Warning:** Cache usage is above 80%. Consider cleaning old caches." >> $GITHUB_STEP_SUMMARY
+          fi
+
+      - name: Verify Deletion Confirmation
+        if: |
+          github.event.inputs.action == 'delete-ccache' ||
+          github.event.inputs.action == 'delete-apt' ||
+          github.event.inputs.action == 'delete-all' ||
+          github.event.inputs.action == 'delete-old' ||
+          github.event.inputs.action == 'delete-by-device'
+        run: |
+          if [ "${{ github.event.inputs.confirmation }}" != "CONFIRM" ]; then
+            echo "❌ Deletion cancelled: confirmation not provided"
+            echo "Please type 'CONFIRM' in the confirmation field to proceed"
             exit 1
           fi
+          echo "✅ Confirmation verified"
 
-          echo "开始分页获取所有运行记录..."
-          PER_PAGE=100
-          PAGE=1
-          ALL_RUNS="[]"
-          while true; do
-            RESP=$(gh api "repos/$REPO/actions/workflows/$WORKFLOW_ID/runs?per_page=$PER_PAGE&page=$PAGE")
-            RUNS=$(echo "$RESP" | jq '.workflow_runs')
-            COUNT_THIS_PAGE=$(echo "$RUNS" | jq 'length')
-            if [ "$COUNT_THIS_PAGE" -eq 0 ]; then break; fi
-            ALL_RUNS=$(jq -s 'add' <(echo "$ALL_RUNS") <(echo "$RUNS"))
-            PAGE=$((PAGE + 1))
+      - name: Delete ccache Caches
+        if: github.event.inputs.action == 'delete-ccache'
+        run: |
+          echo "## 🗑️ Deleting ccache Caches" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          cache_ids=$(gh api /repos/${{ github.repository }}/actions/caches --paginate | \
+            jq -r '.actions_caches[] | select(.key | startswith("ccache-suki")) | .id')
+          
+          if [ -z "$cache_ids" ]; then
+            echo "No ccache caches to delete" >> $GITHUB_STEP_SUMMARY
+            exit 0
+          fi
+          
+          count=0
+          for id in $cache_ids; do
+            echo "Deleting cache ID: $id"
+            gh api --method DELETE /repos/${{ github.repository }}/actions/caches/$id || true
+            count=$((count + 1))
           done
+          
+          echo "✅ Deleted $count ccache caches" >> $GITHUB_STEP_SUMMARY
 
-          echo "共获取到 $(echo "$ALL_RUNS" | jq 'length') 条运行记录。"
-
-          if [[ "$CANCEL_ALL" == "true" ]]; then
-            echo "开始取消进行中或排队中的运行..."
-            CANCEL_COUNT=0
-            echo "$ALL_RUNS" | jq -c '.[] | select(.status == "in_progress" or .status == "queued")' | while read run; do
-              ID=$(echo "$run" | jq -r '.id')
-              if [[ "$ID" == "$CURRENT_RUN_ID" ]]; then continue; fi
-              echo "取消运行 ID: $ID"
-              gh api -X POST "repos/$REPO/actions/runs/$ID/cancel" && CANCEL_COUNT=$((CANCEL_COUNT + 1))
-            done
-            echo "已取消 $CANCEL_COUNT 条运行。"
+      - name: Delete APT Caches
+        if: github.event.inputs.action == 'delete-apt'
+        run: |
+          echo "## 🗑️ Deleting APT Caches" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          cache_ids=$(gh api /repos/${{ github.repository }}/actions/caches --paginate | \
+            jq -r '.actions_caches[] | select(.key | contains("apt-cache")) | .id')
+          
+          if [ -z "$cache_ids" ]; then
+            echo "No APT caches to delete" >> $GITHUB_STEP_SUMMARY
+            exit 0
           fi
-
-          echo "开始处理删除逻辑..."
-          if [[ "$REVERSE_ORDER" == "true" ]]; then
-            SORTED_RUNS=$(echo "$ALL_RUNS" | jq 'sort_by(.run_started_at)')
-          else
-            SORTED_RUNS=$(echo "$ALL_RUNS" | jq 'sort_by(.run_started_at) | reverse')
-          fi
-
-          TO_DELETE_RUNS=$(echo "$SORTED_RUNS" | jq ".[0:${COUNT}]")
-
-          echo "$TO_DELETE_RUNS" | jq -c '.[]' | while read run; do
-            ID=$(echo "$run" | jq -r '.id')
-            STATUS=$(echo "$run" | jq -r '.conclusion')
-            STATE=$(echo "$run" | jq -r '.status')
-
-            if [[ "$STATE" == "in_progress" || "$STATE" == "queued" ]]; then continue; fi
-            if [[ "$STATUS" == "failure" && "$DELETE_FAILED" != "true" ]]; then continue; fi
-            if [[ "$STATUS" == "success" && "$DELETE_SUCCESS" != "true" ]]; then continue; fi
-            if [[ "$STATUS" == "cancelled" && "$DELETE_CANCELLED" != "true" ]]; then continue; fi
-
-            echo "删除运行记录 ID: $ID"
-            gh api -X DELETE "repos/$REPO/actions/runs/$ID" || echo "删除失败"
+          
+          count=0
+          for id in $cache_ids; do
+            echo "Deleting cache ID: $id"
+            gh api --method DELETE /repos/${{ github.repository }}/actions/caches/$id || true
+            count=$((count + 1))
           done
+          
+          echo "✅ Deleted $count APT caches" >> $GITHUB_STEP_SUMMARY
 
-          echo "清理本工作流运行记录（排除当前运行）..."
-          SELF_WORKFLOW_ID=$(gh api repos/$REPO/actions/workflows | jq -r '.workflows[] | select(.name == "Workflow and Cache Cleanup") | .id')
-          if [ -n "$SELF_WORKFLOW_ID" ]; then
-            SELF_RUNS=$(gh api "repos/$REPO/actions/workflows/$SELF_WORKFLOW_ID/runs?per_page=50" | jq -c '.workflow_runs[]')
-            echo "$SELF_RUNS" | while read run; do
-              ID=$(echo "$run" | jq -r '.id')
-              if [[ "$ID" == "$CURRENT_RUN_ID" ]]; then continue; fi
-              echo "删除本工作流运行记录 ID: $ID"
-              gh api -X DELETE "repos/$REPO/actions/runs/$ID" || echo "删除失败"
-            done
+      - name: Delete All Caches
+        if: github.event.inputs.action == 'delete-all'
+        run: |
+          echo "## 🗑️ Deleting All Caches" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "⚠️ **WARNING: This will delete ALL caches!**" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          cache_ids=$(gh api /repos/${{ github.repository }}/actions/caches --paginate | \
+            jq -r '.actions_caches[] | .id')
+          
+          if [ -z "$cache_ids" ]; then
+            echo "No caches to delete" >> $GITHUB_STEP_SUMMARY
+            exit 0
           fi
+          
+          count=0
+          for id in $cache_ids; do
+            echo "Deleting cache ID: $id"
+            gh api --method DELETE /repos/${{ github.repository }}/actions/caches/$id || true
+            count=$((count + 1))
+          done
+          
+          echo "✅ Deleted $count caches" >> $GITHUB_STEP_SUMMARY
 
-  clean-caches:
-    runs-on: ubuntu-latest
-    needs: cleanup
-    if: ${{ inputs.clear_cache == true || inputs.clear_cache == 'true' }}
-    permissions:
-      actions: write
-    steps:
-      - name: 删除并重置缓存 (ccache + apt-cache)
-        uses: actions/github-script@v6
-        with:
-          script: |
-            const { owner, repo } = context.repo;
-            let totalDeleted = 0;
-            let page = 1;
+      - name: Delete Old Caches
+        if: github.event.inputs.action == 'delete-old'
+        run: |
+          echo "## 🗑️ Deleting Caches Older Than ${{ github.event.inputs.days_old }} Days" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          cutoff_date=$(date -u -d "${{ github.event.inputs.days_old }} days ago" +%Y-%m-%dT%H:%M:%SZ)
+          echo "Cutoff date: $cutoff_date" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          cache_data=$(gh api /repos/${{ github.repository }}/actions/caches --paginate | \
+            jq -r --arg cutoff "$cutoff_date" \
+            '.actions_caches[] | select(.last_accessed_at < $cutoff) | "\(.id)|\(.key)|\(.last_accessed_at)"')
+          
+          if [ -z "$cache_data" ]; then
+            echo "No old caches to delete" >> $GITHUB_STEP_SUMMARY
+            exit 0
+          fi
+          
+          echo "| Cache Key | Last Accessed | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|-----------|---------------|--------|" >> $GITHUB_STEP_SUMMARY
+          
+          count=0
+          while IFS='|' read -r id key accessed; do
+            echo "Deleting cache: $key (last accessed: $accessed)"
+            if gh api --method DELETE /repos/${{ github.repository }}/actions/caches/$id 2>/dev/null; then
+              echo "| \`${key:0:50}...\` | $accessed | ✅ Deleted |" >> $GITHUB_STEP_SUMMARY
+              count=$((count + 1))
+            else
+              echo "| \`${key:0:50}...\` | $accessed | ❌ Failed |" >> $GITHUB_STEP_SUMMARY
+            fi
+          done <<< "$cache_data"
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "✅ Deleted $count old caches" >> $GITHUB_STEP_SUMMARY
 
-            while (true) {
-              const res = await github.rest.actions.getActionsCacheList({
-                owner,
-                repo,
-                per_page: 100,
-                page: page
-              });
+      - name: Delete Caches by Device
+        if: github.event.inputs.action == 'delete-by-device'
+        run: |
+          DEVICE="${{ github.event.inputs.device_filter }}"
+          
+          if [ -z "$DEVICE" ]; then
+            echo "❌ Device filter is required for delete-by-device action"
+            exit 1
+          fi
+          
+          echo "## 🗑️ Deleting Caches for Device: $DEVICE" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          cache_ids=$(gh api /repos/${{ github.repository }}/actions/caches --paginate | \
+            jq -r --arg device "$DEVICE" \
+            '.actions_caches[] | select(.key | contains($device)) | .id')
+          
+          if [ -z "$cache_ids" ]; then
+            echo "No caches found for device: $DEVICE" >> $GITHUB_STEP_SUMMARY
+            exit 0
+          fi
+          
+          count=0
+          for id in $cache_ids; do
+            echo "Deleting cache ID: $id"
+            gh api --method DELETE /repos/${{ github.repository }}/actions/caches/$id || true
+            count=$((count + 1))
+          done
+          
+          echo "✅ Deleted $count caches for device: $DEVICE" >> $GITHUB_STEP_SUMMARY
 
-              const caches = res.data.actions_caches;
-              if (!caches || caches.length === 0) break;
+      - name: Auto Cleanup (Scheduled)
+        if: github.event_name == 'schedule'
+        run: |
+          echo "## 🤖 Automated Cache Cleanup" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Running scheduled cleanup (every Sunday)..." >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          # Delete caches older than 14 days
+          cutoff_date=$(date -u -d "14 days ago" +%Y-%m-%dT%H:%M:%SZ)
+          
+          cache_ids=$(gh api /repos/${{ github.repository }}/actions/caches --paginate | \
+            jq -r --arg cutoff "$cutoff_date" \
+            '.actions_caches[] | select(.last_accessed_at < $cutoff) | .id')
+          
+          if [ -z "$cache_ids" ]; then
+            echo "No old caches to clean up" >> $GITHUB_STEP_SUMMARY
+            exit 0
+          fi
+          
+          count=0
+          for id in $cache_ids; do
+            gh api --method DELETE /repos/${{ github.repository }}/actions/caches/$id || true
+            count=$((count + 1))
+          done
+          
+          echo "✅ Cleaned up $count caches older than 14 days" >> $GITHUB_STEP_SUMMARY
 
-              for (const cache of caches) {
-                if (
-                  cache.key.startsWith('ccache-') ||
-                  cache.key.includes('apt-cache') ||
-                  cache.key.includes('apt')
-                ) {
-                  console.log(`删除缓存: ${cache.key}`);
-                  await github.rest.actions.deleteActionsCacheById({
-                    owner,
-                    repo,
-                    cache_id: cache.id
-                  });
-                  totalDeleted++;
-                }
-              }
-
-              if (caches.length < 100) break;
-              page++;
-            }
-
-            console.log(`共删除缓存数量: ${totalDeleted}`);
+      - name: Final Summary
+        if: always()
+        run: |
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "---" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 📝 Action Completed" >> $GITHUB_STEP_SUMMARY
+          echo "- **Action:** ${{ github.event.inputs.action || 'scheduled cleanup' }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Time:** $(date -u '+%Y-%m-%d %H:%M:%S UTC')" >> $GITHUB_STEP_SUMMARY
+          echo "- **Repository:** ${{ github.repository }}" >> $GITHUB_STEP_SUMMARY
