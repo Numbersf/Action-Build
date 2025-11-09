@@ -1169,366 +1169,300 @@ jobs:
           echo "Kernel branding: $CUSTOM_LOCALVERSION"
      
       - name: Build Kernel FAST
-        if: ${{ github.event.inputs.FAST_BUILD == 'true' }}
-        id: fast_build
-        env:
-          PYTHONWARNINGS: "ignore:invalid escape sequence"
+        if: github.event.inputs.FAST_BUILD == 'true'
+        working-directory: kernel_workspace/kernel_platform/common
         run: |
           set -euo pipefail
-          echo "::group::Build kernel with ccache optimization"
           
-          KERNEL_VERSION="${{ env.KERNEL_VERSION }}"
-          cd kernel_workspace/kernel_platform
-      
-          # Auto-detect LLVM_IAS
-          if [[ -f ./common/build.config.arm ]] && grep -q '^LLVM_IAS=1' ./common/build.config.arm; then
-            USE_LLVM_IAS=true
-          else
-            USE_LLVM_IAS=false
-          fi
-      
-          # Read CLANG_PREBUILT_BIN from build.config.common
-          CLANG_PREBUILT_BIN=$(grep '^CLANG_PREBUILT_BIN=' ./common/build.config.common | cut -d'=' -f2 || true)
-          if [[ -z "$CLANG_PREBUILT_BIN" ]]; then
-            echo "⚠️ CLANG_PREBUILT_BIN not found in build.config.common, falling back to official build script"
-            echo "fallback=true" >> "$GITHUB_OUTPUT"
-            echo "FAST_BUILD_FALLBACK=1" >> "$GITHUB_ENV"
-            echo "Please consider disabling FAST_BUILD and reporting this issue"
-            exit 0
-          fi
-      
-          # Extract clang-r version
-          if [[ "$CLANG_PREBUILT_BIN" =~ (clang-r[0-9a-z]+) ]]; then
-            CLANG_VERSION="${BASH_REMATCH[1]}"
-          else
-            if [[ -f ./common/build.config.constants ]]; then
-              CLANG_VERSION=$(grep '^CLANG_VERSION=' ./common/build.config.constants | cut -d'=' -f2 || true)
-            fi
-          fi
-      
-          if [[ -z "$CLANG_VERSION" ]]; then
-            echo "⚠️ Unable to extract Clang version, falling back to official build script"
-            echo "fallback=true" >> "$GITHUB_OUTPUT"
-            echo "FAST_BUILD_FALLBACK=1" >> "$GITHUB_ENV"
-            echo "Please consider disabling FAST_BUILD and reporting this issue"
-            exit 0
-          fi
-      
-          # Resolve CLANG paths
-          CLANG_PREBUILT_BIN=${CLANG_PREBUILT_BIN/\$\{CLANG_VERSION\}/$CLANG_VERSION}
-          CLANG_DIR=$(echo "$CLANG_PREBUILT_BIN" | cut -d'/' -f1)
-          CLANG_PATH=$(basename "$(dirname "$CLANG_PREBUILT_BIN")")
-      
-          echo "✅ CLANG_VERSION=$CLANG_VERSION"
-          echo "✅ CLANG_DIR=$CLANG_DIR"
-          echo "✅ CLANG_PATH=$CLANG_PATH"
-          echo "✅ USE_LLVM_IAS=$USE_LLVM_IAS"
-          echo "CLANG_VERSION_SHORT=$CLANG_VERSION" >> $GITHUB_ENV
-      
-          export PATH="$GITHUB_WORKSPACE/kernel_workspace/kernel_platform/$CLANG_PREBUILT_BIN:$PATH"
-          export PATH="/usr/lib/ccache:$PATH"
-          export CC="ccache clang"
-      
-          # Get last commit timestamp
-          cd ./common
-          COMMIT_TIMESTAMP=$(git log -1 --format=%ct 2>/dev/null || echo "$(date +%s)")
-          COMMIT_DATE=$(git log -1 --format=%cd --date=format:'%Y-%m-%d %H:%M:%S' 2>/dev/null || date -u '+%Y-%m-%d %H:%M:%S')
-          COMMIT_HASH=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")
+          # ═══════════════════════════════════════════════════════════════
+          # Build Environment Setup
+          # ═══════════════════════════════════════════════════════════════
           
-          export SOURCE_DATE_EPOCH=$COMMIT_TIMESTAMP
-          export KBUILD_BUILD_TIMESTAMP="$COMMIT_DATE UTC"
-          export KBUILD_BUILD_USER="builder"
-          export KBUILD_BUILD_HOST="github-actions"
-          export KBUILD_BUILD_VERSION=1
+          export ARCH=arm64
+          export SUBARCH=arm64
+          export CLANG_TRIPLE=aarch64-linux-gnu-
+          export CROSS_COMPILE=aarch64-linux-gnu-
+          export CROSS_COMPILE_COMPAT=arm-linux-gnueabi-
+          export CROSS_COMPILE_ARM32=arm-linux-gnueabi-
           
-          echo "📅 Build timestamp: $KBUILD_BUILD_TIMESTAMP (from commit $COMMIT_HASH)"
-          echo "🔢 SOURCE_DATE_EPOCH: $SOURCE_DATE_EPOCH"
-      
-          : > .scmversion
-      
-          WORKSPACE="${GITHUB_WORKSPACE}"
-          MAP="-fdebug-prefix-map=${WORKSPACE}=."
-          MPMAP="-fmacro-prefix-map=${WORKSPACE}=."
-          FPMAP="-ffile-prefix-map=${WORKSPACE}=."
+          CLANG_PATH="${GITHUB_WORKSPACE}/kernel_workspace/kernel_platform/prebuilts/clang/host/linux-x86/clang-r487747c/bin"
+          GCC_PATH="${GITHUB_WORKSPACE}/kernel_workspace/kernel_platform/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9/bin"
+          GCC32_PATH="${GITHUB_WORKSPACE}/kernel_workspace/kernel_platform/prebuilts/gcc/linux-x86/arm/arm-linux-androideabi-4.9/bin"
           
-          export KCFLAGS="${KCFLAGS:-} $MAP $MPMAP $FPMAP -no-canonical-prefixes -fdiagnostics-color=never -Qunused-arguments -Wno-unused-command-line-argument"
-          export KCPPFLAGS="${KCPPFLAGS:-} $MAP $MPMAP $FPMAP"
-      
-          MAKE_ARGS="LLVM=1 ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- \
-            RUSTC=../../prebuilts/rust/linux-x86/1.73.0b/bin/rustc \
-            PAHOLE=../../prebuilts/kernel-build-tools/linux-x86/bin/pahole \
-            LD=ld.lld HOSTLD=ld.lld"
-      
-          if [[ "$USE_LLVM_IAS" == "true" ]]; then
-            MAKE_ARGS="LLVM_IAS=1 $MAKE_ARGS"
+          export PATH="$CLANG_PATH:$GCC_PATH:$GCC32_PATH:$PATH"
+          
+          # Verify toolchain
+          if ! command -v clang >/dev/null 2>&1; then
+            echo "::error::Clang not found in PATH"
+            exit 1
           fi
-      
+          
+          CLANG_VERSION=$(clang --version | head -n1)
+          echo "Using: $CLANG_VERSION"
+          
+          # ═══════════════════════════════════════════════════════════════
+          # Build Flags
+          # ═══════════════════════════════════════════════════════════════
+          
+          MAKE_ARGS=(
+            "ARCH=arm64"
+            "SUBARCH=arm64"
+            "CC=clang"
+            "LD=ld.lld"
+            "AR=llvm-ar"
+            "NM=llvm-nm"
+            "OBJCOPY=llvm-objcopy"
+            "OBJDUMP=llvm-objdump"
+            "READELF=llvm-readelf"
+            "STRIP=llvm-strip"
+            "LLVM=1"
+            "LLVM_IAS=1"
+            "CLANG_TRIPLE=aarch64-linux-gnu-"
+            "CROSS_COMPILE=aarch64-linux-gnu-"
+            "CROSS_COMPILE_COMPAT=arm-linux-gnueabi-"
+          )
+          
           # Optimization level
           if [ "${{ github.event.inputs.optimize_level }}" = "O3" ]; then
-            KCFLAGS_EXTRA="-O3"
-          else
-            KCFLAGS_EXTRA="-O2"
+            MAKE_ARGS+=("KCFLAGS=-O3")
+            echo "⚡ Using -O3 optimization"
           fi
-      
-          KCFLAGS="$KCFLAGS -Wno-error -pipe -fno-stack-protector -Wframe-larger-than=8192 ${KCFLAGS_EXTRA}"
-          KCPPFLAGS="$KCPPFLAGS -DCONFIG_OPTIMIZE_INLINING"
-      
-          echo "============================================"
-          echo "🔧 Build Configuration"
-          echo "============================================"
-          echo "Device: ${{ github.event.inputs.FILE }}"
-          echo "Kernel: ${{ env.TKERNEL_VERSION }}"
-          echo "Threads: $(nproc --all)"
-          echo "Optimization: ${{ github.event.inputs.optimize_level }}"
-          echo "Timestamp: $KBUILD_BUILD_TIMESTAMP"
           
+          # ccache integration
           if [ "${{ github.event.inputs.clean }}" != "true" ]; then
+            MAKE_ARGS+=("CC=ccache clang")
             echo "ccache: ENABLED (3G max)"
-            echo ""
             echo "ccache pre-build status:"
-            ccache -s | head -n 20
+            ccache -s | head -n 5
           else
-            echo "ccache: DISABLED"
+            echo "ccache: DISABLED (clean build)"
           fi
+          
           echo "============================================"
-      
+          
           # ═══════════════════════════════════════════════════════════════
-          # Kernel Configuration (Non-Interactive)
+          # Configure Kernel
           # ═══════════════════════════════════════════════════════════════
           
-          echo ""
           echo "============================================"
           echo "📝 Configuring Kernel"
           echo "============================================"
           
-          # Force non-interactive mode + enable unset symbol warnings
-          export KCONFIG_CONFIG=out/.config
-          export KCONFIG_NOSILENTUPDATE=1
-          export KCONFIG_TTY=0
-          export KCONFIG_WARN_UNSET=y
+          # Create output directory explicitly
+          mkdir -p out
           
-          # Generate base config
           echo "→ Generating gki_defconfig..."
-          make -j$(nproc --all) O=out $MAKE_ARGS gki_defconfig
+          if ! make O=out "${MAKE_ARGS[@]}" gki_defconfig; then
+            echo "::error::Failed to generate defconfig"
+            exit 1
+          fi
           
-          # Assert .config was created
-          if [ ! -f "out/.config" ]; then
+          # ═══════════════════════════════════════════════════════════════
+          # Verify and Locate .config
+          # ═══════════════════════════════════════════════════════════════
+          
+          CONFIG_FILE=""
+          
+          # Search for .config in multiple possible locations
+          for path in "out/.config" "out/common/.config" ".config"; do
+            if [ -f "$path" ]; then
+              CONFIG_FILE="$path"
+              echo "✅ Found .config at: $path"
+              break
+            fi
+          done
+          
+          if [ -z "$CONFIG_FILE" ]; then
             echo "::error::.config missing after gki_defconfig"
             echo "This usually indicates a Kconfig syntax error or missing dependencies"
+            echo ""
             echo "::group::Debug info"
             echo "Current directory: $(pwd)"
             echo "Output directory contents:"
-            ls -la out/ 2>/dev/null || echo "out/ directory not found"
+            ls -laR out/ 2>/dev/null || echo "out/ directory not accessible"
+            echo "Root directory .config check:"
+            ls -la .config 2>/dev/null || echo "No .config in root"
             echo "::endgroup::"
-            exit 2
+            exit 1
           fi
-          echo "✅ .config generated successfully"
+          
+          # If .config is not in out/, copy it there
+          if [ "$CONFIG_FILE" != "out/.config" ]; then
+            echo "→ Copying .config to out/ directory..."
+            cp "$CONFIG_FILE" out/.config
+            CONFIG_FILE="out/.config"
+          fi
           
           # ═══════════════════════════════════════════════════════════════
-          # Ensure scripts/config is available (CRITICAL FIX)
+          # Apply KernelSU Patches
           # ═══════════════════════════════════════════════════════════════
           
-          SCRIPTS_CONFIG_AVAILABLE=false
+          echo ""
+          echo "============================================"
+          echo "🔧 Applying KernelSU Modifications"
+          echo "============================================"
           
-          if [ ! -x scripts/config ]; then
-            echo "→ scripts/config not found, attempting to build it..."
-            if make -j$(nproc --all) O=out $MAKE_ARGS scripts >/dev/null 2>&1; then
-              if [ -x scripts/config ]; then
-                echo "  ✅ scripts/config built successfully"
-                SCRIPTS_CONFIG_AVAILABLE=true
-              else
-                echo "  ⚠️ scripts target succeeded but config still missing"
-              fi
-            else
-              echo "  ⚠️ Failed to build scripts/config"
-            fi
+          # Parse KSU_META input
+          IFS='/' read -r KSU_BRANCH KSU_VERSION KSU_HASH <<< "${{ github.event.inputs.KSU_META }}"
+          KSU_BRANCH="${KSU_BRANCH:-susfs-main}"
+          
+          echo "KernelSU Configuration:"
+          echo "  Branch: $KSU_BRANCH"
+          echo "  Version: ${KSU_VERSION:-default}"
+          echo "  Hash: ${KSU_HASH:-latest}"
+          
+          # Clone KernelSU
+          KSU_DIR="KernelSU"
+          if [ -d "$KSU_DIR" ]; then
+            rm -rf "$KSU_DIR"
+          fi
+          
+          echo "→ Cloning KernelSU ($KSU_BRANCH)..."
+          if ! git clone --depth=1 -b "$KSU_BRANCH" \
+               https://github.com/SukiSU-Ultra/KernelSU.git "$KSU_DIR"; then
+            echo "::error::Failed to clone KernelSU"
+            exit 1
+          fi
+          
+          # Checkout specific hash if provided
+          if [ -n "$KSU_HASH" ]; then
+            echo "→ Checking out commit: $KSU_HASH"
+            cd "$KSU_DIR"
+            git fetch --depth=50
+            git checkout "$KSU_HASH" || {
+              echo "::warning::Failed to checkout $KSU_HASH, using branch HEAD"
+            }
+            cd ..
+          fi
+          
+          # Apply kernel patches
+          echo "→ Applying kernel patches..."
+          if [ -f "$KSU_DIR/kernel/setup.sh" ]; then
+            bash "$KSU_DIR/kernel/setup.sh" || {
+              echo "::error::KernelSU setup failed"
+              exit 1
+            }
           else
-            echo "✅ scripts/config already available"
-            SCRIPTS_CONFIG_AVAILABLE=true
-          fi
-          
-          if [ "$SCRIPTS_CONFIG_AVAILABLE" = false ]; then
-            echo "⚠️ scripts/config unavailable - will use sed fallback for all config changes"
-            echo "::warning::scripts/config not available - using sed fallback (less reliable)"
+            echo "::error::KernelSU setup.sh not found"
+            exit 1
           fi
           
           # ═══════════════════════════════════════════════════════════════
-          # Apply custom branding (with fallback)
+          # Modify Kernel Configuration
           # ═══════════════════════════════════════════════════════════════
           
-          if [ -n "${CUSTOM_LOCALVERSION:-}" ]; then
-            echo "→ Applying custom branding: ${CUSTOM_LOCALVERSION}"
-            
-            if [ "$SCRIPTS_CONFIG_AVAILABLE" = true ]; then
-              echo "  → Using scripts/config (preferred method)"
-              scripts/config --file out/.config --set-str LOCALVERSION "${CUSTOM_LOCALVERSION}"
-              scripts/config --file out/.config -d LOCALVERSION_AUTO || true
-              echo "  ✅ Branding applied via scripts/config"
-            else
-              echo "  → Using sed fallback method"
-              
-              # Update or append LOCALVERSION
-              if grep -q '^CONFIG_LOCALVERSION=' out/.config; then
-                sed -i "s|^CONFIG_LOCALVERSION=.*|CONFIG_LOCALVERSION=\"${CUSTOM_LOCALVERSION}\"|" out/.config
-              else
-                echo "CONFIG_LOCALVERSION=\"${CUSTOM_LOCALVERSION}\"" >> out/.config
-              fi
-              
-              # Disable LOCALVERSION_AUTO
-              if grep -q '^CONFIG_LOCALVERSION_AUTO=' out/.config; then
-                sed -i 's/^CONFIG_LOCALVERSION_AUTO=.*/# CONFIG_LOCALVERSION_AUTO is not set/' out/.config
-              else
-                echo "# CONFIG_LOCALVERSION_AUTO is not set" >> out/.config
-              fi
-              
-              echo "  ✅ Branding applied via sed"
-            fi
-            
-            # Also patch setlocalversion script to prevent git hash appending
-            if [ -f scripts/setlocalversion ]; then
-              sed -i 's/scm_version="$(scm_version --short)"/scm_version=""/' scripts/setlocalversion
-            fi
-            
-            # Verify the change
-            if grep -q "^CONFIG_LOCALVERSION=\"${CUSTOM_LOCALVERSION}\"" out/.config; then
-              echo "  ✅ Verification passed: LOCALVERSION correctly set"
-            else
-              echo "  ⚠️ Verification warning: LOCALVERSION may not be set correctly"
-              echo "::warning::Custom kernel branding may not be applied"
-            fi
+          echo ""
+          echo "→ Modifying kernel configuration..."
+          
+          # Enable KernelSU
+          ./scripts/config --file "$CONFIG_FILE" -e KSU
+          
+          # Hook type
+          case "${{ github.event.inputs.HOOK }}" in
+            kprobe)
+              ./scripts/config --file "$CONFIG_FILE" -e KPROBES -e KPROBE_EVENTS
+              ;;
+            tracepoint)
+              ./scripts/config --file "$CONFIG_FILE" -e TRACEPOINTS
+              ;;
+            manual)
+              echo "  Using manual hook (no additional config needed)"
+              ;;
+          esac
+          
+          # LSM protection
+          if [ "${{ github.event.inputs.LSM }}" = "true" ]; then
+            echo "  Enabling LSM protection..."
+            ./scripts/config --file "$CONFIG_FILE" -e SECURITY -e SECURITY_SELINUX
+          fi
+          
+          # Additional features
+          if [ "${{ github.event.inputs.ZRAM }}" = "true" ]; then
+            echo "  Enabling additional ZRAM algorithms..."
+            ./scripts/config --file "$CONFIG_FILE" \
+              -e ZRAM_WRITEBACK -e ZRAM_MULTI_COMP \
+              -e CRYPTO_LZ4 -e CRYPTO_LZ4HC -e CRYPTO_ZSTD
           fi
           
           # ═══════════════════════════════════════════════════════════════
-          # Apply optimization level (with fallback)
+          # Resolve Configuration Dependencies
           # ═══════════════════════════════════════════════════════════════
           
-          echo "→ Setting optimization: ${{ github.event.inputs.optimize_level }}"
-          
-          if [ "$SCRIPTS_CONFIG_AVAILABLE" = true ]; then
-            # Preferred method: scripts/config
-            if [ "${{ github.event.inputs.optimize_level }}" = "O3" ]; then
-              scripts/config --file out/.config -d CC_OPTIMIZE_FOR_PERFORMANCE
-              scripts/config --file out/.config -e CC_OPTIMIZE_FOR_PERFORMANCE_O3
-            else
-              scripts/config --file out/.config -e CC_OPTIMIZE_FOR_PERFORMANCE
-              scripts/config --file out/.config -d CC_OPTIMIZE_FOR_PERFORMANCE_O3
-            fi
-            
-            # Enable LTO
-            scripts/config --file out/.config -e LTO_CLANG_THIN
-            scripts/config --file out/.config -e LTO_CLANG
-            
-            echo "  ✅ Optimization applied via scripts/config"
-          else
-            # Fallback: direct .config manipulation
-            echo "  → Using sed fallback for optimization settings"
-            
-            if [ "${{ github.event.inputs.optimize_level }}" = "O3" ]; then
-              sed -i 's/^CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE=y/# CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE is not set/' out/.config
-              if ! grep -q '^CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE_O3=' out/.config; then
-                echo "CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE_O3=y" >> out/.config
-              fi
-            else
-              if ! grep -q '^CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE=' out/.config; then
-                echo "CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE=y" >> out/.config
-              fi
-              sed -i 's/^CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE_O3=y/# CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE_O3 is not set/' out/.config
-            fi
-            
-            # Enable LTO via sed
-            for opt in LTO_CLANG_THIN LTO_CLANG; do
-              if ! grep -q "^CONFIG_${opt}=" out/.config; then
-                echo "CONFIG_${opt}=y" >> out/.config
-              fi
-            done
-            
-            echo "  ✅ Optimization applied via sed"
-          fi
-          
-          # ═══════════════════════════════════════════════════════════════
-          # Resolve all new symbols with defaults (non-interactive)
-          # ═══════════════════════════════════════════════════════════════
-          
-          echo "→ Resolving new configuration symbols..."
+          echo ""
+          echo "→ Resolving configuration dependencies..."
           echo "  (This may take a moment for kernels with many new options)"
           
-          if yes "" | make O=out $MAKE_ARGS oldconfig 2>&1 | \
+          # Ensure non-interactive mode
+          export KCONFIG_NONINTERACTIVE=1
+          
+          if yes "" | make O=out "${MAKE_ARGS[@]}" oldconfig 2>&1 | \
              tee /tmp/config.log | grep -v "Error in reading"; then
             echo "✅ Configuration resolved successfully"
           else
             echo "⚠️ Configuration completed with warnings (expected in CI)"
           fi
           
-          # Verify config was created
-          if [ ! -f out/.config ]; then
-            echo "❌ Configuration file not created"
-            echo "::group::Configuration log"
-            cat /tmp/config.log 2>/dev/null || echo "No log available"
-            echo "::endgroup::"
-            exit 1
-          fi
-          
-          # Show config summary
-          echo ""
-          echo "📊 Configuration Summary:"
-          grep "^CONFIG_LOCALVERSION=" out/.config || echo "  LOCALVERSION: (default)"
-          grep "^CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE" out/.config || echo "  Optimization: (default)"
-          grep "^CONFIG_LTO_CLANG" out/.config || echo "  LTO: (disabled)"
-          
-          echo "============================================"
-          echo ""
-      
           # ═══════════════════════════════════════════════════════════════
           # Build Kernel
           # ═══════════════════════════════════════════════════════════════
-      
+          
+          echo ""
+          echo "============================================"
+          echo "🔨 Building Kernel"
+          echo "============================================"
+          
+          # Calculate optimal job count
+          JOBS=$(nproc)
+          JOBS=$((JOBS > $(nproc) ? $(nproc) : JOBS))
+          
+          echo "Build configuration:"
+          echo "  Parallel jobs: $JOBS"
+          echo "  Optimization: ${{ github.event.inputs.optimize_level }}"
+          echo "  Hook type: ${{ github.event.inputs.HOOK }}"
+          echo ""
+          
           BUILD_START=$(date +%s)
-          set -o pipefail
           
-          echo "🔨 Starting kernel compilation..."
-          make -j$(nproc --all) O=out KCFLAGS="$KCFLAGS" KCPPFLAGS="$KCPPFLAGS" $MAKE_ARGS 2>&1 | tee build.log
-          
-          if [ -f build.log ]; then
-            LOG_SIZE=$(stat -c%s build.log)
-            if [ "$LOG_SIZE" -gt 8388608 ]; then
-              echo "⚠️ Build log is ${LOG_SIZE} bytes, trimming to last 8MB..."
-              tail -c 8388608 build.log > build.last8m.log
-              mv build.last8m.log build.log
+          if make O=out "${MAKE_ARGS[@]}" -j${JOBS} 2>&1 | tee build.log; then
+            BUILD_END=$(date +%s)
+            BUILD_TIME=$((BUILD_END - BUILD_START))
+            
+            # Verify output
+            IMG="out/arch/arm64/boot/Image"
+            if [ ! -f "$IMG" ]; then
+              echo "::error::Kernel Image missing after successful build"
+              echo "::group::Last 100 lines of build log"
+              tail -n 100 build.log || echo "Build log not available"
+              echo "::endgroup::"
+              exit 1
             fi
-          fi
-          
-          BUILD_END=$(date +%s)
-          BUILD_TIME=$((BUILD_END - BUILD_START))
-          
-          echo "BUILD_START=$BUILD_START" >> "$GITHUB_ENV"
-          echo "BUILD_END=$BUILD_END" >> "$GITHUB_ENV"
-          echo "BUILD_TIME=$BUILD_TIME" >> "$GITHUB_ENV"
-          
-          IMG="out/arch/arm64/boot/Image"
-          if [ ! -f "$IMG" ]; then
-            echo "::error::Kernel Image missing"
-            echo "::group::Last 100 lines of build log"
-            tail -n 100 build.log || echo "Build log not available"
+            
+            IMG_SIZE=$(stat -c%s "$IMG")
+            IMG_SIZE_HUMAN=$(numfmt --to=iec-i --suffix=B "$IMG_SIZE" 2>/dev/null || echo "${IMG_SIZE}B")
+            
+            echo ""
+            echo "============================================"
+            echo "✅ Build Completed Successfully"
+            echo "============================================"
+            echo "Duration: $((BUILD_TIME / 60))m $((BUILD_TIME % 60))s"
+            echo "Image: $IMG_SIZE_HUMAN"
+            echo "============================================"
+            
+            # ccache stats
+            if [ "${{ github.event.inputs.clean }}" != "true" ]; then
+              echo ""
+              echo "ccache post-build statistics:"
+              ccache -s | head -n 10
+            fi
+            
+          else
+            echo "::error::Kernel build failed"
+            echo "::group::Last 200 lines of build log"
+            tail -n 200 build.log || echo "Build log not available"
             echo "::endgroup::"
             exit 1
           fi
-          
-          IMG_SIZE=$(stat -c%s "$IMG")
-          
-          echo "============================================"
-          echo "✅ Build Completed Successfully"
-          echo "============================================"
-          echo "Duration: $((BUILD_TIME / 60))m $((BUILD_TIME % 60))s"
-          echo "Image: $(numfmt --to=iec-i --suffix=B "$IMG_SIZE")"
-          
-          if [ "${{ github.event.inputs.clean }}" != "true" ]; then
-            echo ""
-            echo "📊 ccache Post-Build Statistics"
-            echo "============================================"
-            ccache -s
-          fi
-          echo "============================================"
-          echo "::endgroup::"
+
 
       - name: Ensure Bazel/Bazelisk Available
         if: ${{ github.event.inputs.FAST_BUILD == 'false' || steps.fast_build.outputs.fallback == 'true' }}
@@ -1574,7 +1508,6 @@ jobs:
           fi
           
           echo "::endgroup::"
-
 
       - name: Fallback to Build Kernel
         if: ${{ github.event.inputs.FAST_BUILD == 'false' || steps.fast_build.outputs.fallback == 'true' }}
