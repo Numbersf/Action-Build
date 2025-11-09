@@ -450,11 +450,11 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ${{ env.CCACHE_DIR }}
-          key: ccache-suki-v5-${{ github.event.inputs.FILE }}-${{ env.ANDROID_VERSION }}-${{ env.KERNEL_VERSION }}-${{ github.event.inputs.optimize_level }}-${{ github.event.inputs.FAST_BUILD == 'true' && 'fast' || 'standard' }}
+          key: ccache-suki-v4-${{ github.event.inputs.FILE }}-${{ env.ANDROID_VERSION }}-${{ env.KERNEL_VERSION }}-${{ github.event.inputs.optimize_level }}-${{ github.event.inputs.FAST_BUILD == 'true' && 'fast' || 'standard' }}
           restore-keys: |
-            ccache-suki-v5-${{ github.event.inputs.FILE }}-${{ env.ANDROID_VERSION }}-${{ env.KERNEL_VERSION }}-
-            ccache-suki-v5-${{ github.event.inputs.FILE }}-${{ env.ANDROID_VERSION }}-
-            ccache-suki-v5-${{ github.event.inputs.FILE }}-
+            ccache-suki-v4-${{ github.event.inputs.FILE }}-${{ env.ANDROID_VERSION }}-${{ env.KERNEL_VERSION }}-
+            ccache-suki-v4-${{ github.event.inputs.FILE }}-${{ env.ANDROID_VERSION }}-
+            ccache-suki-v4-${{ github.event.inputs.FILE }}-
 
       - name: Verify ccache
         if: ${{ github.event.inputs.clean != 'true' }}
