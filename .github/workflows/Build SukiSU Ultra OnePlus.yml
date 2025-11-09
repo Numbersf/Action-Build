@@ -1811,14 +1811,7 @@ jobs:
             ccache -s
             echo "============================================"
           fi
-
-      - name: Save Ccache
-        if: ${{ github.event.inputs.clean != 'true' && always() }}
-        uses: actions/cache/save@v4
-        with:
-          path: ${{ env.CCACHE_DIR }}
-          key: ccache-suki-v4-${{ github.event.inputs.FILE }}-${{ github.event.inputs.optimize_level }}-${{ github.event.inputs.FAST_BUILD == 'true' && 'fast' || 'standard' }}
-          
+      
       - name: Make AnyKernel3
         shell: bash
         run: |
