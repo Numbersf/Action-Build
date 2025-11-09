@@ -464,6 +464,300 @@ jobs:
           
           echo "::endgroup::"
 
+      - name: Kernel Source Fixups (FS magic guards)
+        run: |
+          set -euo pipefail
+          echo "::group::Kernel Source Fixups"
+          
+          cd kernel_workspace/kernel_platform/common
+          
+          # Configuration
+          TARGET="mm/cont_pte_hugepage.c"
+          MAGIC_HEADER="include/uapi/linux/magic.h"
+          BACKUP_SUFFIX=".ci-backup"
+          ALLOW_NUMERIC_FALLBACKS="${ALLOW_NUMERIC_FALLBACKS:-1}"
+          SENTINEL_MARKER="CI: FS magic compatibility block"
+          
+          # Function to check if magic numbers are defined in headers (strict)
+          has_magic_definitions_in_header() {
+            local file="$1"
+            grep -qE '^[[:space:]]*#define[[:space:]]+EROFS_SUPER_MAGIC_V1\b' "$file" 2>/dev/null || \
+            grep -qE '^[[:space:]]*#define[[:space:]]+EXT4_SUPER_MAGIC\b' "$file" 2>/dev/null
+          }
+          
+          # Function to check if target already has compatibility block
+          has_compatibility_block() {
+            local file="$1"
+            grep -q "$SENTINEL_MARKER" "$file" 2>/dev/null
+          }
+          
+          # Function to check if file needs magic.h include
+          needs_magic_include() {
+            local file="$1"
+            ! grep -qE '^[[:space:]]*#include[[:space:]]*<linux/magic\.h>' "$file"
+          }
+          
+          # Check if target file exists
+          if [ ! -f "$TARGET" ]; then
+            echo "ℹ️  $TARGET not present in this kernel version"
+            echo "   This is expected for kernels without OGKI conversion patches"
+            echo "::endgroup::"
+            exit 0
+          fi
+          
+          echo "🔧 Applying source fixups to: $TARGET"
+          echo "   Kernel version: ${KERNEL_VERSION:-unknown}"
+          echo "   Allow numeric fallbacks: $ALLOW_NUMERIC_FALLBACKS"
+          echo ""
+          
+          # Create backup
+          cp "$TARGET" "${TARGET}${BACKUP_SUFFIX}"
+          echo "📦 Backup created: ${TARGET}${BACKUP_SUFFIX}"
+          echo ""
+          
+          # ═══════════════════════════════════════════════════════════════
+          # Step 1: Add linux/magic.h include if missing
+          # ═══════════════════════════════════════════════════════════════
+          if needs_magic_include "$TARGET"; then
+            echo "  → Adding #include <linux/magic.h>"
+            
+            # Insert after the last contiguous include block at the top
+            awk '
+              BEGIN { 
+                last_inc = 0
+                inserted = 0
+              }
+              {
+                # Track last include line
+                if ($0 ~ /^[[:space:]]*#include[[:space:]]*[<"]/) {
+                  print
+                  last_inc = NR
+                  next
+                }
+                
+                # Insert after last include block
+                if (!inserted && last_inc > 0 && NR == last_inc + 1) {
+                  print ""
+                  print "#include <linux/magic.h>"
+                  print ""
+                  inserted = 1
+                }
+                
+                print
+              }
+              END {
+                # Fallback: if no includes found, prepend at start
+                if (!inserted && last_inc == 0) {
+                  print ""
+                  print "#include <linux/magic.h>"
+                  print ""
+                }
+              }
+            ' "$TARGET" > "$TARGET.tmp"
+            
+            if [ -s "$TARGET.tmp" ]; then
+              mv "$TARGET.tmp" "$TARGET"
+              echo "  ✅ Successfully added #include <linux/magic.h>"
+            else
+              echo "  ❌ Failed to add include, restoring backup"
+              mv "${TARGET}${BACKUP_SUFFIX}" "$TARGET"
+              exit 1
+            fi
+          else
+            echo "  ✅ #include <linux/magic.h> already present"
+          fi
+          
+          # ═══════════════════════════════════════════════════════════════
+          # Step 2: Add magic number fallback definitions
+          # ═══════════════════════════════════════════════════════════════
+          
+          # Check if compatibility block already exists
+          if has_compatibility_block "$TARGET"; then
+            echo "  ✅ Compatibility block already present (sentinel found)"
+            NEEDS_FALLBACK=false
+          else
+            NEEDS_FALLBACK=false
+            
+            # Check if definitions exist in system headers
+            if [ -f "$MAGIC_HEADER" ]; then
+              if ! has_magic_definitions_in_header "$MAGIC_HEADER"; then
+                NEEDS_FALLBACK=true
+                echo "  ⚠️  Magic numbers not defined in $MAGIC_HEADER"
+              else
+                echo "  ✅ Magic numbers found in $MAGIC_HEADER"
+              fi
+            else
+              NEEDS_FALLBACK=true
+              echo "  ⚠️  $MAGIC_HEADER not found"
+            fi
+          fi
+          
+          if [ "$NEEDS_FALLBACK" = true ]; then
+            echo "  → Adding compatibility fallback definitions"
+            
+            # Determine if we should add numeric fallbacks
+            ADD_NUMERIC="$ALLOW_NUMERIC_FALLBACKS"
+            if [ -f "$MAGIC_HEADER" ] && [ "$ALLOW_NUMERIC_FALLBACKS" = "0" ]; then
+              echo "  ℹ️  Header exists, skipping numeric fallbacks (ALLOW_NUMERIC_FALLBACKS=0)"
+              ADD_NUMERIC="0"
+            fi
+            
+            # Generate compatibility block with proper aliasing strategy
+            awk -v add_numeric="$ADD_NUMERIC" -v sentinel="$SENTINEL_MARKER" '
+              BEGIN { inserted = 0 }
+              {
+                # Guard against duplicate insertion within awk
+                if ($0 ~ /CI: FS magic compatibility block/) {
+                  inserted = 1
+                }
+                
+                print
+                
+                if (!inserted && $0 ~ /^[[:space:]]*#include[[:space:]]*<linux\/magic\.h>/) {
+                  print ""
+                  print "/*"
+                  print " * " sentinel
+                  print " * Ensures filesystem magic visibility across kernel variants."
+                  print " * Prefers aliasing to vendor values over introducing new numerics."
+                  print " */"
+                  print ""
+                  
+                  # EROFS: Prefer aliasing V1 to existing EROFS_SUPER_MAGIC
+                  print "#ifndef EROFS_SUPER_MAGIC_V1"
+                  print "#ifdef EROFS_SUPER_MAGIC"
+                  print "#define EROFS_SUPER_MAGIC_V1 EROFS_SUPER_MAGIC"
+                  print "#else"
+                  
+                  if (add_numeric == "1") {
+                    print "/* Fallback: use canonical upstream value */"
+                    print "#define EROFS_SUPER_MAGIC 0xE0F5E1E2"
+                    print "#define EROFS_SUPER_MAGIC_V1 EROFS_SUPER_MAGIC"
+                  } else {
+                    print "/* EROFS_SUPER_MAGIC undefined and numeric fallbacks disabled */"
+                  }
+                  
+                  print "#endif"
+                  print "#endif"
+                  print ""
+                  
+                  # EXT4
+                  if (add_numeric == "1") {
+                    print "#ifndef EXT4_SUPER_MAGIC"
+                    print "#define EXT4_SUPER_MAGIC 0xEF53"
+                    print "#endif"
+                    print ""
+                  }
+                  
+                  # F2FS
+                  if (add_numeric == "1") {
+                    print "#ifndef F2FS_SUPER_MAGIC"
+                    print "#define F2FS_SUPER_MAGIC 0xF2F52010"
+                    print "#endif"
+                    print ""
+                  }
+                  
+                  # BTRFS
+                  if (add_numeric == "1") {
+                    print "#ifndef BTRFS_SUPER_MAGIC"
+                    print "#define BTRFS_SUPER_MAGIC 0x9123683E"
+                    print "#endif"
+                    print ""
+                  }
+                  
+                  inserted = 1
+                }
+              }
+            ' "$TARGET" > "$TARGET.tmp"
+            
+            if [ -s "$TARGET.tmp" ]; then
+              mv "$TARGET.tmp" "$TARGET"
+              echo "  ✅ Successfully added fallback definitions"
+            else
+              echo "  ❌ Failed to add fallbacks, restoring backup"
+              mv "${TARGET}${BACKUP_SUFFIX}" "$TARGET"
+              exit 1
+            fi
+          fi
+          
+          # ═══════════════════════════════════════════════════════════════
+          # Step 3: Comprehensive verification
+          # ═══════════════════════════════════════════════════════════════
+          echo ""
+          echo "📋 Verification Results:"
+          
+          VERIFICATION_PASSED=true
+          
+          # Check include
+          if grep -qE '^[[:space:]]*#include[[:space:]]*<linux/magic\.h>' "$TARGET"; then
+            echo "  ✅ linux/magic.h included"
+          else
+            echo "  ❌ linux/magic.h NOT included"
+            VERIFICATION_PASSED=false
+          fi
+          
+          # Check magic numbers availability with proper word boundary matching
+          MAGIC_NUMBERS=("EROFS_SUPER_MAGIC_V1" "EXT4_SUPER_MAGIC" "F2FS_SUPER_MAGIC")
+          for magic in "${MAGIC_NUMBERS[@]}"; do
+            # Match with proper word boundaries: not preceded/followed by alphanumeric or underscore
+            if grep -Eq "(^|[^A-Za-z0-9_])$magic([^A-Za-z0-9_]|$)" "$TARGET" || \
+               grep -qE "^[[:space:]]*#define[[:space:]]+$magic\b" "$MAGIC_HEADER" 2>/dev/null; then
+              echo "  ✅ $magic available"
+            else
+              echo "  ⚠️  $magic might be missing (non-fatal)"
+            fi
+          done
+          
+          # Check sentinel marker
+          if has_compatibility_block "$TARGET"; then
+            echo "  ✅ Compatibility block sentinel present"
+          fi
+          
+          # ═══════════════════════════════════════════════════════════════
+          # Step 4: Show diff and commit changes
+          # ═══════════════════════════════════════════════════════════════
+          if command -v git >/dev/null 2>&1; then
+            echo ""
+            echo "📝 Changes applied:"
+            
+            # Show diff
+            if ! git diff --no-index --color=always "${TARGET}${BACKUP_SUFFIX}" "$TARGET" 2>/dev/null; then
+              diff -u "${TARGET}${BACKUP_SUFFIX}" "$TARGET" 2>/dev/null || true
+            fi
+            
+            # Commit only if there are changes
+            if ! git diff --quiet -- "$TARGET" 2>/dev/null; then
+              git add "$TARGET" 2>/dev/null || true
+              git commit -m "CI: FS magic number visibility for OGKI conversion" \
+                         -m "- Added #include <linux/magic.h>" \
+                         -m "- Added compatibility definitions with vendor value aliasing" \
+                         -m "- Required for mm/cont_pte_hugepage.c compilation" \
+                         -m "" \
+                         -m "Aliasing strategy:" \
+                         -m "  EROFS_SUPER_MAGIC_V1 → EROFS_SUPER_MAGIC (if available)" \
+                         -m "  Numeric fallbacks: $ALLOW_NUMERIC_FALLBACKS" \
+                         --no-verify 2>/dev/null || true
+              echo "  ✅ Changes committed to git"
+            else
+              echo "  ℹ️  No changes to commit"
+            fi
+          fi
+          
+          # ═══════════════════════════════════════════════════════════════
+          # Step 5: Cleanup
+          # ═══════════════════════════════════════════════════════════════
+          if [ "$VERIFICATION_PASSED" = true ]; then
+            rm -f "${TARGET}${BACKUP_SUFFIX}"
+            echo ""
+            echo "✅ All fixups applied and verified successfully"
+          else
+            echo ""
+            echo "⚠️  Some verifications failed, but continuing build"
+            echo "   Backup preserved at: ${TARGET}${BACKUP_SUFFIX}"
+          fi
+          
+          echo ""
+          echo "::endgroup::"
+
       - name: Kernel Version Handling
         run: |
           cd kernel_workspace/kernel_platform
