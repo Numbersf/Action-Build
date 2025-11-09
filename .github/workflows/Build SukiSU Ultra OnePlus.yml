@@ -118,10 +118,47 @@ jobs:
         with:
           root-reserve-mb: 8192
           temp-reserve-mb: 2048
+          swap-size-mb: 6144
           remove-dotnet: 'true'
           remove-android: 'true'
           remove-haskell: 'true'
           remove-codeql: 'true'
+
+      - name: Optimize System for Kernel Build
+        run: |
+          set -euo pipefail
+          echo "::group::System optimization"
+          
+          # Increase file descriptor limits
+          ulimit -n 65536 || true
+          
+          # Optimize I/O scheduler for SSDs
+          for disk in /sys/block/sd*/queue/scheduler; do
+            if [ -f "$disk" ]; then
+              echo "none" | sudo tee "$disk" 2>/dev/null || true
+            fi
+          done
+          
+          # Disable unnecessary services
+          sudo systemctl stop unattended-upgrades 2>/dev/null || true
+          sudo systemctl stop apt-daily.timer 2>/dev/null || true
+          sudo systemctl stop snapd.service 2>/dev/null || true
+          
+          # Set CPU governor to performance
+          for cpu in /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor; do
+            if [ -f "$cpu" ]; then
+              echo "performance" | sudo tee "$cpu" 2>/dev/null || true
+            fi
+          done
+          
+          # Optimize swap behavior
+          sudo sysctl -w vm.swappiness=10
+          sudo sysctl -w vm.vfs_cache_pressure=50
+          sudo sysctl -w vm.dirty_ratio=10
+          sudo sysctl -w vm.dirty_background_ratio=5
+          
+          echo "✅ System optimized for build"
+          echo "::endgroup::"
 
       - name: Extract Manifest Info
         id: extract_info
@@ -261,10 +298,19 @@ jobs:
           mkdir -p "$HOME/.ccache_${{ github.event.inputs.FILE }}"
           echo "set: $HOME/.ccache_${{ github.event.inputs.FILE }}"
 
-      - name: Configure Git
+      - name: Optimize Git for Large Repository
         run: |
           git config --global user.name "Numbersf"
           git config --global user.email "263623064@qq.com"
+          git config --global core.compression 0
+          git config --global core.preloadindex true
+          git config --global core.fscache true
+          git config --global gc.auto 0
+          git config --global protocol.version 2
+          git config --global fetch.parallel 8
+          git config --global http.postBuffer 524288000
+          git config --global http.lowSpeedLimit 0
+          git config --global http.lowSpeedTime 999999
 
       - name: Install Minimal Dependencies
         shell: bash
@@ -373,28 +419,50 @@ jobs:
         env:
           FILE: ${{ github.event.inputs.FILE }}
         run: |
+          set -euo pipefail
+          echo "::group::Initialize and sync repository"
+          
           mkdir kernel_workspace && cd kernel_workspace
           mkdir -p .repo/manifests
           cp "$GITHUB_WORKSPACE/.repo/manifests_fallback/${FILE}.xml" ".repo/manifests/${FILE}.xml"
 
           MANIFEST_REPO="${{ env.MANIFEST_REPO }}"
           MANIFEST_BRANCH="${{ env.MANIFEST_BRANCH }}"
-          CPU="${{ env.CPU }}"
-          echo "MANIFEST_REPO=$MANIFEST_REPO"
-          echo "MANIFEST_BRANCH=$MANIFEST_BRANCH"
-
           BASE_URL="https://github.com/${MANIFEST_REPO}/kernel_manifest.git"
 
-          echo "使用 $MANIFEST_REPO 的分支 $MANIFEST_BRANCH 初始化仓库..."
-          repo init -u "$BASE_URL" -b "$MANIFEST_BRANCH" -m "${FILE}.xml" --repo-rev=v2.16 --depth=1 --no-clone-bundle --no-tags
-          repo sync -c -j$(nproc) --no-clone-bundle --no-tags --force-sync
+          echo "📦 Initializing repo with $MANIFEST_REPO/$MANIFEST_BRANCH..."
+          repo init -u "$BASE_URL" -b "$MANIFEST_BRANCH" -m "${FILE}.xml" \
+            --repo-rev=v2.16 --depth=1 --no-clone-bundle --no-tags
 
+          # Calculate optimal job count
+          JOBS=$(nproc)
+          JOBS=$((JOBS > 16 ? 16 : JOBS))
+          JOBS=$((JOBS < 4 ? 4 : JOBS))
+          
+          echo "🔄 Syncing with -j${JOBS}..."
+          
+          # Parallel sync with retry logic
+          for i in {1..3}; do
+            if repo sync -c -j${JOBS} --force-sync --no-clone-bundle --no-tags \
+               --optimized-fetch --prune --fail-fast; then
+              echo "✅ Sync completed successfully"
+              break
+            else
+              echo "⚠️ Sync attempt $i failed, retrying..."
+              [ $i -eq 3 ] && exit 1
+              sleep 5
+            fi
+          done
+
+          # Clean up protected exports
           for dir in kernel_platform/common kernel_platform/msm-kernel; do
             if [ -e "$dir/BUILD.bazel" ]; then
               sed -i '/^[[:space:]]*"protected_exports_list"[[:space:]]*:[[:space:]]*"android\/abi_gki_protected_exports_aarch64",$/d' "$dir/BUILD.bazel"
             fi
-            rm -f "$dir/android/abi_gki_protected_exports_"* 2>/dev/null || echo "No protected exports in $dir"
+            rm -f "$dir/android/abi_gki_protected_exports_"* 2>/dev/null || true
           done
+          
+          echo "::endgroup::"
 
       - name: Kernel Version Handling
         run: |
@@ -422,67 +490,81 @@ jobs:
 
       - name: Add SukiSU Ultra
         run: |
+          set -euo pipefail
+          echo "::group::Setup SukiSU Ultra"
+          
           cd kernel_workspace/kernel_platform
 
           META="${{ github.event.inputs.KSU_META }}"
 
-          # 必须包含两个分隔符（至少三个字段）
+          # Validate format
           if [[ "$(grep -o '/' <<< "$META" | wc -l)" -lt 2 ]]; then
-            echo "错误: KSU_META 参数缺少必要的分隔符 '/'，格式应为: 分支名/自定义标识(可省略)/提交hash(可省略)"
+            echo "❌ KSU_META format error. Expected: branch/tag/hash"
             exit 10
           fi
 
-          # 解析字段：分支 / 自定义标识 / 手动 hash
+          # Parse fields
           IFS='/' read -r BRANCH_NAME CUSTOM_TAG MANUAL_HASH <<< "$META"
 
-          echo "分支名: $BRANCH_NAME"
-          [[ -n "$CUSTOM_TAG" ]] && echo "自定义版本标识: $CUSTOM_TAG" || echo "自定义版本标识: 未启用"
-          [[ -n "$MANUAL_HASH" ]] && echo "手动指定 hash: $MANUAL_HASH" || echo "手动指定 hash: 未启用"
+          echo "📦 Branch: $BRANCH_NAME"
+          [[ -n "$CUSTOM_TAG" ]] && echo "🏷️  Tag: $CUSTOM_TAG" || echo "🏷️  Tag: (default)"
+          [[ -n "$MANUAL_HASH" ]] && echo "🔖 Hash: $MANUAL_HASH" || echo "🔖 Hash: (latest)"
 
-          curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash -s "$BRANCH_NAME"
+          # Setup with retry
+          for i in {1..3}; do
+            if curl -fsSL "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | \
+               bash -s "$BRANCH_NAME"; then
+              echo "✅ Setup script completed"
+              break
+            else
+              echo "⚠️ Setup attempt $i failed"
+              [ $i -eq 3 ] && exit 1
+              sleep 3
+            fi
+          done
+          
           cd ./KernelSU
 
-          # 如果指定了手动 hash，就切换到该提交
+          # Checkout specific commit if specified
           if [[ -n "$MANUAL_HASH" ]]; then
             git fetch origin "$BRANCH_NAME" --depth=50
             git checkout "$MANUAL_HASH"
             SHORT_HASH=${MANUAL_HASH:0:8}
+            echo "✅ Checked out commit: $SHORT_HASH"
           fi
 
+          # Get API version with fallback
           KSU_API_VERSION=$(curl -fsSL "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/$BRANCH_NAME/kernel/Makefile" | \
-            grep -m1 "KSU_VERSION_API :=" | awk -F'= ' '{print $2}' | tr -d '[:space:]')
+            grep -m1 "KSU_VERSION_API :=" | awk -F'= ' '{print $2}' | tr -d '[:space:]' || echo "3.1.7")
+          
           if [[ -z "$KSU_API_VERSION" || "$(printf '%s\n' "$KSU_API_VERSION" "3.1.7" | sort -V | head -n1)" != "3.1.7" ]]; then
             KSU_API_VERSION="3.1.7"
           fi
           echo "KSU_API_VERSION=$KSU_API_VERSION" >> $GITHUB_ENV
 
           GIT_HASH=$(git rev-parse --short HEAD)
-          echo "GIT_HASH=$GIT_HASH"
+          echo "📝 Git hash: $GIT_HASH"
 
-          # 组装版本号
-          if [[ -n "$MANUAL_HASH" ]]; then
-            USE_HASH="$SHORT_HASH"
-          else
-            USE_HASH="$GIT_HASH"
-          fi
+          # Build version string
+          USE_HASH="${SHORT_HASH:-$GIT_HASH}"
           if [[ -z "$CUSTOM_TAG" ]]; then
             VERSION_FULL="v$KSU_API_VERSION-$USE_HASH@$BRANCH_NAME"
           else
             VERSION_FULL="v$KSU_API_VERSION-$CUSTOM_TAG@$BRANCH_NAME[$USE_HASH]"
           fi
 
-          # 清理并写入 Makefile 版本信息
+          # Update Makefile
           sed -i '/define get_ksu_version_full/,/endef/d' kernel/Makefile
           sed -i '/KSU_VERSION_API :=/d' kernel/Makefile
           sed -i '/KSU_VERSION_FULL :=/d' kernel/Makefile
 
           VERSION_DEFINITIONS=$(cat <<EOF
-            define get_ksu_version_full
-            $VERSION_FULL
-            endef
-
-            KSU_VERSION_API := $KSU_API_VERSION
-            KSU_VERSION_FULL := $VERSION_FULL
+          define get_ksu_version_full
+          $VERSION_FULL
+          endef
+          
+          KSU_VERSION_API := $KSU_API_VERSION
+          KSU_VERSION_FULL := $VERSION_FULL
           EOF
           )
 
@@ -495,26 +577,37 @@ jobs:
           KSU_VERSION=$(expr $(git rev-list --count main 2>/dev/null || echo 13000) + 37185)
           echo "KSUVER=$KSU_VERSION" >> $GITHUB_ENV
 
-          echo "::group::最终 Makefile 中版本信息及部分调试结果预览"
-          grep -A10 "REPO_OWNER" kernel/Makefile
-          grep "KSU_VERSION_FULL" kernel/Makefile
+          echo "✅ Version: $VERSION_FULL"
+          echo "✅ KSU Version: $KSU_VERSION"
+          
           echo "::endgroup::"
 
       - name: Apply Patches SukiSU Ultra
         env:
           FILE: ${{ github.event.inputs.FILE }}
         run: |
+          set -euo pipefail
+          echo "::group::Apply patches"
+          
           cd kernel_workspace
-          git clone https://gitlab.com/simonpunk/susfs4ksu.git -b gki-${{ env.KANDROID_VERSION }}-${{ env.KERNEL_VERSION }}
-          git clone https://github.com/ShirkNeko/SukiSU_patch.git
+          
+          # Clone with shallow history
+          echo "📥 Cloning susfs4ksu..."
+          git clone --depth=1 https://gitlab.com/simonpunk/susfs4ksu.git \
+            -b gki-${{ env.KANDROID_VERSION }}-${{ env.KERNEL_VERSION }}
+          
+          echo "📥 Cloning SukiSU_patch..."
+          git clone --depth=1 https://github.com/ShirkNeko/SukiSU_patch.git
+          
           cd kernel_platform
-          echo "正在拉取susfs补丁"
+          
+          echo "📋 Copying susfs patches..."
           cp ../susfs4ksu/kernel_patches/50_add_susfs_in_gki-${{ env.KANDROID_VERSION }}-${{ env.KERNEL_VERSION }}.patch ./common/
           cp ../susfs4ksu/kernel_patches/fs/* ./common/fs/
           cp ../susfs4ksu/kernel_patches/include/linux/* ./common/include/linux/
 
           if [ "${{ github.event.inputs.ZRAM }}" = "true" ]; then
-            echo "正在拉取zram补丁"
+            echo "📋 Copying ZRAM patches..."
             cp -r ../SukiSU_patch/other/zram/lz4k/include/linux/* ./common/include/linux/
             cp -r ../SukiSU_patch/other/zram/lz4k/lib/* ./common/lib/
             cp -r ../SukiSU_patch/other/zram/lz4k/crypto/* ./common/crypto/
@@ -525,60 +618,61 @@ jobs:
           GKI_V="${{ env.KANDROID_VERSION }}-${{ env.KERNEL_VERSION }}"
           SUBLEVEL=$(grep '^SUBLEVEL *=' Makefile | head -n1 | cut -d= -f2 | tr -d ' ')
 
+          # Apply legacy fixes
           if [ "$GKI_V" == "android13-5.15" ] && [ "$SUBLEVEL" -lt 123 ]; then
-            echo "修复内核版本5.15.0到5.15.123仅支持旧版C库造成的一些bug"
-            curl -Lo fix_5.15.legacy.patch --retry 5 --retry-delay 2 --retry-connrefused https://raw.githubusercontent.com/Numbersf/Action-Build/SukiSU-Ultra/patches/fix_5.15.legacy
+            echo "🔧 Applying 5.15 legacy fix..."
+            curl -fsSLo fix_5.15.legacy.patch --retry 3 \
+              https://raw.githubusercontent.com/Numbersf/Action-Build/SukiSU-Ultra/patches/fix_5.15.legacy
             patch -p1 < fix_5.15.legacy.patch
-            echo "fix_5.15_patch完成"
+            echo "✅ 5.15 legacy fix applied"
           fi
+          
+          # Handle Trusty OS for 6.6
           KERNEL_VERSION="${{ env.KERNEL_VERSION }}"
           TKERNEL_VERSION="${{ env.TKERNEL_VERSION }}"
-          TRUSTY_EXISTS="false"
           if [[ "$KERNEL_VERSION" == "6.6" ]]; then
+            TRUSTY_EXISTS="false"
             if grep -q 'common-modules/trusty' "$GITHUB_WORKSPACE/.repo/manifests_fallback/${FILE}.xml"; then
               TRUSTY_EXISTS="true"
             fi
-            echo "trusty_exists=$TRUSTY_EXISTS" >> $GITHUB_OUTPUT
-
+            
             if [[ "$TRUSTY_EXISTS" == "false" && "$(printf '%s\n' "$TKERNEL_VERSION" "6.6.30" | sort -V | head -n1)" = "$TKERNEL_VERSION" ]]; then
-              echo "修复内核版本6.6部分机型缺失Trusty OS导致的susfs的报错"
+              echo "🔧 Fixing Trusty OS absence for 6.6..."
               sed -i 's/-32,12 +32,38/-32,11 +32,37/g' 50_add_susfs_in_gki-${{ env.KANDROID_VERSION }}-${KERNEL_VERSION}.patch
               sed -i '/#include <trace\/hooks\/fs.h>/d' 50_add_susfs_in_gki-${{ env.KANDROID_VERSION }}-${KERNEL_VERSION}.patch
             fi
           fi
-          # Fake Patch to fix failures
+          
+          # Fake patch for specific GKI versions
           fake_patched=0
           if [ "$GKI_V" = "android15-6.6" ]; then
             if ! grep -qxF $'\tunsigned int nr_subpages = __PAGE_SIZE / PAGE_SIZE;' ./fs/proc/task_mmu.c; then
-              echo "未找到 nr_subpages,正在进行补丁修复"
-              sed -i -e '/int ret = 0, copied = 0;/a \\tunsigned int nr_subpages \= __PAGE_SIZE \/ PAGE_SIZE;' -e '/int ret = 0, copied = 0;/a \\tpagemap_entry_t \*res = NULL;' ./fs/proc/task_mmu.c
-              fake_patched=1
-            fi
-          fi
-          if [ "$GKI_V" = "android12-5.10" ] || [ "$GKI_V" = "android13-5.15" ]; then
-            if ! grep -qxF $'\tif (!vma_pages(vma))' ./fs/proc/task_mmu.c; then
-              echo "未找到 vma_pages,正在进行补丁修复"
+              echo "🔧 Applying fake patch for android15-6.6..."
+              sed -i -e '/int ret = 0, copied = 0;/a \\tunsigned int nr_subpages \= __PAGE_SIZE \/ PAGE_SIZE;' \
+                     -e '/int ret = 0, copied = 0;/a \\tpagemap_entry_t \*res = NULL;' ./fs/proc/task_mmu.c
               fake_patched=1
             fi
           fi
 
-          echo "正在打susfs补丁"
-          patch -p1 < 50_add_susfs_in_gki-${{ env.KANDROID_VERSION }}-${{ env.KERNEL_VERSION }}.patch || true
-          echo "susfs_patch完成"
+          # Apply susfs patch
+          echo "🔨 Applying susfs patch..."
+          if patch -p1 --forward --no-backup-if-mismatch < 50_add_susfs_in_gki-${{ env.KANDROID_VERSION }}-${{ env.KERNEL_VERSION }}.patch; then
+            echo "✅ susfs patch applied"
+          else
+            echo "⚠️ susfs patch failed or already applied"
+          fi
 
-          # Revert
+          # Revert fake patches
           if [ "$fake_patched" = 1 ]; then
             if [ "$GKI_V" = "android15-6.6" ]; then
               if grep -qxF $'\tunsigned int nr_subpages = __PAGE_SIZE / PAGE_SIZE;' ./fs/proc/task_mmu.c; then
-                sed -i -e '/unsigned int nr_subpages \= __PAGE_SIZE \/ PAGE_SIZE;/d' -e '/pagemap_entry_t \*res = NULL;/d' ./fs/proc/task_mmu.c
-              fi
-            fi
-            if [ "$GKI_V" = "android12-5.10" ] || [ "$GKI_V" = "android13-5.15" ]; then
-              if grep -qxF $'\t\tgoto show_pad;' ./fs/proc/task_mmu.c; then
-                sed -i -e 's/goto show_pad;/return 0;/' ./fs/proc/task_mmu.c
+                sed -i -e '/unsigned int nr_subpages \= __PAGE_SIZE \/ PAGE_SIZE;/d' \
+                       -e '/pagemap_entry_t \*res = NULL;/d' ./fs/proc/task_mmu.c
               fi
             fi
           fi
+          
+          echo "::endgroup::"
 
       - name: Apply Hide Stuff Patches
         run: |
@@ -587,7 +681,7 @@ jobs:
           echo "正在打隐藏应用补丁"
           patch -p1 -F 3 < 69_hide_stuff.patch
           echo "隐藏应用_patch完成"
-
+      
       # OGKI转换GKI，无需修改 dtbo 开机
       - name: Apply Convert HMBIRD_OGKI to HMBIRD_GKI
         if: ${{ env.KERNEL_VERSION == '6.6' && github.event.inputs.SCHED == 'false' }}
@@ -742,18 +836,7 @@ jobs:
           CUSTOM_LOCALVERSION="-${{ env.ANDROID_VERSION }}-${{ github.event.inputs.optimize_level }}-UltraBolt"
           echo "CUSTOM_LOCALVERSION=$CUSTOM_LOCALVERSION" >> $GITHUB_ENV
           echo "Kernel branding: $CUSTOM_LOCALVERSION"
-
-      - name: Enable lto=thin For FAST
-        if: ${{ (env.KERNEL_VERSION == '5.10' || env.KERNEL_VERSION == '5.15') && github.event.inputs.FAST_BUILD == 'true' }}
-        run: |
-          cd kernel_workspace/kernel_platform
-          DEFCONFIG=./common/arch/arm64/configs/gki_defconfig
-          echo "Enabling ThinLTO in $DEFCONFIG"
-          sed -i 's/^CONFIG_LTO=n/CONFIG_LTO=y/' "$DEFCONFIG"
-          sed -i 's/^CONFIG_LTO_CLANG_FULL=y/CONFIG_LTO_CLANG_THIN=y/' "$DEFCONFIG"
-          sed -i 's/^CONFIG_LTO_CLANG_NONE=y/CONFIG_LTO_CLANG_THIN=y/' "$DEFCONFIG"
-          grep -q '^CONFIG_LTO_CLANG_THIN=y' "$DEFCONFIG" || echo 'CONFIG_LTO_CLANG_THIN=y' >> "$DEFCONFIG"
-
+     
       - name: Build Kernel FAST
         if: ${{ github.event.inputs.FAST_BUILD == 'true' }}
         id: fast_build
@@ -815,7 +898,6 @@ jobs:
           export PATH="$GITHUB_WORKSPACE/kernel_workspace/kernel_platform/$CLANG_PREBUILT_BIN:$PATH"
           export PATH="/usr/lib/ccache:$PATH"
           export CC="ccache clang"
-          sudo apt install -y libelf-dev ccache
 
           # Get last commit timestamp
           cd ./common
@@ -1015,8 +1097,7 @@ jobs:
               "https://api.github.com/repos/sidex15/susfs4ksu-module/actions/runs/$LATEST_RUN_ID/artifacts" | jq -r '.artifacts[0].archive_download_url')
             if [ -n "$ARTIFACT_URL" ]; then
               curl -L -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" -o ksu_module_susfs_1.5.2+_CI.zip "$ARTIFACT_URL"
-              cp ksu_module_susfs_1.5.2+_CI.zip ./AnyKernel3/
-            else
+              cp ksu_module_susfs_1.5.2+_CI.zip ./AnyKernel3/            else
               echo "Failed to fetch artifact URL"
             fi
           fi
@@ -1051,7 +1132,6 @@ jobs:
             fi
           fi
 
-      
       - name: Set zip Suffix
         id: suffix
         run: |
@@ -1076,7 +1156,8 @@ jobs:
         id: zram_find
         run: |
           set -e
-          sudo apt install -y unzip
+          echo "::group::Download ZRAM module"
+          
           echo "尝试获取 ZRAM 模块 zip 下载链接..."
           retries=3
           success=0
@@ -1097,6 +1178,7 @@ jobs:
           if [ "$success" -ne 1 ]; then
             echo "❌ 连续 $retries 次尝试后仍然无法获取 ZRAM 模块下载链接"
             echo "upload=false" >> "$GITHUB_OUTPUT"
+            echo "::endgroup::"
             exit 0
           fi
 
@@ -1109,25 +1191,27 @@ jobs:
           )
           zram_path=""
           for path in "${search_paths[@]}"; do
-            zram_path=$(find "$path" -type f -name "zram.ko" | head -n 1)
+            zram_path=$(find "$path" -type f -name "zram.ko" 2>/dev/null | head -n 1)
             [ -n "$zram_path" ] && break
           done
           if [ -z "$zram_path" ]; then
-            zram_path=$(find "./kernel_workspace" -type f -name "zram.ko" | head -n 1)
+            zram_path=$(find "./kernel_workspace" -type f -name "zram.ko" 2>/dev/null | head -n 1)
           fi
           if [ -n "$zram_path" ] && [ -f "$zram_path" ]; then
-            echo "ZRAM module file finally located at: $zram_path"
+            echo "✅ ZRAM module file located at: $zram_path"
             mkdir -p "$(dirname "$target")"
             if [ "$(realpath "$zram_path")" != "$(realpath "$target")" ]; then
               cp "$zram_path" "$target"
+              echo "✅ ZRAM module copied successfully"
             else
               echo "源文件与目标路径相同，跳过复制"
             fi
           else
-            echo "未找到 zram.ko 文件，可能是未支持的内核版本或者未成功构建"
+            echo "⚠️ 未找到 zram.ko 文件，可能是未支持的内核版本或者未成功构建"
             echo "upload=false" >> "$GITHUB_OUTPUT"
-            exit 0
           fi
+          
+          echo "::endgroup::"
 
       - name: Upload ZRAM Module
         if: ${{ github.event.inputs.ZRAM == 'true' && steps.zram_find.outputs.upload != 'false' }}
@@ -1137,7 +1221,14 @@ jobs:
           path: ZRAM-Module/*
 
       - name: Post-build Disk Check
-        run: df -h
+        if: always()
+        run: |
+          echo "::group::Disk usage"
+          df -h
+          echo ""
+          echo "Workspace size:"
+          du -sh kernel_workspace 2>/dev/null || echo "N/A"
+          echo "::endgroup::"
 
       - name: Build Summary
         if: always()
@@ -1157,6 +1248,7 @@ jobs:
           echo "| SCHED Enabled | ${{ github.event.inputs.SCHED }} |" >> $GITHUB_STEP_SUMMARY
           echo "| ZRAM Enabled | ${{ github.event.inputs.ZRAM }} |" >> $GITHUB_STEP_SUMMARY
           echo "| KSU Meta | ${{ github.event.inputs.KSU_META }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| KSU Version | ${{ env.KSUVER }} |" >> $GITHUB_STEP_SUMMARY
           
           if [ -n "${{ env.BUILD_TIME }}" ]; then
             echo "| Build Duration | ${{ env.BUILD_TIME }}s ($((env.BUILD_TIME / 60))m $((env.BUILD_TIME % 60))s) |" >> $GITHUB_STEP_SUMMARY
@@ -1166,27 +1258,75 @@ jobs:
             echo "| Clang Version | ${{ env.CLANG_VERSION_SHORT }} |" >> $GITHUB_STEP_SUMMARY
           fi
           
+          # Add kernel image info
+          if [ -f "kernel_workspace/kernel_platform/out/Final-Image-Find/Image" ]; then
+            IMG_SIZE=$(stat -c%s kernel_workspace/kernel_platform/out/Final-Image-Find/Image)
+            echo "| Kernel Image Size | $(numfmt --to=iec-i --suffix=B "$IMG_SIZE") |" >> $GITHUB_STEP_SUMMARY
+          fi
+          
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "### 📦 Artifacts" >> $GITHUB_STEP_SUMMARY
-          echo "- AnyKernel3 package with kernel image" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ AnyKernel3 package with kernel image" >> $GITHUB_STEP_SUMMARY
           if [ "${{ github.event.inputs.ZRAM }}" = "true" ]; then
-            echo "- ZRAM module" >> $GITHUB_STEP_SUMMARY
+            if [ "${{ steps.zram_find.outputs.upload }}" != "false" ]; then
+              echo "- ✅ ZRAM module" >> $GITHUB_STEP_SUMMARY
+            else
+              echo "- ⚠️ ZRAM module (not found)" >> $GITHUB_STEP_SUMMARY
+            fi
           fi
           if [ "${{ github.event.inputs.SUSFS_CI }}" != "NoN" ]; then
-            echo "- SUSFS module (${{ github.event.inputs.SUSFS_CI }})" >> $GITHUB_STEP_SUMMARY
+            echo "- ✅ SUSFS module (${{ github.event.inputs.SUSFS_CI }})" >> $GITHUB_STEP_SUMMARY
           fi
-          echo "- SukiSU-Ultra APK" >> $GITHUB_STEP_SUMMARY
-          echo "- Build log" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ SukiSU-Ultra APK" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ Build log" >> $GITHUB_STEP_SUMMARY
           
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "### 🔧 Build Configuration" >> $GITHUB_STEP_SUMMARY
           echo "- Kernel branding: \`${CUSTOM_LOCALVERSION}\`" >> $GITHUB_STEP_SUMMARY
           echo "- Optimization flags: ${{ github.event.inputs.optimize_level }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Manifest repo: ${{ env.MANIFEST_REPO }}/${{ env.MANIFEST_BRANCH }}" >> $GITHUB_STEP_SUMMARY
           
           if [ "${{ github.event.inputs.clean }}" != "true" ] && [ "${{ github.event.inputs.FAST_BUILD }}" = "true" ]; then
             echo "" >> $GITHUB_STEP_SUMMARY
             echo "### 📊 ccache Statistics" >> $GITHUB_STEP_SUMMARY
             echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
-            ccache -s 2>/dev/null | head -n 15 >> $GITHUB_STEP_SUMMARY || echo "ccache stats not available" >> $GITHUB_STEP_SUMMARY
+            ccache -s 2>/dev/null | head -n 20 >> $GITHUB_STEP_SUMMARY || echo "ccache stats not available" >> $GITHUB_STEP_SUMMARY
             echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+            
+            # Add cache hit rate
+            if command -v ccache &> /dev/null; then
+              CACHE_STATS=$(ccache -s 2>/dev/null || echo "")
+              if [ -n "$CACHE_STATS" ]; then
+                HITS=$(echo "$CACHE_STATS" | grep "cache hit" | awk '{print $NF}' | head -1 || echo "0")
+                MISSES=$(echo "$CACHE_STATS" | grep "cache miss" | awk '{print $NF}' | head -1 || echo "0")
+                if [ -n "$HITS" ] && [ -n "$MISSES" ] && [ "$HITS" != "0" ] && [ "$MISSES" != "0" ]; then
+                  TOTAL=$((HITS + MISSES))
+                  if [ "$TOTAL" -gt 0 ]; then
+                    HIT_RATE=$(awk "BEGIN {printf \"%.1f\", ($HITS / $TOTAL) * 100}")
+                    echo "" >> $GITHUB_STEP_SUMMARY
+                    echo "**Cache Hit Rate:** ${HIT_RATE}% ($HITS hits / $TOTAL total)" >> $GITHUB_STEP_SUMMARY
+                  fi
+                fi
+              fi
+            fi
           fi
+          
+          # Add disk usage
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 💾 Disk Usage" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          df -h | grep -E "(Filesystem|/dev/mapper|/mnt|/$)" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          
+          # Add build status
+          echo "" >> $GITHUB_STEP_SUMMARY
+          if [ -f "kernel_workspace/kernel_platform/out/Final-Image-Find/Image" ]; then
+            echo "### ✅ Build Status: **SUCCESS**" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "### ❌ Build Status: **FAILED**" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          # Add workflow run info
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "---" >> $GITHUB_STEP_SUMMARY
+          echo "*Workflow run #${{ github.run_number }} • Triggered by @${{ github.actor }}*" >> $GITHUB_STEP_SUMMARY
