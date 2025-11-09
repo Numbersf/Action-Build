@@ -393,24 +393,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          echo "::group::Install dependencies"
-          
-          sudo apt-get -qq update
+          sudo apt-get -o Acquire::Retries=3 update -qq
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-            clang lld libelf-dev libssl-dev dwarves bc dos2unix ccache jq unzip coreutils
-          
-          sudo apt-get clean
-          
-          echo "Verifying installations:"
-          clang --version | head -1
-          pahole --version
-          ccache --version | head -1
-          jq --version
-          unzip -v | head -1 || true
-          numfmt --version | head -1 || true
-          
-          echo "✅ Dependencies installed"
-          echo "::endgroup::"
+            git curl ca-certificates build-essential \
+            clang lld llvm \
+            flex bison libelf-dev libssl-dev libncurses-dev zlib1g-dev \
+            liblz4-tool rsync unzip zip dwarves file python3 ccache jq bc dos2unix  
 
       - name: Setup ccache
         run: |
