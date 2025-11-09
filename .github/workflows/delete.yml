@@ -134,7 +134,7 @@ jobs:
             
             // ✅ FIXED: Updated v4 pattern to match actual cache key format
             const CACHE_PATTERNS = {
-              v4: /^ccache-suki-v4-([^-]+)-([^-]+)-([^-]+)-([^-]+)$/,
+              v4: /^ccache-suki-v4-([^-]+)-([^-]+)-([^-]+)$/,
               v3: /^ccache-(?:suki-)?v3-([^-]+)-([0-9.]+)-(?:[A-Za-z0-9.-]+-)?(?:clang-[A-Za-z0-9.-]+-)?([A-Za-z0-9._-]+)(?:-.+)?$/,
               legacy: /^ccache-(?!suki-v[34]-)(.+)$/
             };
@@ -283,9 +283,10 @@ jobs:
                   isV4 = true;
                   device = v4Match[1];        // oneplus_ace2_pro_v
                   osVersion = v4Match[2];     // O2
-                  androidVer = v4Match[3];    // 15.0.0
-                  buildMode = v4Match[4];     // fast
-                } else {
+                  buildMode = v4Match[3];     // fast
+                  // Note: v4 format doesn't include androidVer in key
+                }
+                 else {
                   const v3Match = cache.key.match(CACHE_PATTERNS.v3);
                   if (v3Match) {
                     stats.cacheKeyVersions.v3++;
@@ -701,7 +702,7 @@ jobs:
             const forceCleanup = isScheduled ? false : ('${{ inputs.force_cleanup }}' === 'true');
             
             // ✅ FIXED: Updated v4 pattern
-            const V4_PATTERN = /^ccache-suki-v4-([^-]+)-([^-]+)-([^-]+)-([^-]+)$/;
+            const V4_PATTERN = /^ccache-suki-v4-([^-]+)-([^-]+)-([^-]+)$/;
             const V3_PATTERN = /^ccache-(?:suki-)?v3-([^-]+)-([0-9.]+)-(?:[A-Za-z0-9.-]+-)?(?:clang-[A-Za-z0-9.-]+-)?([A-Za-z0-9._-]+)(?:-.+)?$/;
             const LEGACY_PATTERN = /^ccache-(?!suki-v[34]-)(.+)$/;
             
@@ -792,12 +793,14 @@ jobs:
               let kernel = null;
               
               if (isV4Format) {
-                const v4Match = cacheKey.match(V4_PATTERN);
-                if (v4Match) {
-                  device = v4Match[1];
-                  kernel = v4Match[3]; // Android version can act as kernel identifier
-                }
-              } else if (isV3Format) {
+              const v4Match = cacheKey.match(V4_PATTERN);
+              if (v4Match) {
+                device = v4Match[1];  // oneplus_ace2_pro_v
+                // v4 format: ccache-suki-v4-{device}-{opt}-{mode}
+                // No kernel/android version in key, use device for filtering
+              }
+            }
+             else if (isV3Format) {
                 const v3Match = cacheKey.match(V3_PATTERN);
                 if (v3Match) {
                   kernel = v3Match[2];
