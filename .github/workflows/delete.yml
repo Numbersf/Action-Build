@@ -11,16 +11,54 @@ on:
           - 'list-all'
           - 'list-ccache'
           - 'list-apt'
+          - 'list-by-device'
           - 'delete-ccache'
           - 'delete-apt'
           - 'delete-all'
           - 'delete-old'
           - 'delete-by-device'
           - 'show-stats'
-      device_filter:
-        description: 'Device name filter (for delete-by-device)'
+      device_model:
+        description: 'Select Device Model (for list/delete by device)'
         required: false
-        type: string
+        type: choice
+        options:
+          - 'all'
+          - 'oneplus_nord_ce4_lite_5g_v'
+          - 'oneplus_nord_ce4_v'
+          - 'oneplus_nord_4_v'
+          - 'oneplus_ace_3v_v'
+          - 'oneplus_10_pro_v'
+          - 'oneplus_10t_v'
+          - 'oneplus_11r_v'
+          - 'oneplus_ace2_v'
+          - 'oneplus_ace_pro_v'
+          - 'oneplus_11_v'
+          - 'oneplus_12r_v'
+          - 'oneplus_ace2_pro_v'
+          - 'oneplus_ace3_v'
+          - 'oneplus_open_v'
+          - 'oneplus_12_v'
+          - 'oneplus_13r'
+          - 'oneplus_ace3_pro_v'
+          - 'oneplus_ace5'
+          - 'oneplus_pad_pro_v'
+          - 'oneplus_pad2_v'
+          - 'oneplus_nord_5'
+          - 'oneplus_ace5_pro'
+          - 'oneplus_ace5_pro_b'
+          - 'oneplus_13'
+          - 'oneplus_13_b'
+          - 'oneplus_13_global'
+          - 'oneplus_13t'
+          - 'oneplus_13t_b'
+          - 'oneplus_13s'
+          - 'oneplus_13s_b'
+          - 'oneplus_pad_2_pro'
+          - 'oneplus_pad_3'
+          - 'oneplus_ace5_ultra'
+          - 'oneplus_ace_6'
+          - 'oneplus_15'
       days_old:
         description: 'Delete caches older than X days (for delete-old)'
         required: false
@@ -44,7 +82,7 @@ jobs:
 
       - name: Setup GitHub CLI
         run: |
-          sudo apt update && sudo apt install -y gh jq
+          sudo apt update && sudo apt install -y gh jq bc
           echo "${{ secrets.GITHUB_TOKEN }}" | gh auth login --with-token
 
       - name: List All Caches
@@ -69,7 +107,7 @@ jobs:
           
           while IFS='|' read -r key size created accessed; do
             size_mb=$(echo "scale=2; $size / 1024 / 1024" | bc)
-            echo "| \`${key:0:50}...\` | ${size_mb} MB | $created | $accessed |" >> $GITHUB_STEP_SUMMARY
+            echo "| \`${key:0:50}...\` | ${size_mb} MB | ${created:0:10} | ${accessed:0:10} |" >> $GITHUB_STEP_SUMMARY
           done < all_caches.txt
           
           total_size=$(awk -F'|' '{sum+=$2} END {print sum}' all_caches.txt)
@@ -101,13 +139,13 @@ jobs:
             exit 0
           fi
           
-          echo "| Cache Key | Size | Created | Last Accessed |" >> $GITHUB_STEP_SUMMARY
-          echo "|-----------|------|---------|---------------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Device | Size | Created | Last Accessed |" >> $GITHUB_STEP_SUMMARY
+          echo "|--------|------|---------|---------------|" >> $GITHUB_STEP_SUMMARY
           
           while IFS='|' read -r key size created accessed; do
             size_mb=$(echo "scale=2; $size / 1024 / 1024" | bc)
             device=$(echo "$key" | grep -oP 'oneplus_[^-]+' || echo "unknown")
-            echo "| \`$device\` | ${size_mb} MB | $created | $accessed |" >> $GITHUB_STEP_SUMMARY
+            echo "| \`$device\` | ${size_mb} MB | ${created:0:10} | ${accessed:0:10} |" >> $GITHUB_STEP_SUMMARY
           done < ccache_only.txt
           
           total_size=$(awk -F'|' '{sum+=$2} END {print sum}' ccache_only.txt)
@@ -139,7 +177,7 @@ jobs:
           
           while IFS='|' read -r key size created accessed; do
             size_mb=$(echo "scale=2; $size / 1024 / 1024" | bc)
-            echo "| \`${key:0:60}...\` | ${size_mb} MB | $created | $accessed |" >> $GITHUB_STEP_SUMMARY
+            echo "| \`${key:0:60}...\` | ${size_mb} MB | ${created:0:10} | ${accessed:0:10} |" >> $GITHUB_STEP_SUMMARY
           done < apt_only.txt
           
           total_size=$(awk -F'|' '{sum+=$2} END {print sum}' apt_only.txt)
@@ -148,6 +186,46 @@ jobs:
           
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "**Total APT caches:** $cache_count" >> $GITHUB_STEP_SUMMARY
+          echo "**Total Size:** ${total_mb} MB" >> $GITHUB_STEP_SUMMARY
+
+      - name: List Caches by Device
+        if: github.event.inputs.action == 'list-by-device'
+        run: |
+          DEVICE="${{ github.event.inputs.device_model }}"
+          
+          if [ -z "$DEVICE" ] || [ "$DEVICE" = "all" ]; then
+            echo "❌ Please select a specific device model"
+            exit 1
+          fi
+          
+          echo "## 📱 Caches for Device: $DEVICE" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          gh api -H "Accept: application/vnd.github+json" \
+            /repos/${{ github.repository }}/actions/caches \
+            --paginate | jq -r --arg device "$DEVICE" \
+            '.actions_caches[] | select(.key | contains($device)) | 
+            "\(.id)|\(.key)|\(.size_in_bytes)|\(.created_at)|\(.last_accessed_at)"' > device_caches.txt
+          
+          if [ ! -s device_caches.txt ]; then
+            echo "No caches found for device: $DEVICE" >> $GITHUB_STEP_SUMMARY
+            exit 0
+          fi
+          
+          echo "| Cache ID | Cache Key | Size | Created | Last Accessed |" >> $GITHUB_STEP_SUMMARY
+          echo "|----------|-----------|------|---------|---------------|" >> $GITHUB_STEP_SUMMARY
+          
+          while IFS='|' read -r id key size created accessed; do
+            size_mb=$(echo "scale=2; $size / 1024 / 1024" | bc)
+            echo "| $id | \`${key:0:40}...\` | ${size_mb} MB | ${created:0:10} | ${accessed:0:10} |" >> $GITHUB_STEP_SUMMARY
+          done < device_caches.txt
+          
+          total_size=$(awk -F'|' '{sum+=$3} END {print sum}' device_caches.txt)
+          total_mb=$(echo "scale=2; $total_size / 1024 / 1024" | bc)
+          cache_count=$(wc -l < device_caches.txt)
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Total caches for $DEVICE:** $cache_count" >> $GITHUB_STEP_SUMMARY
           echo "**Total Size:** ${total_mb} MB" >> $GITHUB_STEP_SUMMARY
 
       - name: Show Cache Statistics
@@ -208,6 +286,42 @@ jobs:
             echo "" >> $GITHUB_STEP_SUMMARY
             echo "⚠️ **Warning:** Cache usage is above 80%. Consider cleaning old caches." >> $GITHUB_STEP_SUMMARY
           fi
+          
+          # Device breakdown
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 📱 Cache by Device" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Device | Cache Count | Total Size (MB) |" >> $GITHUB_STEP_SUMMARY
+          echo "|--------|-------------|-----------------|" >> $GITHUB_STEP_SUMMARY
+          
+          # List all devices
+          DEVICES=(
+            "oneplus_nord_ce4_lite_5g_v" "oneplus_nord_ce4_v" "oneplus_nord_4_v"
+            "oneplus_ace_3v_v" "oneplus_10_pro_v" "oneplus_10t_v" "oneplus_11r_v"
+            "oneplus_ace2_v" "oneplus_ace_pro_v" "oneplus_11_v" "oneplus_12r_v"
+            "oneplus_ace2_pro_v" "oneplus_ace3_v" "oneplus_open_v" "oneplus_12_v"
+            "oneplus_13r" "oneplus_ace3_pro_v" "oneplus_ace5" "oneplus_pad_pro_v"
+            "oneplus_pad2_v" "oneplus_nord_5" "oneplus_ace5_pro" "oneplus_ace5_pro_b"
+            "oneplus_13" "oneplus_13_b" "oneplus_13_global" "oneplus_13t" "oneplus_13t_b"
+            "oneplus_13s" "oneplus_13s_b" "oneplus_pad_2_pro" "oneplus_pad_3"
+            "oneplus_ace5_ultra" "oneplus_ace_6" "oneplus_15"
+          )
+          
+          for device in "${DEVICES[@]}"; do
+            device_data=$(gh api /repos/${{ github.repository }}/actions/caches --paginate | \
+              jq -r --arg device "$device" \
+              '[.actions_caches[] | select(.key | contains($device))] | 
+              {count: length, size: (map(.size_in_bytes) | add // 0)} | 
+              "\(.count)|\(.size)"')
+            
+            if [ -n "$device_data" ]; then
+              IFS='|' read -r count size <<< "$device_data"
+              if [ "$count" -gt 0 ]; then
+                size_mb=$(echo "scale=2; $size / 1024 / 1024" | bc)
+                echo "| \`$device\` | $count | ${size_mb} |" >> $GITHUB_STEP_SUMMARY
+              fi
+            fi
+          done
 
       - name: Verify Deletion Confirmation
         if: |
@@ -321,10 +435,10 @@ jobs:
           while IFS='|' read -r id key accessed; do
             echo "Deleting cache: $key (last accessed: $accessed)"
             if gh api --method DELETE /repos/${{ github.repository }}/actions/caches/$id 2>/dev/null; then
-              echo "| \`${key:0:50}...\` | $accessed | ✅ Deleted |" >> $GITHUB_STEP_SUMMARY
+              echo "| \`${key:0:50}...\` | ${accessed:0:10} | ✅ Deleted |" >> $GITHUB_STEP_SUMMARY
               count=$((count + 1))
             else
-              echo "| \`${key:0:50}...\` | $accessed | ❌ Failed |" >> $GITHUB_STEP_SUMMARY
+              echo "| \`${key:0:50}...\` | ${accessed:0:10} | ❌ Failed |" >> $GITHUB_STEP_SUMMARY
             fi
           done <<< "$cache_data"
           
@@ -334,32 +448,40 @@ jobs:
       - name: Delete Caches by Device
         if: github.event.inputs.action == 'delete-by-device'
         run: |
-          DEVICE="${{ github.event.inputs.device_filter }}"
+          DEVICE="${{ github.event.inputs.device_model }}"
           
-          if [ -z "$DEVICE" ]; then
-            echo "❌ Device filter is required for delete-by-device action"
+          if [ -z "$DEVICE" ] || [ "$DEVICE" = "all" ]; then
+            echo "❌ Please select a specific device model"
             exit 1
           fi
           
           echo "## 🗑️ Deleting Caches for Device: $DEVICE" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           
-          cache_ids=$(gh api /repos/${{ github.repository }}/actions/caches --paginate | \
+          cache_data=$(gh api /repos/${{ github.repository }}/actions/caches --paginate | \
             jq -r --arg device "$DEVICE" \
-            '.actions_caches[] | select(.key | contains($device)) | .id')
+            '.actions_caches[] | select(.key | contains($device)) | "\(.id)|\(.key)"')
           
-          if [ -z "$cache_ids" ]; then
+          if [ -z "$cache_data" ]; then
             echo "No caches found for device: $DEVICE" >> $GITHUB_STEP_SUMMARY
             exit 0
           fi
           
-          count=0
-          for id in $cache_ids; do
-            echo "Deleting cache ID: $id"
-            gh api --method DELETE /repos/${{ github.repository }}/actions/caches/$id || true
-            count=$((count + 1))
-          done
+          echo "| Cache Key | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|-----------|--------|" >> $GITHUB_STEP_SUMMARY
           
+          count=0
+          while IFS='|' read -r id key; do
+            echo "Deleting cache: $key"
+            if gh api --method DELETE /repos/${{ github.repository }}/actions/caches/$id 2>/dev/null; then
+              echo "| \`${key:0:60}...\` | ✅ Deleted |" >> $GITHUB_STEP_SUMMARY
+              count=$((count + 1))
+            else
+              echo "| \`${key:0:60}...\` | ❌ Failed |" >> $GITHUB_STEP_SUMMARY
+            fi
+          done <<< "$cache_data"
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
           echo "✅ Deleted $count caches for device: $DEVICE" >> $GITHUB_STEP_SUMMARY
 
       - name: Auto Cleanup (Scheduled)
@@ -398,5 +520,8 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "### 📝 Action Completed" >> $GITHUB_STEP_SUMMARY
           echo "- **Action:** ${{ github.event.inputs.action || 'scheduled cleanup' }}" >> $GITHUB_STEP_SUMMARY
+          if [ -n "${{ github.event.inputs.device_model }}" ]; then
+            echo "- **Device:** ${{ github.event.inputs.device_model }}" >> $GITHUB_STEP_SUMMARY
+          fi
           echo "- **Time:** $(date -u '+%Y-%m-%d %H:%M:%S UTC')" >> $GITHUB_STEP_SUMMARY
           echo "- **Repository:** ${{ github.repository }}" >> $GITHUB_STEP_SUMMARY
