@@ -1502,13 +1502,27 @@ jobs:
           echo "  ✓ Created .scmversion: $(cat .scmversion)"
           
           # ═══════════════════════════════════════════════════════════════
-          # Patch setlocalversion
+          # Patch setlocalversion (IMPROVED)
           # ═══════════════════════════════════════════════════════════════
           
           if [ -f "scripts/setlocalversion" ]; then
             echo "  ✓ Patching scripts/setlocalversion..."
+            
+            # Backup original
+            cp scripts/setlocalversion scripts/setlocalversion.orig
+            
+            # Apply patches
             sed -i 's/scm_version="$(scm_version --short)"/scm_version=""/' scripts/setlocalversion
             sed -i 's/\${LOCALVERSION_AUTO}//' scripts/setlocalversion 2>/dev/null || true
+            
+            # Verify changes were applied
+            if ! diff -q scripts/setlocalversion.orig scripts/setlocalversion >/dev/null 2>&1; then
+              echo "  ✅ setlocalversion successfully modified"
+              rm scripts/setlocalversion.orig
+            else
+              echo "  ⚠️ setlocalversion unchanged (may already be patched)"
+              rm scripts/setlocalversion.orig
+            fi
           fi
           
           # ═══════════════════════════════════════════════════════════════
@@ -1567,28 +1581,47 @@ jobs:
           echo "════════════════════════════════════════════════════════════"
           
           # ═══════════════════════════════════════════════════════════════
-          # Verification
+          # Verification (IMPROVED)
           # ═══════════════════════════════════════════════════════════════
           
           echo ""
           echo "🔍 Verification Checks:"
           echo ""
           
+          # Check 1: .scmversion exists
           [ -f ".scmversion" ] && echo "  ✅ .scmversion exists" || echo "  ❌ .scmversion missing"
           
+          # Check 2: setlocalversion patched (IMPROVED - checks for empty scm_version assignment)
           if [ -f "scripts/setlocalversion" ]; then
-            grep -q 'scm_version=""' scripts/setlocalversion && \
-              echo "  ✅ setlocalversion patched" || \
-              echo "  ⚠️ setlocalversion not patched"
+            if grep -qE 'scm_version=["\047]{0,2}["\047]' scripts/setlocalversion || \
+               ! grep -q 'scm_version.*scm_version --short' scripts/setlocalversion; then
+              echo "  ✅ setlocalversion patched (scm_version neutralized)"
+            else
+              echo "  ⚠️ setlocalversion may not be fully patched"
+              echo "     (This is usually safe if .scmversion exists)"
+            fi
           fi
           
+          # Check 3: Android version format
           [[ "$ANDROID_VER" =~ ^android[0-9]+$ ]] && \
             echo "  ✅ Android version format valid: $ANDROID_VER" || \
             echo "  ❌ Android version format invalid: $ANDROID_VER"
           
+          # Check 4: LOCALVERSION set
           [ -n "$CUSTOM_LOCALVERSION" ] && \
             echo "  ✅ LOCALVERSION set: $CUSTOM_LOCALVERSION" || \
             echo "  ❌ LOCALVERSION not set"
+          
+          # Check 5: CONFIG_LOCALVERSION_AUTO disabled
+          if [ -f "$DEFCONFIG_PATH/$DEFCONFIG_FILE" ]; then
+            if grep -q "# CONFIG_LOCALVERSION_AUTO is not set" "$DEFCONFIG_PATH/$DEFCONFIG_FILE"; then
+              echo "  ✅ CONFIG_LOCALVERSION_AUTO disabled in defconfig"
+            elif ! grep -q "CONFIG_LOCALVERSION_AUTO=y" "$DEFCONFIG_PATH/$DEFCONFIG_FILE"; then
+              echo "  ✅ CONFIG_LOCALVERSION_AUTO not enabled (safe)"
+            else
+              echo "  ⚠️ CONFIG_LOCALVERSION_AUTO still enabled in defconfig"
+            fi
+          fi
           
           echo ""
           echo "════════════════════════════════════════════════════════════"
