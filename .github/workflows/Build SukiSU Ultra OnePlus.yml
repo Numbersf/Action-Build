@@ -797,100 +797,6 @@ jobs:
           echo "Kernel Version: $ORIG_VERSION"
           echo "TKERNEL_VERSION=$ORIG_VERSION" >> $GITHUB_ENV
 
-      - name: Add SukiSU Ultra
-        run: |
-          set -euo pipefail
-          echo "::group::Setup SukiSU Ultra"
-          
-          cd kernel_workspace/kernel_platform
-
-          META="${{ github.event.inputs.KSU_META }}"
-
-          # Validate format
-          if [[ "$(grep -o '/' <<< "$META" | wc -l)" -lt 2 ]]; then
-            echo "❌ KSU_META format error. Expected: branch/tag/hash"
-            exit 10
-          fi
-
-          # Parse fields
-          IFS='/' read -r BRANCH_NAME CUSTOM_TAG MANUAL_HASH <<< "$META"
-
-          echo "📦 Branch: $BRANCH_NAME"
-          [[ -n "$CUSTOM_TAG" ]] && echo "🏷️  Tag: $CUSTOM_TAG" || echo "🏷️  Tag: (default)"
-          [[ -n "$MANUAL_HASH" ]] && echo "🔖 Hash: $MANUAL_HASH" || echo "🔖 Hash: (latest)"
-
-          # Setup with retry
-          for i in {1..3}; do
-            if curl -fsSL "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | \
-               bash -s "$BRANCH_NAME"; then
-              echo "✅ Setup script completed"
-              break
-            else
-              echo "⚠️ Setup attempt $i failed"
-              [ $i -eq 3 ] && exit 1
-              sleep 3
-            fi
-          done
-          
-          cd ./KernelSU
-
-          # Checkout specific commit if specified
-          if [[ -n "$MANUAL_HASH" ]]; then
-            git fetch origin "$BRANCH_NAME" --depth=50
-            git checkout "$MANUAL_HASH"
-            SHORT_HASH=${MANUAL_HASH:0:8}
-            echo "✅ Checked out commit: $SHORT_HASH"
-          fi
-
-          # Get API version with fallback
-          KSU_API_VERSION=$(curl -fsSL "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/$BRANCH_NAME/kernel/Makefile" | \
-            grep -m1 "KSU_VERSION_API :=" | awk -F'= ' '{print $2}' | tr -d '[:space:]' || echo "3.1.7")
-          
-          if [[ -z "$KSU_API_VERSION" || "$(printf '%s\n' "$KSU_API_VERSION" "3.1.7" | sort -V | head -n1)" != "3.1.7" ]]; then
-            KSU_API_VERSION="3.1.7"
-          fi
-          echo "KSU_API_VERSION=$KSU_API_VERSION" >> $GITHUB_ENV
-
-          GIT_HASH=$(git rev-parse --short HEAD)
-          echo "📝 Git hash: $GIT_HASH"
-
-          # Build version string
-          USE_HASH="${SHORT_HASH:-$GIT_HASH}"
-          if [[ -z "$CUSTOM_TAG" ]]; then
-            VERSION_FULL="v$KSU_API_VERSION-$USE_HASH@$BRANCH_NAME"
-          else
-            VERSION_FULL="v$KSU_API_VERSION-$CUSTOM_TAG@$BRANCH_NAME[$USE_HASH]"
-          fi
-
-          # Update Makefile
-          sed -i '/define get_ksu_version_full/,/endef/d' kernel/Makefile
-          sed -i '/KSU_VERSION_API :=/d' kernel/Makefile
-          sed -i '/KSU_VERSION_FULL :=/d' kernel/Makefile
-
-          VERSION_DEFINITIONS=$(cat <<EOF
-          define get_ksu_version_full
-          $VERSION_FULL
-          endef
-          
-          KSU_VERSION_API := $KSU_API_VERSION
-          KSU_VERSION_FULL := $VERSION_FULL
-          EOF
-          )
-
-          awk -v def="$VERSION_DEFINITIONS" '
-            /REPO_OWNER :=/ {print; print def; inserted=1; next}
-            1
-            END {if (!inserted) print def}
-          ' kernel/Makefile > kernel/Makefile.tmp && mv kernel/Makefile.tmp kernel/Makefile
-
-          KSU_VERSION=$(expr $(git rev-list --count main 2>/dev/null || echo 13000) + 37185)
-          echo "KSUVER=$KSU_VERSION" >> $GITHUB_ENV
-
-          echo "✅ Version: $VERSION_FULL"
-          echo "✅ KSU Version: $KSU_VERSION"
-          
-          echo "::endgroup::"
-
       - name: Apply Patches SukiSU Ultra
         env:
           FILE: ${{ github.event.inputs.FILE }}
@@ -991,7 +897,6 @@ jobs:
           patch -p1 -F 3 < 69_hide_stuff.patch
           echo "隐藏应用_patch完成"
       
-      # OGKI转换GKI，无需修改 dtbo 开机
       - name: Apply Convert HMBIRD_OGKI to HMBIRD_GKI
         if: ${{ env.KERNEL_VERSION == '6.6' && github.event.inputs.SCHED == 'false' }}
         run: |
@@ -1045,7 +950,7 @@ jobs:
             patch -p1 -F 3 < "fengchi_${FILE}.patch"
             echo "fengchi_patch完成"
           else
-            echo "❌ 未匹配到补丁，风驰内核暂未支持你的机型，请关闭后重试"
+            echo "❌ 未匹配到补丁,风驰内核暂未支持你的机型,请关闭后重试"
             exit 11
           fi
 
@@ -1057,7 +962,6 @@ jobs:
           curl -LSs https://raw.githubusercontent.com/vc-teahouse/Baseband-guard/main/setup.sh | bash
           sed -i '/^config LSM$/,/^help$/{ /^[[:space:]]*default/ { /baseband_guard/! s/lockdown/lockdown,baseband_guard/ } }' ./security/Kconfig
 
-      # 配置信息,带*为附加项目,具有一定危险性和不确定性
       - name: Add Configuration Settings
         run: |
           cd kernel_workspace/kernel_platform
@@ -1066,8 +970,6 @@ jobs:
 
           # SukiSU Ultra配置
           echo "CONFIG_KSU=y" >> "$CONFIG_FILE"
-
-          # KPM配置
           echo "CONFIG_KPM=y" >> "$CONFIG_FILE"
 
           # HOOK配置
@@ -1100,11 +1002,11 @@ jobs:
           echo "CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y" >> "$CONFIG_FILE"
           echo "CONFIG_KSU_SUSFS_OPEN_REDIRECT=y" >> "$CONFIG_FILE"
 
-          # TMPFS配置*
+          # TMPFS配置
           echo "CONFIG_TMPFS_XATTR=y" >> "$CONFIG_FILE"
           echo "CONFIG_TMPFS_POSIX_ACL=y" >> "$CONFIG_FILE"
 
-          # BBR配置*
+          # BBR配置
           echo "CONFIG_TCP_CONG_ADVANCED=y" >> "$CONFIG_FILE"
           echo "CONFIG_TCP_CONG_BBR=y" >> "$CONFIG_FILE"
           echo "CONFIG_NET_SCH_FQ=y" >> "$CONFIG_FILE"
@@ -1112,13 +1014,13 @@ jobs:
           echo "CONFIG_TCP_CONG_WESTWOOD=n" >> "$CONFIG_FILE"
           echo "CONFIG_TCP_CONG_HTCP=n" >> "$CONFIG_FILE"
 
-          # ECN配置*
+          # ECN配置
           echo "CONFIG_IP_ECN=y" >> "$CONFIG_FILE"
           echo "CONFIG_TCP_ECN=y" >> "$CONFIG_FILE"
           echo "CONFIG_IPV6_ECN=y" >> "$CONFIG_FILE"
           echo "CONFIG_IP_NF_TARGET_ECN=y" >> "$CONFIG_FILE"
 
-          # ZRAM配置*
+          # ZRAM配置
           if [ "${{ github.event.inputs.ZRAM }}" = "true" ]; then
             echo "CONFIG_CRYPTO_LZ4HC=y" >> "$CONFIG_FILE"
             echo "CONFIG_CRYPTO_LZ4K=y" >> "$CONFIG_FILE"
@@ -1128,7 +1030,7 @@ jobs:
             echo "CONFIG_ZRAM_WRITEBACK=y" >> "$CONFIG_FILE"
           fi
 
-          # LSM配置*
+          # LSM配置
           if [ "${{ github.event.inputs.LSM }}" = "true" ]; then
             echo "CONFIG_BBG=y" >> "$CONFIG_FILE"
           fi
@@ -1289,12 +1191,17 @@ jobs:
           echo "→ Generating gki_defconfig..."
           make -j$(nproc --all) O=out $MAKE_ARGS gki_defconfig
           
-          # Assert .config was created
-          [ -f out/.config ] || { 
+          # Assert .config was created (FIXED PATH)
+          if [ ! -f "out/.config" ]; then
             echo "::error::.config missing after gki_defconfig"
             echo "This usually indicates a Kconfig syntax error or missing dependencies"
+            echo "::group::Debug info"
+            echo "Current directory: $(pwd)"
+            echo "Output directory contents:"
+            ls -la out/ 2>/dev/null || echo "out/ directory not found"
+            echo "::endgroup::"
             exit 2
-          }
+          fi
           echo "✅ .config generated successfully"
           
           # Apply custom branding
