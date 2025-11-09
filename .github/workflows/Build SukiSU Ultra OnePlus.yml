@@ -212,30 +212,42 @@ jobs:
         run: |
           set -e
           cd "$GITHUB_WORKSPACE"
+          
+          # ═══════════════════════════════════════════════════════════════
+          # Parse FILE input
+          # ═══════════════════════════════════════════════════════════════
+          
           if [[ "$FILE" =~ ^(.+)_([a-zA-Z])$ ]]; then
             FILE_CONF="${BASH_REMATCH[1]}"
           else
             FILE_CONF="$FILE"
           fi
+          
           FILE_BASE=$(echo "$FILE_CONF" | sed -E 's/_([a-zA-Z0-9])/\U\1/g; s/^oneplus/OnePlus/; s/^realme/Realme/; s/^oppo/Oppo/')
+          
           mkdir -p ".repo/manifests_fallback"
           XML_PATH=".repo/manifests_fallback/${FILE}.xml"
           README_PATH=".repo/manifests_fallback/README.md"
+          
           echo "处理 FILE=$FILE, CONF=$FILE_CONF, BASE=$FILE_BASE"
           echo "FILE_CONF=$FILE_CONF" >> $GITHUB_ENV
           echo "FILE_BASE=$FILE_BASE" >> $GITHUB_ENV
-
+      
+          # ═══════════════════════════════════════════════════════════════
+          # Repository Detection
+          # ═══════════════════════════════════════════════════════════════
+          
           declare -A REPOS
           REPOS["OnePlusOSS"]="https://api.github.com/repos/OnePlusOSS/kernel_manifest"
           REPOS["Dynamic"]="https://api.github.com/repos/Numbersf/kernel_manifest"
-
+      
           FOUND_REPO=""
           FOUND_BRANCH=""
-
+      
           check_repo() {
             local OWNER=$1
             local REPO_URL=$2
-
+      
             echo "🌐 尝试拉取 ${OWNER} 分支列表..."
             
             BRANCHES=$(curl -sS --retry 3 --retry-delay 2 --max-time 20 --connect-timeout 10 \
@@ -243,10 +255,7 @@ jobs:
               "${REPO_URL}/branches" 2>/dev/null | jq -r '.[].name' 2>/dev/null || true)
             
             if [[ -z "$BRANCHES" || "$BRANCHES" == "null" ]]; then
-              echo "⚠️ ${OWNER} branches API returned empty/null. Possible causes:"
-              echo "   - Rate limit exceeded (check: curl -s https://api.github.com/rate_limit)"
-              echo "   - Repository private/inaccessible"
-              echo "   - Network timeout"
+              echo "⚠️ ${OWNER} branches API returned empty/null"
               return 1
             fi
             
@@ -272,12 +281,14 @@ jobs:
             done
             return 1
           }
-
+      
+          # Try OnePlusOSS first
           if check_repo "OnePlusOSS" "${REPOS["OnePlusOSS"]}"; then
             echo "MANIFEST_REPO=OnePlusOSS" >> $GITHUB_ENV
             echo "MANIFEST_BRANCH=$FOUND_BRANCH" >> $GITHUB_ENV
           fi
-
+      
+          # Fallback to Dynamic repo
           if [[ -z "$FOUND_REPO" ]]; then
             DYNAMIC_URL="${REPOS["Dynamic"]}"
             DYNAMIC_OWNER=$(echo "$DYNAMIC_URL" | sed -E 's#https://api.github.com/repos/([^/]+)/.*#\1#')
@@ -286,7 +297,7 @@ jobs:
               echo "MANIFEST_BRANCH=$FOUND_BRANCH" >> $GITHUB_ENV
             fi
           fi
-
+      
           if [[ -z "$FOUND_REPO" || ! -s "$XML_PATH" ]]; then
             echo "❌ 无法在动态仓库中找到 ${FILE}.xml"
             echo "::group::Debug: Rate limit status"
@@ -294,23 +305,60 @@ jobs:
             echo "::endgroup::"
             exit 1
           fi
-
+      
+          # ═══════════════════════════════════════════════════════════════
+          # Extract CPU and Android Version from Revision (ONCE ONLY)
+          # ═══════════════════════════════════════════════════════════════
+          
           REVISION=$(grep -oP '<project[^>]+revision="\K[^"]+' "$XML_PATH" | \
             grep -E '(oneplus|realme|oppo)/' | head -n1 || true)
           
-          echo "解析 FILE 获取 CPU 和 ANDROID_VERSION..."
-          CPU=$(echo "$REVISION" | sed -E 's#^(oneplus|realme|oppo)/([^_]+).*#\2#')
-          ANDROID_VERSION=$(echo "$REVISION" | grep -oP '\d{1,2}\.\d{1,2}(\.\d{1,2})?')
-          if [[ -n "$CPU" && -n "$ANDROID_VERSION" ]]; then
-            echo "✅ CPU=$CPU, ANDROID_VERSION=$ANDROID_VERSION"
-            echo "CPU=$CPU" >> $GITHUB_ENV
-            echo "ANDROID_VERSION=$ANDROID_VERSION" >> $GITHUB_ENV
-            echo "ANDROID_SHORT_VERSION=${ANDROID_VERSION%%.*}" >> $GITHUB_ENV
-          else
-            echo "❌ 无法从 revision 中提取 CPU 或 ANDROID_VERSION"
+          if [ -z "$REVISION" ]; then
+            echo "❌ 无法从 XML 中提取 revision"
             exit 1
           fi
-
+          
+          echo "解析 FILE 获取 CPU 和 ANDROID_VERSION..."
+          
+          # Extract CPU
+          CPU=$(echo "$REVISION" | sed -E 's#^(oneplus|realme|oppo)/([^_]+).*#\2#')
+          
+          # Extract numeric Android version (e.g., "15.0.0")
+          ANDROID_VERSION=$(echo "$REVISION" | grep -oP '\d{1,2}\.\d{1,2}(\.\d{1,2})?')
+          
+          if [[ -z "$CPU" || -z "$ANDROID_VERSION" ]]; then
+            echo "❌ 无法从 revision 中提取 CPU 或 ANDROID_VERSION"
+            echo "Revision: $REVISION"
+            exit 1
+          fi
+          
+          # ═══════════════════════════════════════════════════════════════
+          # Normalize to androidNN Format Immediately
+          # ═══════════════════════════════════════════════════════════════
+          
+          ANDROID_MAJOR="${ANDROID_VERSION%%.*}"
+          ANDROID_KERNEL_FORMAT="android${ANDROID_MAJOR}"
+          
+          echo "✅ CPU: $CPU"
+          echo "✅ Android Version (numeric): $ANDROID_VERSION"
+          echo "✅ Android Version (kernel format): $ANDROID_KERNEL_FORMAT"
+          
+          # ═══════════════════════════════════════════════════════════════
+          # Export All Formats (NO DUPLICATES)
+          # ═══════════════════════════════════════════════════════════════
+          
+          {
+            echo "CPU=$CPU"
+            echo "ANDROID_VERSION=$ANDROID_VERSION"                    # Numeric (15.0.0)
+            echo "ANDROID_VERSION_KERNEL=$ANDROID_KERNEL_FORMAT"       # Kernel format (android15)
+            echo "ANDROID_SHORT_VERSION=${ANDROID_MAJOR}"              # Short (15)
+            echo "KANDROID_VERSION=$ANDROID_KERNEL_FORMAT"             # Override for consistency
+          } >> $GITHUB_ENV
+      
+          # ═══════════════════════════════════════════════════════════════
+          # Parse README.md for CPUD and BUILD_METHOD
+          # ═══════════════════════════════════════════════════════════════
+          
           echo "解析 README.md 获取 CPUD 和 BUILD_METHOD..."
           if [[ -s "$README_PATH" ]]; then
             BUILD_LINE=$(grep -m1 'oplus_build_kernel.sh' "$README_PATH" || true)
@@ -326,6 +374,11 @@ jobs:
           else
             echo "❌ README.md 下载失败或为空"
           fi
+          
+          # ═══════════════════════════════════════════════════════════════
+          # Set Output for Artifact Naming
+          # ═══════════════════════════════════════════════════════════════
+          
           echo "value=${FILE_BASE}_Android${ANDROID_VERSION}" >> "$GITHUB_OUTPUT"
 
       - name: Debug Show Selected Inputs
@@ -334,6 +387,7 @@ jobs:
           echo "Selected CPU: ${{ env.CPU }}"
           echo "Selected CPUD: ${{ env.CPUD }}"
           echo "Selected ANDROID_VERSION: ${{ env.ANDROID_VERSION }}"
+          echo "Selected ANDROID_VERSION_KERNEL: ${{ env.ANDROID_VERSION_KERNEL }}"
           echo "Selected BUILD_METHOD: ${{ env.BUILD_METHOD }}"
           echo "Selected FILE: ${{ github.event.inputs.FILE }}"
           echo "Custom KSU_META: ${{ github.event.inputs.KSU_META }}"
@@ -1411,59 +1465,62 @@ jobs:
           mkdir -p out
           
           # ═══════════════════════════════════════════════════════════════
-          # Dynamic Android Version Detection
+          # Use Pre-Normalized Android Version
           # ═══════════════════════════════════════════════════════════════
           
-          ANDROID_VER="${{ env.ANDROID_VERSION }}"
+          ANDROID_VER="${{ env.ANDROID_VERSION_KERNEL }}"
           
           if [ -z "$ANDROID_VER" ]; then
-            echo "::warning::ANDROID_VERSION not set, attempting fallback detection"
-            
-            # Fallback: try to extract from KANDROID_VERSION
-            ANDROID_VER="${{ env.KANDROID_VERSION }}"
-            
-            # If still empty, try from build config
-            if [ -z "$ANDROID_VER" ]; then
-              for config_file in build.config.constants build.config.common; do
-                if [ -f "$config_file" ]; then
-                  BRANCH_LINE=$(grep -m1 '^BRANCH=' "$config_file" 2>/dev/null | cut -d= -f2 | tr -d ' "' || true)
-                  if [ -n "$BRANCH_LINE" ]; then
-                    ANDROID_VER="${BRANCH_LINE%-*}"
-                    break
-                  fi
-                fi
-              done
-            fi
-            
-            # Last resort: default to android14
-            if [ -z "$ANDROID_VER" ]; then
-              ANDROID_VER="android14"
-              echo "::warning::Could not detect Android version, defaulting to: $ANDROID_VER"
-            fi
+            echo "::error::ANDROID_VERSION_KERNEL not set from manifest extraction"
+            echo "This indicates the 'Extract Manifest Info' step failed"
+            exit 1
           fi
           
+          # Validate format (should already be androidNN)
+          if [[ ! "$ANDROID_VER" =~ ^android[0-9]+$ ]]; then
+            echo "::error::Invalid Android version format: $ANDROID_VER"
+            echo "::error::Expected format: androidNN (e.g., android15)"
+            exit 1
+          fi
+          
+          echo "✅ Using Android version: $ANDROID_VER"
+          
           # ═══════════════════════════════════════════════════════════════
-          # Set Clean LOCALVERSION (just Android version tag)
+          # Set Clean LOCALVERSION
           # ═══════════════════════════════════════════════════════════════
           
           CUSTOM_LOCALVERSION="-${ANDROID_VER}"
           
-          # Export to environment for later steps
           echo "CUSTOM_LOCALVERSION=$CUSTOM_LOCALVERSION" >> $GITHUB_ENV
+          echo "NORMALIZED_ANDROID_VERSION=$ANDROID_VER" >> $GITHUB_ENV
           
           # ═══════════════════════════════════════════════════════════════
-          # Create .scmversion to prevent duplicate version appending
+          # Create .scmversion
           # ═══════════════════════════════════════════════════════════════
           
           echo "$CUSTOM_LOCALVERSION" > .scmversion
+          echo "  ✓ Created .scmversion: $(cat .scmversion)"
           
           # ═══════════════════════════════════════════════════════════════
-          # Disable LOCALVERSION_AUTO to prevent automatic git version
+          # Patch setlocalversion
           # ═══════════════════════════════════════════════════════════════
           
           if [ -f "scripts/setlocalversion" ]; then
-            # Prevent setlocalversion from adding git info (we want it clean)
+            echo "  ✓ Patching scripts/setlocalversion..."
             sed -i 's/scm_version="$(scm_version --short)"/scm_version=""/' scripts/setlocalversion
+            sed -i 's/\${LOCALVERSION_AUTO}//' scripts/setlocalversion 2>/dev/null || true
+          fi
+          
+          # ═══════════════════════════════════════════════════════════════
+          # Disable CONFIG_LOCALVERSION_AUTO in defconfig
+          # ═══════════════════════════════════════════════════════════════
+          
+          DEFCONFIG_PATH="arch/arm64/configs"
+          DEFCONFIG_FILE="gki_defconfig"
+          
+          if [ -f "$DEFCONFIG_PATH/$DEFCONFIG_FILE" ]; then
+            echo "  ✓ Disabling CONFIG_LOCALVERSION_AUTO in defconfig..."
+            sed -i 's/CONFIG_LOCALVERSION_AUTO=y/# CONFIG_LOCALVERSION_AUTO is not set/' "$DEFCONFIG_PATH/$DEFCONFIG_FILE"
           fi
           
           # ═══════════════════════════════════════════════════════════════
@@ -1488,21 +1545,54 @@ jobs:
           KERNEL_VER=$(make kernelversion 2>/dev/null || echo "${{ env.TKERNEL_VERSION }}")
           
           echo ""
-          echo "============================================"
-          echo "📋 Kernel Version Configuration"
-          echo "============================================"
-          echo "Device: ${{ github.event.inputs.FILE }}"
-          echo "Kernel Version: $KERNEL_VER"
-          echo "Android Version: $ANDROID_VER"
-          echo "Git Commit: $COMMIT_HASH"
-          echo "Build Timestamp: $COMMIT_DATE UTC"
+          echo "╔════════════════════════════════════════════════════════════╗"
+          echo "║          📋 Kernel Version Configuration                  ║"
+          echo "╚════════════════════════════════════════════════════════════╝"
           echo ""
-          echo "Expected format:"
-          echo "  ${KERNEL_VER}-${ANDROID_VER}-g${COMMIT_HASH}"
+          echo "  Device:           ${{ github.event.inputs.FILE }}"
+          echo "  Platform:         ${{ env.CPU }} (${{ env.CPUD }})"
+          echo "  Kernel Version:   $KERNEL_VER"
+          echo "  Android Version:  $ANDROID_VER"
+          echo "  Git Commit:       $COMMIT_HASH"
+          echo "  Build Timestamp:  $COMMIT_DATE UTC"
           echo ""
-          echo "LOCALVERSION: $CUSTOM_LOCALVERSION"
-          echo ".scmversion: $(cat .scmversion)"
-          echo "============================================"
+          echo "  ┌─────────────────────────────────────────────────────────┐"
+          echo "  │ Expected Kernel Version String:                         │"
+          echo "  │   ${KERNEL_VER}-${ANDROID_VER}-g${COMMIT_HASH}          │"
+          echo "  └─────────────────────────────────────────────────────────┘"
+          echo ""
+          echo "  LOCALVERSION:     $CUSTOM_LOCALVERSION"
+          echo "  .scmversion:      $(cat .scmversion)"
+          echo ""
+          echo "════════════════════════════════════════════════════════════"
+          
+          # ═══════════════════════════════════════════════════════════════
+          # Verification
+          # ═══════════════════════════════════════════════════════════════
+          
+          echo ""
+          echo "🔍 Verification Checks:"
+          echo ""
+          
+          [ -f ".scmversion" ] && echo "  ✅ .scmversion exists" || echo "  ❌ .scmversion missing"
+          
+          if [ -f "scripts/setlocalversion" ]; then
+            grep -q 'scm_version=""' scripts/setlocalversion && \
+              echo "  ✅ setlocalversion patched" || \
+              echo "  ⚠️ setlocalversion not patched"
+          fi
+          
+          [[ "$ANDROID_VER" =~ ^android[0-9]+$ ]] && \
+            echo "  ✅ Android version format valid: $ANDROID_VER" || \
+            echo "  ❌ Android version format invalid: $ANDROID_VER"
+          
+          [ -n "$CUSTOM_LOCALVERSION" ] && \
+            echo "  ✅ LOCALVERSION set: $CUSTOM_LOCALVERSION" || \
+            echo "  ❌ LOCALVERSION not set"
+          
+          echo ""
+          echo "════════════════════════════════════════════════════════════"
+          echo ""
           
           echo "::endgroup::"
 
