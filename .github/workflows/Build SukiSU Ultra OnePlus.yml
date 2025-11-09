@@ -2067,7 +2067,7 @@ jobs:
           # Parse Version Components
           # ═══════════════════════════════════════════════════════════════
           
-          # Extract just the version number (e.g., "6.1.118-android14-gbe22e816e834")
+          # Extract just the version number (e.g., "6.1.118-android15-gbe22e816e834")
           KERNEL_VERSION=$(echo "$VERSION" | grep -oP 'Linux version \K[^ ]+' || echo "unknown")
           
           echo "Kernel version: $KERNEL_VERSION"
@@ -2087,12 +2087,14 @@ jobs:
             echo "✅ PASS: No -dirty flag"
           fi
           
-          # Check 2: Android version present
-          EXPECTED_ANDROID="${{ env.ANDROID_VERSION }}"
-          if echo "$KERNEL_VERSION" | grep -qE "$EXPECTED_ANDROID"; then
-            echo "✅ PASS: Android version tag present ($EXPECTED_ANDROID)"
+          # Check 2: Android kernel version present (UPDATED - now uses ANDROID_VERSION_KERNEL)
+          EXPECTED_ANDROID_K="${{ env.ANDROID_VERSION_KERNEL }}"
+          if [ -n "$EXPECTED_ANDROID_K" ] && echo "$KERNEL_VERSION" | grep -qE "\-${EXPECTED_ANDROID_K}(/|$|-)"; then
+            echo "✅ PASS: Android kernel tag present (-${EXPECTED_ANDROID_K})"
           else
-            echo "⚠️ WARNING: Android version tag not found (expected: $EXPECTED_ANDROID)"
+            echo "❌ FAIL: Android kernel tag (-androidNN) not found (expected: -${EXPECTED_ANDROID_K})"
+            echo "   Actual version: $KERNEL_VERSION"
+            VALIDATION_PASSED=false
           fi
           
           # Check 3: Git hash present
@@ -2123,7 +2125,23 @@ jobs:
           if [ "$VALIDATION_PASSED" = true ]; then
             echo "✅ All critical validations passed"
           else
-            echo "⚠️ Some validations failed (see above)"
+            echo "❌ Critical validations failed (see above)"
+            echo ""
+            echo "::group::Debugging Information"
+            echo "Expected Android kernel tag: -${EXPECTED_ANDROID_K}"
+            echo "Actual kernel version: $KERNEL_VERSION"
+            echo ""
+            echo "Environment variables:"
+            echo "  ANDROID_VERSION: ${{ env.ANDROID_VERSION }}"
+            echo "  ANDROID_VERSION_KERNEL: ${{ env.ANDROID_VERSION_KERNEL }}"
+            echo "  CUSTOM_LOCALVERSION: ${{ env.CUSTOM_LOCALVERSION }}"
+            echo ""
+            echo "Branding files:"
+            [ -f ".scmversion" ] && echo "  .scmversion: $(cat .scmversion)" || echo "  .scmversion: NOT FOUND"
+            echo "::endgroup::"
+            echo ""
+            echo "::error::Kernel version validation failed - version string does not match expected format"
+            exit 1
           fi
           
           echo "============================================"
@@ -2134,7 +2152,7 @@ jobs:
           # ═══════════════════════════════════════════════════════════════
           
           echo "FINAL_KERNEL_VERSION=$KERNEL_VERSION" >> $GITHUB_ENV
-    
+      
           echo "::endgroup::"
           
       - name: Make AnyKernel3
