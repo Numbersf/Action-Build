@@ -113,6 +113,37 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Validate Workflow Inputs
+        run: |
+          set -euo pipefail
+          echo "::group::Input validation"
+          
+          # Validate KSU_META format
+          KSU_META="${{ github.event.inputs.KSU_META }}"
+          if [[ -n "$KSU_META" && ! "$KSU_META" =~ ^[a-zA-Z0-9_/-]+(/[a-zA-Z0-9_.-]*)?(/[a-f0-9]{0,40})?$ ]]; then
+            echo "::error::Invalid KSU_META format: $KSU_META"
+            echo "Expected format: branch/version/hash (e.g., susfs-main/Numbersf/abc123)"
+            exit 1
+          fi
+          
+          # Validate optimize_level
+          if [[ "${{ github.event.inputs.optimize_level }}" != "O2" && \
+                "${{ github.event.inputs.optimize_level }}" != "O3" ]]; then
+            echo "::error::Invalid optimize_level: ${{ github.event.inputs.optimize_level }}"
+            exit 1
+          fi
+          
+          # Validate HOOK type
+          VALID_HOOKS=("kprobe" "manual" "tracepoint")
+          HOOK="${{ github.event.inputs.HOOK }}"
+          if [[ ! " ${VALID_HOOKS[@]} " =~ " ${HOOK} " ]]; then
+            echo "::error::Invalid HOOK type: $HOOK"
+            exit 1
+          fi
+          
+          echo "✅ All inputs validated successfully"
+          echo "::endgroup::"
+
       - name: Maximize Build Space
         uses: easimon/maximize-build-space@master
         with:
@@ -160,6 +191,27 @@ jobs:
           echo "✅ System optimized for build"
           echo "::endgroup::"
 
+      - name: Check GitHub API Rate Limit
+        continue-on-error: true
+        run: |
+          echo "::group::GitHub API Rate Limit Status"
+          RATE_INFO=$(curl -s https://api.github.com/rate_limit)
+          
+          REMAINING=$(echo "$RATE_INFO" | jq -r '.rate.remaining')
+          LIMIT=$(echo "$RATE_INFO" | jq -r '.rate.limit')
+          RESET=$(echo "$RATE_INFO" | jq -r '.rate.reset')
+          
+          if [ "$REMAINING" -lt 10 ]; then
+            RESET_TIME=$(date -d "@$RESET" '+%Y-%m-%d %H:%M:%S UTC' 2>/dev/null || date -r "$RESET" '+%Y-%m-%d %H:%M:%S UTC')
+            echo "⚠️ WARNING: Only $REMAINING API calls remaining (limit: $LIMIT)"
+            echo "Rate limit resets at: $RESET_TIME"
+            echo "::warning::GitHub API rate limit low - build may fail during manifest fetch"
+          else
+            echo "✅ API rate limit OK: $REMAINING/$LIMIT remaining"
+          fi
+          
+          echo "::endgroup::"
+
       - name: Extract Manifest Info
         id: extract_info
         env:
@@ -180,7 +232,7 @@ jobs:
           echo "FILE_CONF=$FILE_CONF" >> $GITHUB_ENV
           echo "FILE_BASE=$FILE_BASE" >> $GITHUB_ENV
 
-          # 动态调用源码清单仓库,仓库优先级：1️⃣ OnePlusOSS → 2️⃣ Numbersf(可换)
+          # 动态调用源码清单仓库,仓库优先级:1️⃣ OnePlusOSS → 2️⃣ Numbersf(可换)
           declare -A REPOS
           REPOS["OnePlusOSS"]="https://api.github.com/repos/OnePlusOSS/kernel_manifest"
           REPOS["Dynamic"]="https://api.github.com/repos/Numbersf/kernel_manifest"
@@ -193,21 +245,38 @@ jobs:
             local REPO_URL=$2
 
             echo "🌐 尝试拉取 ${OWNER} 分支列表..."
-            BRANCHES=$(curl -s ${REPO_URL}/branches | jq -r '.[].name' || true)
+            
+            # Hardened fetch with retries, timeout, and better error handling
+            BRANCHES=$(curl -sS --retry 3 --retry-delay 2 --max-time 20 --connect-timeout 10 \
+              -H "Accept: application/vnd.github.v3+json" \
+              "${REPO_URL}/branches" 2>/dev/null | jq -r '.[].name' 2>/dev/null || true)
             
             # Validate branch list
             if [[ -z "$BRANCHES" || "$BRANCHES" == "null" ]]; then
-              echo "⚠️ ${OWNER} branches API returned empty/null. Rate limit or repo private?"
+              echo "⚠️ ${OWNER} branches API returned empty/null. Possible causes:"
+              echo "   - Rate limit exceeded (check: curl -s https://api.github.com/rate_limit)"
+              echo "   - Repository private/inaccessible"
+              echo "   - Network timeout"
               return 1
             fi
             
             for BRANCH in $BRANCHES; do
               XML_URL="https://raw.githubusercontent.com/${OWNER}/kernel_manifest/$BRANCH/${FILE}.xml"
               README_URL="https://raw.githubusercontent.com/${OWNER}/kernel_manifest/$BRANCH/README.md"
-              if curl -sf --head "$XML_URL" > /dev/null; then
+              
+              # Hardened file existence check with timeout
+              if curl -sSf --head --max-time 10 --connect-timeout 5 "$XML_URL" > /dev/null 2>&1; then
                 echo "✅ 在 ${OWNER} 找到 ${FILE}.xml (分支: $BRANCH)"
-                curl -s -o "$XML_PATH" "$XML_URL"
-                curl -s -o "$README_PATH" "$README_URL" || true
+                
+                # Download with retries
+                if ! curl -sS --retry 3 --retry-delay 2 -o "$XML_PATH" "$XML_URL"; then
+                  echo "⚠️ Failed to download ${FILE}.xml, retrying..."
+                  sleep 2
+                  curl -sS --retry 2 -o "$XML_PATH" "$XML_URL" || return 1
+                fi
+                
+                curl -sS --retry 2 -o "$README_PATH" "$README_URL" 2>/dev/null || true
+                
                 FOUND_REPO="$OWNER"
                 FOUND_BRANCH="$BRANCH"
                 return 0
@@ -234,6 +303,9 @@ jobs:
 
           if [[ -z "$FOUND_REPO" || ! -s "$XML_PATH" ]]; then
             echo "❌ 无法在动态仓库中找到 ${FILE}.xml"
+            echo "::group::Debug: Rate limit status"
+            curl -s https://api.github.com/rate_limit | jq '.rate' || true
+            echo "::endgroup::"
             exit 1
           fi
 
@@ -325,7 +397,7 @@ jobs:
           
           sudo apt-get -qq update
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-            clang lld libelf-dev libssl-dev dwarves bc dos2unix ccache
+            clang lld libelf-dev libssl-dev dwarves bc dos2unix ccache jq unzip coreutils
           
           sudo apt-get clean
           
@@ -333,6 +405,9 @@ jobs:
           clang --version | head -1
           pahole --version
           ccache --version | head -1
+          jq --version
+          unzip -v | head -1 || true
+          numfmt --version | head -1 || true
           
           echo "✅ Dependencies installed"
           echo "::endgroup::"
@@ -889,6 +964,51 @@ jobs:
           
           echo "::endgroup::"
 
+      - name: Extract and Validate KSU Version
+        run: |
+          set -euo pipefail
+          echo "::group::Extract KSU version"
+          
+          KSUVER=""
+          KSU_BASE="kernel_workspace/kernel_platform/common/KernelSU"
+          
+          # Method 1: From kernel Makefile (most reliable)
+          if [ -f "$KSU_BASE/kernel/Makefile" ]; then
+            KSUVER=$(grep -oP 'KERNELSU_VERSION\s*:=\s*\K\d+' "$KSU_BASE/kernel/Makefile" 2>/dev/null | head -1 || echo "")
+            [ -n "$KSUVER" ] && echo "✅ Found version in Makefile: $KSUVER"
+          fi
+          
+          # Method 2: From git tag
+          if [ -z "$KSUVER" ] && [ -d "$KSU_BASE/.git" ]; then
+            KSUVER=$(cd "$KSU_BASE" && git describe --tags --abbrev=0 2>/dev/null | sed 's/^v//' || echo "")
+            [ -n "$KSUVER" ] && echo "✅ Found version from git tag: $KSUVER"
+          fi
+          
+          # Method 3: From ksu.h header
+          if [ -z "$KSUVER" ] && [ -f "$KSU_BASE/kernel/ksu.h" ]; then
+            KSUVER=$(grep -oP '#define\s+KERNEL_SU_VERSION\s+\K\d+' "$KSU_BASE/kernel/ksu.h" 2>/dev/null || echo "")
+            [ -n "$KSUVER" ] && echo "✅ Found version in ksu.h: $KSUVER"
+          fi
+          
+          # Method 4: Parse from custom KSU_META input
+          if [ -z "$KSUVER" ] && [ -n "${{ github.event.inputs.KSU_META }}" ]; then
+            # Extract version from format: branch/version/hash
+            KSUVER=$(echo "${{ github.event.inputs.KSU_META }}" | cut -d'/' -f2 | grep -oP '\d+' || echo "")
+            [ -n "$KSUVER" ] && echo "✅ Extracted version from KSU_META: $KSUVER"
+          fi
+          
+          # Fallback to safe default
+          if [ -z "$KSUVER" ]; then
+            KSUVER="UnknownKSU"
+            echo "⚠️ Could not determine KSU version, using fallback: $KSUVER"
+            echo "::warning::KSU version detection failed - artifact will use 'UnknownKSU'"
+          else
+            echo "🎯 Final KSU version: $KSUVER"
+          fi
+          
+          echo "KSUVER=$KSUVER" >> $GITHUB_ENV
+          echo "::endgroup::"
+
       - name: Apply Hide Stuff Patches
         run: |
           cd kernel_workspace/kernel_platform/common
@@ -1191,7 +1311,7 @@ jobs:
           echo "→ Generating gki_defconfig..."
           make -j$(nproc --all) O=out $MAKE_ARGS gki_defconfig
           
-          # Assert .config was created (FIXED PATH)
+          # Assert .config was created
           if [ ! -f "out/.config" ]; then
             echo "::error::.config missing after gki_defconfig"
             echo "This usually indicates a Kconfig syntax error or missing dependencies"
@@ -1204,31 +1324,131 @@ jobs:
           fi
           echo "✅ .config generated successfully"
           
-          # Apply custom branding
+          # ═══════════════════════════════════════════════════════════════
+          # Ensure scripts/config is available (CRITICAL FIX)
+          # ═══════════════════════════════════════════════════════════════
+          
+          SCRIPTS_CONFIG_AVAILABLE=false
+          
+          if [ ! -x scripts/config ]; then
+            echo "→ scripts/config not found, attempting to build it..."
+            if make -j$(nproc --all) O=out $MAKE_ARGS scripts >/dev/null 2>&1; then
+              if [ -x scripts/config ]; then
+                echo "  ✅ scripts/config built successfully"
+                SCRIPTS_CONFIG_AVAILABLE=true
+              else
+                echo "  ⚠️ scripts target succeeded but config still missing"
+              fi
+            else
+              echo "  ⚠️ Failed to build scripts/config"
+            fi
+          else
+            echo "✅ scripts/config already available"
+            SCRIPTS_CONFIG_AVAILABLE=true
+          fi
+          
+          if [ "$SCRIPTS_CONFIG_AVAILABLE" = false ]; then
+            echo "⚠️ scripts/config unavailable - will use sed fallback for all config changes"
+            echo "::warning::scripts/config not available - using sed fallback (less reliable)"
+          fi
+          
+          # ═══════════════════════════════════════════════════════════════
+          # Apply custom branding (with fallback)
+          # ═══════════════════════════════════════════════════════════════
+          
           if [ -n "${CUSTOM_LOCALVERSION:-}" ]; then
             echo "→ Applying custom branding: ${CUSTOM_LOCALVERSION}"
-            scripts/config --file out/.config --set-str LOCALVERSION "${CUSTOM_LOCALVERSION}"
-            scripts/config --file out/.config -d LOCALVERSION_AUTO || true
-            sed -i 's/scm_version="$(scm_version --short)"/scm_version=""/' scripts/setlocalversion
+            
+            if [ "$SCRIPTS_CONFIG_AVAILABLE" = true ]; then
+              echo "  → Using scripts/config (preferred method)"
+              scripts/config --file out/.config --set-str LOCALVERSION "${CUSTOM_LOCALVERSION}"
+              scripts/config --file out/.config -d LOCALVERSION_AUTO || true
+              echo "  ✅ Branding applied via scripts/config"
+            else
+              echo "  → Using sed fallback method"
+              
+              # Update or append LOCALVERSION
+              if grep -q '^CONFIG_LOCALVERSION=' out/.config; then
+                sed -i "s|^CONFIG_LOCALVERSION=.*|CONFIG_LOCALVERSION=\"${CUSTOM_LOCALVERSION}\"|" out/.config
+              else
+                echo "CONFIG_LOCALVERSION=\"${CUSTOM_LOCALVERSION}\"" >> out/.config
+              fi
+              
+              # Disable LOCALVERSION_AUTO
+              if grep -q '^CONFIG_LOCALVERSION_AUTO=' out/.config; then
+                sed -i 's/^CONFIG_LOCALVERSION_AUTO=.*/# CONFIG_LOCALVERSION_AUTO is not set/' out/.config
+              else
+                echo "# CONFIG_LOCALVERSION_AUTO is not set" >> out/.config
+              fi
+              
+              echo "  ✅ Branding applied via sed"
+            fi
+            
+            # Also patch setlocalversion script to prevent git hash appending
+            if [ -f scripts/setlocalversion ]; then
+              sed -i 's/scm_version="$(scm_version --short)"/scm_version=""/' scripts/setlocalversion
+            fi
+            
+            # Verify the change
+            if grep -q "^CONFIG_LOCALVERSION=\"${CUSTOM_LOCALVERSION}\"" out/.config; then
+              echo "  ✅ Verification passed: LOCALVERSION correctly set"
+            else
+              echo "  ⚠️ Verification warning: LOCALVERSION may not be set correctly"
+              echo "::warning::Custom kernel branding may not be applied"
+            fi
           fi
           
-          # Apply optimization level
-          if [ "${{ github.event.inputs.optimize_level }}" = "O3" ]; then
-            echo "→ Setting optimization: O3 (aggressive)"
-            scripts/config --file out/.config -d CC_OPTIMIZE_FOR_PERFORMANCE
-            scripts/config --file out/.config -e CC_OPTIMIZE_FOR_PERFORMANCE_O3
+          # ═══════════════════════════════════════════════════════════════
+          # Apply optimization level (with fallback)
+          # ═══════════════════════════════════════════════════════════════
+          
+          echo "→ Setting optimization: ${{ github.event.inputs.optimize_level }}"
+          
+          if [ "$SCRIPTS_CONFIG_AVAILABLE" = true ]; then
+            # Preferred method: scripts/config
+            if [ "${{ github.event.inputs.optimize_level }}" = "O3" ]; then
+              scripts/config --file out/.config -d CC_OPTIMIZE_FOR_PERFORMANCE
+              scripts/config --file out/.config -e CC_OPTIMIZE_FOR_PERFORMANCE_O3
+            else
+              scripts/config --file out/.config -e CC_OPTIMIZE_FOR_PERFORMANCE
+              scripts/config --file out/.config -d CC_OPTIMIZE_FOR_PERFORMANCE_O3
+            fi
+            
+            # Enable LTO
+            scripts/config --file out/.config -e LTO_CLANG_THIN
+            scripts/config --file out/.config -e LTO_CLANG
+            
+            echo "  ✅ Optimization applied via scripts/config"
           else
-            echo "→ Setting optimization: O2 (balanced)"
-            scripts/config --file out/.config -e CC_OPTIMIZE_FOR_PERFORMANCE
-            scripts/config --file out/.config -d CC_OPTIMIZE_FOR_PERFORMANCE_O3
+            # Fallback: direct .config manipulation
+            echo "  → Using sed fallback for optimization settings"
+            
+            if [ "${{ github.event.inputs.optimize_level }}" = "O3" ]; then
+              sed -i 's/^CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE=y/# CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE is not set/' out/.config
+              if ! grep -q '^CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE_O3=' out/.config; then
+                echo "CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE_O3=y" >> out/.config
+              fi
+            else
+              if ! grep -q '^CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE=' out/.config; then
+                echo "CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE=y" >> out/.config
+              fi
+              sed -i 's/^CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE_O3=y/# CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE_O3 is not set/' out/.config
+            fi
+            
+            # Enable LTO via sed
+            for opt in LTO_CLANG_THIN LTO_CLANG; do
+              if ! grep -q "^CONFIG_${opt}=" out/.config; then
+                echo "CONFIG_${opt}=y" >> out/.config
+              fi
+            done
+            
+            echo "  ✅ Optimization applied via sed"
           fi
           
-          # Enable LTO
-          echo "→ Enabling LTO (Thin)"
-          scripts/config --file out/.config -e LTO_CLANG_THIN
-          scripts/config --file out/.config -e LTO_CLANG
-          
+          # ═══════════════════════════════════════════════════════════════
           # Resolve all new symbols with defaults (non-interactive)
+          # ═══════════════════════════════════════════════════════════════
+          
           echo "→ Resolving new configuration symbols..."
           echo "  (This may take a moment for kernels with many new options)"
           
@@ -1309,6 +1529,52 @@ jobs:
           fi
           echo "============================================"
           echo "::endgroup::"
+
+      - name: Ensure Bazel/Bazelisk Available
+        if: ${{ github.event.inputs.FAST_BUILD == 'false' || steps.fast_build.outputs.fallback == 'true' }}
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          echo "::group::Check Bazel availability"
+          
+          # Check if bazel/bazelisk already exists
+          if command -v bazel >/dev/null 2>&1; then
+            echo "✅ bazel already available: $(bazel version 2>&1 | head -1)"
+            echo "::endgroup::"
+            exit 0
+          fi
+          
+          if command -v bazelisk >/dev/null 2>&1; then
+            echo "✅ bazelisk already available"
+            echo "::endgroup::"
+            exit 0
+          fi
+          
+          # Check if build script requires bazel
+          if [ -f kernel_workspace/kernel_platform/build_with_bazel.py ]; then
+            echo "📦 build_with_bazel.py detected, installing bazelisk..."
+            
+            BAZELISK_VERSION="v1.19.0"
+            BAZELISK_URL="https://github.com/bazelbuild/bazelisk/releases/download/${BAZELISK_VERSION}/bazelisk-linux-amd64"
+            
+            echo "Downloading bazelisk ${BAZELISK_VERSION}..."
+            if sudo curl -fsSL --retry 3 --retry-delay 2 -o /usr/local/bin/bazelisk "$BAZELISK_URL"; then
+              sudo chmod +x /usr/local/bin/bazelisk
+              sudo ln -sf /usr/local/bin/bazelisk /usr/local/bin/bazel
+              
+              echo "✅ bazelisk installed successfully"
+              bazelisk version 2>&1 | head -3 || true
+            else
+              echo "⚠️ Failed to download bazelisk"
+              echo "Build may fail if bazel is required"
+              echo "::warning::bazelisk installation failed - fallback build may not work"
+            fi
+          else
+            echo "ℹ️ build_with_bazel.py not found, bazel not required"
+          fi
+          
+          echo "::endgroup::"
+
 
       - name: Fallback to Build Kernel
         if: ${{ github.event.inputs.FAST_BUILD == 'false' || steps.fast_build.outputs.fallback == 'true' }}
@@ -1452,38 +1718,73 @@ jobs:
         run: |
           set -euo pipefail
           
-          # Primary path (FAST build)
-          LOG_PATH="kernel_workspace/kernel_platform/common/build.log"
-          
-          # Fallback: find most recent build.log anywhere
-          if [ ! -f "$LOG_PATH" ]; then
-            echo "⚠️ build.log not at expected path, searching..."
-            LOG_PATH=$(find kernel_workspace/kernel_platform -type f -name "build.log" \
-              -printf '%T@ %p\n' 2>/dev/null | sort -nr | awk 'NR==1{print $2}' || true)
-          fi
-          
           # Create artifact directory
           mkdir -p build-logs
           
-          if [ -n "${LOG_PATH:-}" ] && [ -f "$LOG_PATH" ]; then
-            cp "$LOG_PATH" build-logs/build.log
-            echo "✅ Build log found at: $LOG_PATH"
-            
-            # Add metadata
-            {
-              echo "Build: ${{ github.event.inputs.FILE }}"
-              echo "Run: ${{ github.run_number }}"
-              echo "Timestamp: $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
-              echo "Optimization: ${{ github.event.inputs.optimize_level }}"
-              echo "Fast Build: ${{ github.event.inputs.FAST_BUILD }}"
-              echo "Clean Build: ${{ github.event.inputs.clean }}"
-              echo "---"
-            } > build-logs/metadata.txt
-          else
+          # Search for build log with multiple fallbacks
+          LOG_PATHS=(
+            "kernel_workspace/kernel_platform/common/build.log"
+            "kernel_workspace/kernel_platform/build.log"
+            "$(find kernel_workspace -type f -name 'build.log' -printf '%T@ %p\n' 2>/dev/null | sort -rn | awk 'NR==1{print $2}' || echo '')"
+          )
+          
+          LOG_FOUND=false
+          for LOG_PATH in "${LOG_PATHS[@]}"; do
+            if [ -n "$LOG_PATH" ] && [ -f "$LOG_PATH" ]; then
+              cp "$LOG_PATH" build-logs/build.log
+              echo "✅ Build log found at: $LOG_PATH"
+              LOG_FOUND=true
+              break
+            fi
+          done
+          
+          if [ "$LOG_FOUND" = false ]; then
             echo "⚠️ No build log found, creating placeholder"
-            echo "Build log not generated (build may have failed early)" > build-logs/build.log
-            echo "No metadata available" > build-logs/metadata.txt
+            {
+              echo "Build log not generated"
+              echo "Possible reasons:"
+              echo "  - Build failed before logging started"
+              echo "  - FAST_BUILD disabled and standard build doesn't create build.log"
+              echo "  - Unexpected error during build initialization"
+              echo ""
+              echo "Check workflow logs for details"
+            } > build-logs/build.log
           fi
+          
+          # Add comprehensive metadata
+          {
+            echo "═══════════════════════════════════════"
+            echo "Build Metadata"
+            echo "═══════════════════════════════════════"
+            echo "Device: ${{ github.event.inputs.FILE }}"
+            echo "Run: #${{ github.run_number }}"
+            echo "Workflow: ${{ github.workflow }}"
+            echo "Actor: ${{ github.actor }}"
+            echo "Timestamp: $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+            echo ""
+            echo "Build Configuration:"
+            echo "  - Kernel: ${{ env.TKERNEL_VERSION }}"
+            echo "  - Android: ${{ env.ANDROID_VERSION }}"
+            echo "  - Optimization: ${{ github.event.inputs.optimize_level }}"
+            echo "  - Fast Build: ${{ github.event.inputs.FAST_BUILD }}"
+            echo "  - Clean Build: ${{ github.event.inputs.clean }}"
+            echo "  - Hook: ${{ github.event.inputs.HOOK }}"
+            echo "  - LSM: ${{ github.event.inputs.LSM }}"
+            echo "  - SCHED: ${{ github.event.inputs.SCHED }}"
+            echo "  - ZRAM: ${{ github.event.inputs.ZRAM }}"
+            echo ""
+            echo "Manifest:"
+            echo "  - Repo: ${{ env.MANIFEST_REPO }}"
+            echo "  - Branch: ${{ env.MANIFEST_BRANCH }}"
+            echo ""
+            if [ -n "${{ env.BUILD_TIME }}" ]; then
+              echo "Build Duration: ${{ env.BUILD_TIME }}s"
+            fi
+            if [ -n "${{ env.CLANG_VERSION_SHORT }}" ]; then
+              echo "Clang Version: ${{ env.CLANG_VERSION_SHORT }}"
+            fi
+            echo "═══════════════════════════════════════"
+          } > build-logs/metadata.txt
       
       - name: Upload Build Log Artifact
         if: always()
@@ -1500,57 +1801,77 @@ jobs:
           set -e
           echo "::group::Download ZRAM module"
           
-          echo "尝试获取 ZRAM 模块 zip 下载链接..."
+          echo "🔍 Fetching ZRAM module download link..."
           retries=3
           success=0
+          
           for i in $(seq 1 $retries); do
-            echo "第 $i 次尝试下载..."
-            download_url=$(curl -s https://api.github.com/repos/FurLC/ZRAM-Module/releases/latest | \
-              grep "browser_download_url" | grep "ZRAM-Module-.*\.zip" | cut -d '"' -f 4 | head -n 1)
+            echo "Attempt $i/$retries..."
+            download_url=$(curl -sS --retry 2 --max-time 10 \
+              https://api.github.com/repos/FurLC/ZRAM-Module/releases/latest | \
+              jq -r '.assets[] | select(.name | test("ZRAM-Module-.*\\.zip")) | .browser_download_url' | head -n1)
 
             if [ -n "$download_url" ]; then
-              echo "✅ 成功获取下载链接: $download_url"
-              wget -N "$download_url" && success=1 && break
+              echo "✅ Download URL: $download_url"
+              if wget -q --show-progress --timeout=30 "$download_url"; then
+                success=1
+                break
+              else
+                echo "⚠️ Download failed, retrying..."
+              fi
             else
-              echo "⚠️ 获取下载链接失败，等待 3 秒后重试..."
+              echo "⚠️ Failed to fetch URL, waiting 3s..."
               sleep 3
             fi
           done
 
           if [ "$success" -ne 1 ]; then
-            echo "❌ 连续 $retries 次尝试后仍然无法获取 ZRAM 模块下载链接"
+            echo "❌ Failed to download ZRAM module after $retries attempts"
             echo "upload=false" >> "$GITHUB_OUTPUT"
             echo "::endgroup::"
             exit 0
           fi
 
-          unzip "$(ls -t ZRAM-Module-*.zip | head -1)" -d ZRAM-Module
-          target="./ZRAM-Module/zram/zram.ko"
-          echo "查找 zram.ko 模块文件..."
-          search_paths=(
-            "./kernel_workspace/kernel_platform/out"
-            "./kernel_workspace/device/qcom"
-          )
-          zram_path=""
-          for path in "${search_paths[@]}"; do
-            zram_path=$(find "$path" -type f -name "zram.ko" 2>/dev/null | head -n 1)
-            [ -n "$zram_path" ] && break
-          done
-          if [ -z "$zram_path" ]; then
-            zram_path=$(find "./kernel_workspace" -type f -name "zram.ko" 2>/dev/null | head -n 1)
+          # Extract with validation
+          ZIP_FILE=$(ls -t ZRAM-Module-*.zip 2>/dev/null | head -1)
+          if [ -z "$ZIP_FILE" ]; then
+            echo "❌ No ZRAM zip file found"
+            echo "upload=false" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
+          
+          if ! unzip -tq "$ZIP_FILE" >/dev/null 2>&1; then
+            echo "❌ Downloaded ZIP is corrupted"
+            echo "upload=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          
+          unzip -q "$ZIP_FILE" -d ZRAM-Module
+          
+          # Optimized search with timestamp-based sorting
+          echo "🔍 Searching for zram.ko module..."
+          zram_path=$(find "./kernel_workspace" -type f -name "zram.ko" \
+            -printf '%T@ %p\n' 2>/dev/null | sort -rn | awk 'NR==1{print $2}')
+          
+          target="./ZRAM-Module/zram/zram.ko"
+          
           if [ -n "$zram_path" ] && [ -f "$zram_path" ]; then
-            echo "✅ ZRAM module file located at: $zram_path"
+            echo "✅ Found zram.ko at: $zram_path"
             mkdir -p "$(dirname "$target")"
-            if [ "$(realpath "$zram_path")" != "$(realpath "$target")" ]; then
+            
+            # Avoid self-copy
+            if [ "$(realpath "$zram_path" 2>/dev/null || echo "$zram_path")" != \
+                 "$(realpath "$target" 2>/dev/null || echo "$target")" ]; then
               cp "$zram_path" "$target"
-              chmod 0644 "$target" || true
+              chmod 0644 "$target" 2>/dev/null || true
               echo "✅ ZRAM module copied successfully"
+              echo "upload=true" >> "$GITHUB_OUTPUT"
             else
-              echo "源文件与目标路径相同，跳过复制"
+              echo "ℹ️ Source and target are the same, skipping copy"
+              echo "upload=true" >> "$GITHUB_OUTPUT"
             fi
           else
-            echo "⚠️ 未找到 zram.ko 文件，可能是未支持的内核版本或者未成功构建"
+            echo "⚠️ zram.ko not found - unsupported kernel version or build failed"
             echo "upload=false" >> "$GITHUB_OUTPUT"
           fi
           
