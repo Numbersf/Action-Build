@@ -872,6 +872,127 @@ jobs:
           echo "Kernel Version: $ORIG_VERSION"
           echo "TKERNEL_VERSION=$ORIG_VERSION" >> $GITHUB_ENV
 
+      # ═══════════════════════════════════════════════════════════════
+      # PHASE 1: Setup KernelSU
+      # ═══════════════════════════════════════════════════════════════
+      
+      - name: Add SukiSU Ultra
+        run: |
+          cd kernel_workspace/kernel_platform
+
+          META="${{ github.event.inputs.KSU_META }}"
+
+          # Validate KSU_META format (must have 2 slashes)
+          if [[ "$(grep -o '/' <<< "$META" | wc -l)" -lt 2 ]]; then
+            echo "❌ 错误: KSU_META 参数缺少必要的分隔符 '/'"
+            echo "格式应为: 分支名/自定义标识(可省略)/提交hash(可省略)"
+            echo "示例: susfs-main/Numbersf/abc123"
+            exit 10
+          fi
+
+          # Parse fields: branch / custom_tag / manual_hash
+          IFS='/' read -r BRANCH_NAME CUSTOM_TAG MANUAL_HASH <<< "$META"
+
+          echo "::group::KernelSU Configuration"
+          echo "分支名: $BRANCH_NAME"
+          [[ -n "$CUSTOM_TAG" ]] && echo "自定义版本标识: $CUSTOM_TAG" || echo "自定义版本标识: 未启用"
+          [[ -n "$MANUAL_HASH" ]] && echo "手动指定 hash: $MANUAL_HASH" || echo "手动指定 hash: 未启用"
+          echo "::endgroup::"
+
+          # Use setup.sh (the working method)
+          echo "→ Setting up KernelSU via setup.sh..."
+          if ! curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash -s "$BRANCH_NAME"; then
+            echo "::error::Failed to setup KernelSU"
+            exit 1
+          fi
+
+          cd ./KernelSU
+
+          # Checkout specific hash if provided
+          if [[ -n "$MANUAL_HASH" ]]; then
+            echo "→ Checking out commit: $MANUAL_HASH"
+            
+            # Ensure hash exists in shallow clone
+            if ! git rev-parse "$MANUAL_HASH" >/dev/null 2>&1; then
+              echo "  Fetching more history..."
+              git fetch origin "$BRANCH_NAME" --depth=50 || {
+                echo "::warning::Failed to fetch hash $MANUAL_HASH, using branch HEAD"
+                MANUAL_HASH=""
+              }
+            fi
+            
+            if [[ -n "$MANUAL_HASH" ]]; then
+              git checkout "$MANUAL_HASH" || {
+                echo "::warning::Checkout failed, using branch HEAD"
+                MANUAL_HASH=""
+              }
+              SHORT_HASH=${MANUAL_HASH:0:8}
+            fi
+          fi
+
+          # Fetch KSU API version
+          KSU_API_VERSION=$(curl -fsSL "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/$BRANCH_NAME/kernel/Makefile" | \
+            grep -m1 "KSU_VERSION_API :=" | awk -F'= ' '{print $2}' | tr -d '[:space:]')
+          
+          # Fallback to minimum version
+          if [[ -z "$KSU_API_VERSION" || "$(printf '%s\n' "$KSU_API_VERSION" "3.1.7" | sort -V | head -n1)" != "3.1.7" ]]; then
+            KSU_API_VERSION="3.1.7"
+          fi
+          echo "KSU_API_VERSION=$KSU_API_VERSION" >> $GITHUB_ENV
+
+          # Get current git hash
+          GIT_HASH=$(git rev-parse --short HEAD)
+          echo "Current HEAD: $GIT_HASH"
+
+          # Assemble version string
+          if [[ -n "$MANUAL_HASH" ]]; then
+            USE_HASH="$SHORT_HASH"
+          else
+            USE_HASH="$GIT_HASH"
+          fi
+          
+          if [[ -z "$CUSTOM_TAG" ]]; then
+            VERSION_FULL="v$KSU_API_VERSION-$USE_HASH@$BRANCH_NAME"
+          else
+            VERSION_FULL="v$KSU_API_VERSION-$CUSTOM_TAG@$BRANCH_NAME[$USE_HASH]"
+          fi
+
+          # Update Makefile with version info
+          sed -i '/define get_ksu_version_full/,/endef/d' kernel/Makefile
+          sed -i '/KSU_VERSION_API :=/d' kernel/Makefile
+          sed -i '/KSU_VERSION_FULL :=/d' kernel/Makefile
+
+          VERSION_DEFINITIONS=$(cat <<EOF
+            define get_ksu_version_full
+            $VERSION_FULL
+            endef
+
+            KSU_VERSION_API := $KSU_API_VERSION
+            KSU_VERSION_FULL := $VERSION_FULL
+          EOF
+          )
+
+          awk -v def="$VERSION_DEFINITIONS" '
+            /REPO_OWNER :=/ {print; print def; inserted=1; next}
+            1
+            END {if (!inserted) print def}
+          ' kernel/Makefile > kernel/Makefile.tmp && mv kernel/Makefile.tmp kernel/Makefile
+
+          # Calculate KSU version number
+          KSU_VERSION=$(expr $(git rev-list --count main 2>/dev/null || echo 13000) + 37185)
+          echo "KSUVER=$KSU_VERSION" >> $GITHUB_ENV
+
+          echo "::group::Makefile Version Info"
+          grep -A10 "REPO_OWNER" kernel/Makefile
+          grep "KSU_VERSION_FULL" kernel/Makefile
+          echo "::endgroup::"
+          
+          echo "✅ KernelSU setup complete: $VERSION_FULL"
+
+      # ═══════════════════════════════════════════════════════════════
+      # PHASE 2: Apply Patches
+      # ═══════════════════════════════════════════════════════════════
+
       - name: Apply Patches SukiSU Ultra
         env:
           FILE: ${{ github.event.inputs.FILE }}
@@ -964,96 +1085,62 @@ jobs:
           
           echo "::endgroup::"
 
-      - name: Extract and Validate KSU Version
-        run: |
-          set -euo pipefail
-          echo "::group::Extract KSU version"
-          
-          KSUVER=""
-          KSU_BASE="kernel_workspace/kernel_platform/common/KernelSU"
-          
-          # Method 1: From kernel Makefile (most reliable)
-          if [ -f "$KSU_BASE/kernel/Makefile" ]; then
-            KSUVER=$(grep -oP 'KERNELSU_VERSION\s*:=\s*\K\d+' "$KSU_BASE/kernel/Makefile" 2>/dev/null | head -1 || echo "")
-            [ -n "$KSUVER" ] && echo "✅ Found version in Makefile: $KSUVER"
-          fi
-          
-          # Method 2: From git tag
-          if [ -z "$KSUVER" ] && [ -d "$KSU_BASE/.git" ]; then
-            KSUVER=$(cd "$KSU_BASE" && git describe --tags --abbrev=0 2>/dev/null | sed 's/^v//' || echo "")
-            [ -n "$KSUVER" ] && echo "✅ Found version from git tag: $KSUVER"
-          fi
-          
-          # Method 3: From ksu.h header
-          if [ -z "$KSUVER" ] && [ -f "$KSU_BASE/kernel/ksu.h" ]; then
-            KSUVER=$(grep -oP '#define\s+KERNEL_SU_VERSION\s+\K\d+' "$KSU_BASE/kernel/ksu.h" 2>/dev/null || echo "")
-            [ -n "$KSUVER" ] && echo "✅ Found version in ksu.h: $KSUVER"
-          fi
-          
-          # Method 4: Parse from custom KSU_META input
-          if [ -z "$KSUVER" ] && [ -n "${{ github.event.inputs.KSU_META }}" ]; then
-            # Extract version from format: branch/version/hash
-            KSUVER=$(echo "${{ github.event.inputs.KSU_META }}" | cut -d'/' -f2 | grep -oP '\d+' || echo "")
-            [ -n "$KSUVER" ] && echo "✅ Extracted version from KSU_META: $KSUVER"
-          fi
-          
-          # Fallback to safe default
-          if [ -z "$KSUVER" ]; then
-            KSUVER="UnknownKSU"
-            echo "⚠️ Could not determine KSU version, using fallback: $KSUVER"
-            echo "::warning::KSU version detection failed - artifact will use 'UnknownKSU'"
-          else
-            echo "🎯 Final KSU version: $KSUVER"
-          fi
-          
-          echo "KSUVER=$KSUVER" >> $GITHUB_ENV
-          echo "::endgroup::"
-
       - name: Apply Hide Stuff Patches
         run: |
           cd kernel_workspace/kernel_platform/common
           cp ../../SukiSU_patch/69_hide_stuff.patch ./
-          echo "正在打隐藏应用补丁"
+          echo "→ Applying hide stuff patch..."
           patch -p1 -F 3 < 69_hide_stuff.patch
-          echo "隐藏应用_patch完成"
-      
+          echo "✅ Hide stuff patch applied"
+
       - name: Apply Convert HMBIRD_OGKI to HMBIRD_GKI
         if: ${{ env.KERNEL_VERSION == '6.6' && github.event.inputs.SCHED == 'false' }}
         run: |
           cd kernel_workspace/kernel_platform/common
           sed -i '1iobj-y += hmbird_patch.o' drivers/Makefile
           wget https://github.com/Numbersf/Action-Build/raw/SukiSU-Ultra/patches/hmbird_patch.patch
-          echo "正在打OGKI转换GKI补丁"
+          echo "→ Applying OGKI to GKI conversion patch..."
           patch -p1 -F 3 < hmbird_patch.patch
-          echo "OGKI转换GKI_patch完成"
+          echo "✅ OGKI to GKI conversion complete"
 
       - name: Apply HOOK
         run: |
           cd kernel_workspace/kernel_platform/common
-          if [ "${{ github.event.inputs.HOOK }}" = "kprobe" ]; then
-          echo "调用 kprobe 钩子"
-          elif [ "${{ github.event.inputs.HOOK }}" = "manual" ]; then
-          cp ../../SukiSU_patch/hooks/scope_min_manual_hooks_v1.6.patch ./
-          echo "调用 manual 钩子"
-          patch -p1 -F 3 < scope_min_manual_hooks_v1.6.patch
-          elif [ "${{ github.event.inputs.HOOK }}" = "tracepoint" ]; then
-          cp ../../SukiSU_patch/hooks/sukisu_tracepoint_hooks_v1.1.patch ./
-          echo "调用 tracepoint 钩子"
-          patch -p1 -F 3 < sukisu_tracepoint_hooks_v1.1.patch
-          fi
+          
+          case "${{ github.event.inputs.HOOK }}" in
+            kprobe)
+              echo "→ Using kprobe hooks (no patch needed)"
+              ;;
+            manual)
+              echo "→ Applying manual hooks..."
+              cp ../../SukiSU_patch/hooks/scope_min_manual_hooks_v1.6.patch ./
+              patch -p1 -F 3 < scope_min_manual_hooks_v1.6.patch
+              echo "✅ Manual hooks applied"
+              ;;
+            tracepoint)
+              echo "→ Applying tracepoint hooks..."
+              cp ../../SukiSU_patch/hooks/sukisu_tracepoint_hooks_v1.1.patch ./
+              patch -p1 -F 3 < sukisu_tracepoint_hooks_v1.1.patch
+              echo "✅ Tracepoint hooks applied"
+              ;;
+          esac
 
       - name: Apply ZRAM
         if: ${{ github.event.inputs.ZRAM == 'true' }}
         run: |
           cd kernel_workspace/kernel_platform/common
+          
+          echo "::group::Apply LZ4KD patch"
           cp ../../SukiSU_patch/other/zram/zram_patch/${{ env.KERNEL_VERSION }}/lz4kd.patch ./
-          echo "正在打lz4kd补丁"
           patch -p1 -F 3 < lz4kd.patch || true
-          echo 'lz4kd_patch完成'
+          echo "::endgroup::"
+          
+          echo "::group::Apply LZ4K_OPLUS patch"
           cp ../../SukiSU_patch/other/zram/zram_patch/${{ env.KERNEL_VERSION }}/lz4k_oplus.patch ./
-          echo "正在打lz4k_oplus补丁"
           patch -p1 -F 3 < lz4k_oplus.patch || true
-          echo 'lz4k_oplus_patch完成'
+          echo "::endgroup::"
+          
+          echo "✅ ZRAM patches applied"
 
       - name: Apply SCHED
         env:
@@ -1061,16 +1148,21 @@ jobs:
         if: ${{ github.event.inputs.SCHED == 'true' }}
         run: |
           cd kernel_workspace/kernel_platform/common
-          git clone https://github.com/Numbersf/SCHED_PATCH.git -b $CPU
-          echo "正在拉取风驰补丁"
-          cp ./SCHED_PATCH/fengchi_${FILE}.patch ./
-          if [[ -f "fengchi_${FILE}.patch" ]]; then
-            echo "正在打风驰补丁"
-            dos2unix "fengchi_${FILE}.patch"
-            patch -p1 -F 3 < "fengchi_${FILE}.patch"
-            echo "fengchi_patch完成"
+          
+          echo "→ Cloning SCHED patches for ${{ env.CPU }}..."
+          git clone --depth=1 https://github.com/Numbersf/SCHED_PATCH.git -b ${{ env.CPU }}
+          
+          PATCH_FILE="./SCHED_PATCH/fengchi_${FILE}.patch"
+          
+          if [[ -f "$PATCH_FILE" ]]; then
+            echo "→ Applying SCHED patch..."
+            dos2unix "$PATCH_FILE"
+            patch -p1 -F 3 < "$PATCH_FILE"
+            echo "✅ SCHED patch applied"
           else
-            echo "❌ 未匹配到补丁,风驰内核暂未支持你的机型,请关闭后重试"
+            echo "::error::❌ SCHED patch not found for device: ${FILE}"
+            echo "Available patches:"
+            ls -1 ./SCHED_PATCH/*.patch 2>/dev/null || echo "No patches found"
             exit 11
           fi
 
@@ -1078,85 +1170,109 @@ jobs:
         if: ${{ github.event.inputs.LSM == 'true' }}
         run: |
           cd kernel_workspace/kernel_platform/common
-          echo "正在启用内核级基带保护支持…"
+          echo "→ Enabling kernel-level baseband protection..."
           curl -LSs https://raw.githubusercontent.com/vc-teahouse/Baseband-guard/main/setup.sh | bash
           sed -i '/^config LSM$/,/^help$/{ /^[[:space:]]*default/ { /baseband_guard/! s/lockdown/lockdown,baseband_guard/ } }' ./security/Kconfig
+          echo "✅ LSM baseband guard enabled"
+
+      # ═══════════════════════════════════════════════════════════════
+      # PHASE 3: Build Configuration
+      # ═══════════════════════════════════════════════════════════════
 
       - name: Add Configuration Settings
         run: |
           cd kernel_workspace/kernel_platform
           CONFIG_FILE=./common/arch/arm64/configs/gki_defconfig
-          KERNEL_VERSION="${{ env.KERNEL_VERSION }}"
 
-          # SukiSU Ultra配置
+          echo "::group::KernelSU Configuration"
           echo "CONFIG_KSU=y" >> "$CONFIG_FILE"
           echo "CONFIG_KPM=y" >> "$CONFIG_FILE"
+          echo "::endgroup::"
 
-          # HOOK配置
-          if [ "${{ github.event.inputs.HOOK }}" = "kprobe" ]; then
-            echo "CONFIG_KSU_SUSFS_SUS_SU=y" >> "$CONFIG_FILE"
-            echo "CONFIG_KPROBES=y" >> "$CONFIG_FILE"
-            echo "CONFIG_KSU_KPROBES_HOOK=y" >> "$CONFIG_FILE"
-          elif [ "${{ github.event.inputs.HOOK }}" = "manual" ]; then
-            echo "CONFIG_KSU_SUSFS_SUS_SU=n" >> "$CONFIG_FILE"
-            echo "CONFIG_KSU_MANUAL_HOOK=y" >> "$CONFIG_FILE"
-          elif [ "${{ github.event.inputs.HOOK }}" = "tracepoint" ]; then
-            echo "CONFIG_KSU_SUSFS_SUS_SU=n" >> "$CONFIG_FILE"
-            echo "CONFIG_KSU_TRACEPOINT_HOOK=y" >> "$CONFIG_FILE"
-          fi
+          echo "::group::Hook Configuration"
+          case "${{ github.event.inputs.HOOK }}" in
+            kprobe)
+              {
+                echo "CONFIG_KSU_SUSFS_SUS_SU=y"
+                echo "CONFIG_KPROBES=y"
+                echo "CONFIG_KSU_KPROBES_HOOK=y"
+              } >> "$CONFIG_FILE"
+              ;;
+            manual)
+              {
+                echo "CONFIG_KSU_SUSFS_SUS_SU=n"
+                echo "CONFIG_KSU_MANUAL_HOOK=y"
+              } >> "$CONFIG_FILE"
+              ;;
+            tracepoint)
+              {
+                echo "CONFIG_KSU_SUSFS_SUS_SU=n"
+                echo "CONFIG_KSU_TRACEPOINT_HOOK=y"
+              } >> "$CONFIG_FILE"
+              ;;
+          esac
+          echo "::endgroup::"
 
-          # SUSFS配置
-          echo "CONFIG_KSU_SUSFS=y" >> "$CONFIG_FILE"
-          echo "CONFIG_KSU_SUSFS_SUS_PATH=y" >> "$CONFIG_FILE"
-          echo "CONFIG_KSU_SUSFS_SUS_MAP=y" >> "$CONFIG_FILE"
-          echo "CONFIG_KSU_SUSFS_SUS_MOUNT=y" >> "$CONFIG_FILE"
-          echo "CONFIG_KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT=y" >> "$CONFIG_FILE"
-          echo "CONFIG_KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT=y" >> "$CONFIG_FILE"
-          echo "CONFIG_KSU_SUSFS_SUS_KSTAT=y" >> "$CONFIG_FILE"
-          echo "CONFIG_KSU_SUSFS_SUS_OVERLAYFS=n" >> "$CONFIG_FILE"
-          echo "CONFIG_KSU_SUSFS_TRY_UMOUNT=y" >> "$CONFIG_FILE"
-          echo "CONFIG_KSU_SUSFS_AUTO_ADD_TRY_UMOUNT_FOR_BIND_MOUNT=y" >> "$CONFIG_FILE"
-          echo "CONFIG_KSU_SUSFS_SPOOF_UNAME=y" >> "$CONFIG_FILE"
-          echo "CONFIG_KSU_SUSFS_ENABLE_LOG=y" >> "$CONFIG_FILE"
-          echo "CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y" >> "$CONFIG_FILE"
-          echo "CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y" >> "$CONFIG_FILE"
-          echo "CONFIG_KSU_SUSFS_OPEN_REDIRECT=y" >> "$CONFIG_FILE"
+          echo "::group::SUSFS Configuration"
+          {
+            echo "CONFIG_KSU_SUSFS=y"
+            echo "CONFIG_KSU_SUSFS_SUS_PATH=y"
+            echo "CONFIG_KSU_SUSFS_SUS_MAP=y"
+            echo "CONFIG_KSU_SUSFS_SUS_MOUNT=y"
+            echo "CONFIG_KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT=y"
+            echo "CONFIG_KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT=y"
+            echo "CONFIG_KSU_SUSFS_SUS_KSTAT=y"
+            echo "CONFIG_KSU_SUSFS_SUS_OVERLAYFS=n"
+            echo "CONFIG_KSU_SUSFS_TRY_UMOUNT=y"
+            echo "CONFIG_KSU_SUSFS_AUTO_ADD_TRY_UMOUNT_FOR_BIND_MOUNT=y"
+            echo "CONFIG_KSU_SUSFS_SPOOF_UNAME=y"
+            echo "CONFIG_KSU_SUSFS_ENABLE_LOG=y"
+            echo "CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y"
+            echo "CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y"
+            echo "CONFIG_KSU_SUSFS_OPEN_REDIRECT=y"
+          } >> "$CONFIG_FILE"
+          echo "::endgroup::"
 
-          # TMPFS配置
-          echo "CONFIG_TMPFS_XATTR=y" >> "$CONFIG_FILE"
-          echo "CONFIG_TMPFS_POSIX_ACL=y" >> "$CONFIG_FILE"
+          echo "::group::Network Optimizations"
+          {
+            echo "CONFIG_TMPFS_XATTR=y"
+            echo "CONFIG_TMPFS_POSIX_ACL=y"
+            echo "CONFIG_TCP_CONG_ADVANCED=y"
+            echo "CONFIG_TCP_CONG_BBR=y"
+            echo "CONFIG_NET_SCH_FQ=y"
+            echo "CONFIG_TCP_CONG_BIC=n"
+            echo "CONFIG_TCP_CONG_WESTWOOD=n"
+            echo "CONFIG_TCP_CONG_HTCP=n"
+            echo "CONFIG_IP_ECN=y"
+            echo "CONFIG_TCP_ECN=y"
+            echo "CONFIG_IPV6_ECN=y"
+            echo "CONFIG_IP_NF_TARGET_ECN=y"
+          } >> "$CONFIG_FILE"
+          echo "::endgroup::"
 
-          # BBR配置
-          echo "CONFIG_TCP_CONG_ADVANCED=y" >> "$CONFIG_FILE"
-          echo "CONFIG_TCP_CONG_BBR=y" >> "$CONFIG_FILE"
-          echo "CONFIG_NET_SCH_FQ=y" >> "$CONFIG_FILE"
-          echo "CONFIG_TCP_CONG_BIC=n" >> "$CONFIG_FILE"
-          echo "CONFIG_TCP_CONG_WESTWOOD=n" >> "$CONFIG_FILE"
-          echo "CONFIG_TCP_CONG_HTCP=n" >> "$CONFIG_FILE"
-
-          # ECN配置
-          echo "CONFIG_IP_ECN=y" >> "$CONFIG_FILE"
-          echo "CONFIG_TCP_ECN=y" >> "$CONFIG_FILE"
-          echo "CONFIG_IPV6_ECN=y" >> "$CONFIG_FILE"
-          echo "CONFIG_IP_NF_TARGET_ECN=y" >> "$CONFIG_FILE"
-
-          # ZRAM配置
           if [ "${{ github.event.inputs.ZRAM }}" = "true" ]; then
-            echo "CONFIG_CRYPTO_LZ4HC=y" >> "$CONFIG_FILE"
-            echo "CONFIG_CRYPTO_LZ4K=y" >> "$CONFIG_FILE"
-            echo "CONFIG_CRYPTO_LZ4KD=y" >> "$CONFIG_FILE"
-            echo "CONFIG_CRYPTO_842=y" >> "$CONFIG_FILE"
-            echo "CONFIG_CRYPTO_LZ4K_OPLUS=y" >> "$CONFIG_FILE"
-            echo "CONFIG_ZRAM_WRITEBACK=y" >> "$CONFIG_FILE"
+            echo "::group::ZRAM Configuration"
+            {
+              echo "CONFIG_CRYPTO_LZ4HC=y"
+              echo "CONFIG_CRYPTO_LZ4K=y"
+              echo "CONFIG_CRYPTO_LZ4KD=y"
+              echo "CONFIG_CRYPTO_842=y"
+              echo "CONFIG_CRYPTO_LZ4K_OPLUS=y"
+              echo "CONFIG_ZRAM_WRITEBACK=y"
+            } >> "$CONFIG_FILE"
+            echo "::endgroup::"
           fi
 
-          # LSM配置
           if [ "${{ github.event.inputs.LSM }}" = "true" ]; then
+            echo "::group::LSM Configuration"
             echo "CONFIG_BBG=y" >> "$CONFIG_FILE"
+            echo "::endgroup::"
           fi
 
-          # 移除构建审查
+          # Remove defconfig check
           sed -i 's/check_defconfig//' ./common/build.config.gki
+          
+          echo "✅ All configurations applied"
 
       - name: Customize Kernel Branding
         run: |
@@ -1167,9 +1283,14 @@ jobs:
           CUSTOM_LOCALVERSION="-${{ env.ANDROID_VERSION }}-Numbersf"
           echo "CUSTOM_LOCALVERSION=$CUSTOM_LOCALVERSION" >> $GITHUB_ENV
           echo "Kernel branding: $CUSTOM_LOCALVERSION"
-     
+
+      # ═══════════════════════════════════════════════════════════════
+      # PHASE 4: Build Kernel
+      # ═══════════════════════════════════════════════════════════════
+
       - name: Build Kernel FAST
         if: github.event.inputs.FAST_BUILD == 'true'
+        id: fast_build
         working-directory: kernel_workspace/kernel_platform/common
         run: |
           set -euo pipefail
@@ -1294,97 +1415,6 @@ jobs:
           fi
           
           # ═══════════════════════════════════════════════════════════════
-          # Apply KernelSU Patches
-          # ═══════════════════════════════════════════════════════════════
-          
-          echo ""
-          echo "============================================"
-          echo "🔧 Applying KernelSU Modifications"
-          echo "============================================"
-          
-          # Parse KSU_META input
-          IFS='/' read -r KSU_BRANCH KSU_VERSION KSU_HASH <<< "${{ github.event.inputs.KSU_META }}"
-          KSU_BRANCH="${KSU_BRANCH:-susfs-main}"
-          
-          echo "KernelSU Configuration:"
-          echo "  Branch: $KSU_BRANCH"
-          echo "  Version: ${KSU_VERSION:-default}"
-          echo "  Hash: ${KSU_HASH:-latest}"
-          
-          # Clone KernelSU
-          KSU_DIR="KernelSU"
-          if [ -d "$KSU_DIR" ]; then
-            rm -rf "$KSU_DIR"
-          fi
-          
-          echo "→ Cloning KernelSU ($KSU_BRANCH)..."
-          if ! git clone --depth=1 -b "$KSU_BRANCH" \
-               https://github.com/SukiSU-Ultra/KernelSU.git "$KSU_DIR"; then
-            echo "::error::Failed to clone KernelSU"
-            exit 1
-          fi
-          
-          # Checkout specific hash if provided
-          if [ -n "$KSU_HASH" ]; then
-            echo "→ Checking out commit: $KSU_HASH"
-            cd "$KSU_DIR"
-            git fetch --depth=50
-            git checkout "$KSU_HASH" || {
-              echo "::warning::Failed to checkout $KSU_HASH, using branch HEAD"
-            }
-            cd ..
-          fi
-          
-          # Apply kernel patches
-          echo "→ Applying kernel patches..."
-          if [ -f "$KSU_DIR/kernel/setup.sh" ]; then
-            bash "$KSU_DIR/kernel/setup.sh" || {
-              echo "::error::KernelSU setup failed"
-              exit 1
-            }
-          else
-            echo "::error::KernelSU setup.sh not found"
-            exit 1
-          fi
-          
-          # ═══════════════════════════════════════════════════════════════
-          # Modify Kernel Configuration
-          # ═══════════════════════════════════════════════════════════════
-          
-          echo ""
-          echo "→ Modifying kernel configuration..."
-          
-          # Enable KernelSU
-          ./scripts/config --file "$CONFIG_FILE" -e KSU
-          
-          # Hook type
-          case "${{ github.event.inputs.HOOK }}" in
-            kprobe)
-              ./scripts/config --file "$CONFIG_FILE" -e KPROBES -e KPROBE_EVENTS
-              ;;
-            tracepoint)
-              ./scripts/config --file "$CONFIG_FILE" -e TRACEPOINTS
-              ;;
-            manual)
-              echo "  Using manual hook (no additional config needed)"
-              ;;
-          esac
-          
-          # LSM protection
-          if [ "${{ github.event.inputs.LSM }}" = "true" ]; then
-            echo "  Enabling LSM protection..."
-            ./scripts/config --file "$CONFIG_FILE" -e SECURITY -e SECURITY_SELINUX
-          fi
-          
-          # Additional features
-          if [ "${{ github.event.inputs.ZRAM }}" = "true" ]; then
-            echo "  Enabling additional ZRAM algorithms..."
-            ./scripts/config --file "$CONFIG_FILE" \
-              -e ZRAM_WRITEBACK -e ZRAM_MULTI_COMP \
-              -e CRYPTO_LZ4 -e CRYPTO_LZ4HC -e CRYPTO_ZSTD
-          fi
-          
-          # ═══════════════════════════════════════════════════════════════
           # Resolve Configuration Dependencies
           # ═══════════════════════════════════════════════════════════════
           
@@ -1448,6 +1478,9 @@ jobs:
             echo "Image: $IMG_SIZE_HUMAN"
             echo "============================================"
             
+            # Store build time for summary
+            echo "BUILD_TIME=$BUILD_TIME" >> $GITHUB_ENV
+            
             # ccache stats
             if [ "${{ github.event.inputs.clean }}" != "true" ]; then
               echo ""
@@ -1462,7 +1495,6 @@ jobs:
             echo "::endgroup::"
             exit 1
           fi
-
 
       - name: Ensure Bazel/Bazelisk Available
         if: ${{ github.event.inputs.FAST_BUILD == 'false' || steps.fast_build.outputs.fallback == 'true' }}
@@ -1520,6 +1552,10 @@ jobs:
             LTO=thin SYSTEM_DLKM_RE_SIGN=0 BUILD_SYSTEM_DLKM=0 KMI_SYMBOL_LIST_STRICT_MODE=0 \
             ./kernel_platform/oplus/build/oplus_build_kernel.sh ${{ env.CPUD }} ${{ env.BUILD_METHOD }}
           fi
+
+      # ═══════════════════════════════════════════════════════════════
+      # PHASE 5: Package and Upload
+      # ═══════════════════════════════════════════════════════════════
 
       - name: Make AnyKernel3
         shell: bash
@@ -1713,9 +1749,6 @@ jobs:
             if [ -n "${{ env.BUILD_TIME }}" ]; then
               echo "Build Duration: ${{ env.BUILD_TIME }}s"
             fi
-            if [ -n "${{ env.CLANG_VERSION_SHORT }}" ]; then
-              echo "Clang Version: ${{ env.CLANG_VERSION_SHORT }}"
-            fi
             echo "═══════════════════════════════════════"
           } > build-logs/metadata.txt
       
@@ -1839,11 +1872,6 @@ jobs:
           echo "| Android Version | ${{ env.ANDROID_VERSION }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Optimization | ${{ github.event.inputs.optimize_level }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Fast Build | ${{ github.event.inputs.FAST_BUILD }} |" >> $GITHUB_STEP_SUMMARY
-          
-          if [ "${{ env.FAST_BUILD_FALLBACK }}" = "1" ]; then
-            echo "| FAST Build Fallback | ⚠️ true (used standard build) |" >> $GITHUB_STEP_SUMMARY
-          fi
-          
           echo "| Clean Build | ${{ github.event.inputs.clean }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Hook Type | ${{ github.event.inputs.HOOK }} |" >> $GITHUB_STEP_SUMMARY
           echo "| LSM Enabled | ${{ github.event.inputs.LSM }} |" >> $GITHUB_STEP_SUMMARY
@@ -1854,10 +1882,6 @@ jobs:
           
           if [ -n "${{ env.BUILD_TIME }}" ]; then
             echo "| Build Duration | ${{ env.BUILD_TIME }}s ($((env.BUILD_TIME / 60))m $((env.BUILD_TIME % 60))s) |" >> $GITHUB_STEP_SUMMARY
-          fi
-          
-          if [ -n "${{ env.CLANG_VERSION_SHORT }}" ]; then
-            echo "| Clang Version | ${{ env.CLANG_VERSION_SHORT }} |" >> $GITHUB_STEP_SUMMARY
           fi
           
           # Add kernel image info
