@@ -75,6 +75,7 @@ on:
           - all_caches
           - ccache_only
           - ccache_stale
+          - ccache_legacy
           - apt_only
           - kernel_only
           - old_only
@@ -117,6 +118,7 @@ jobs:
       total_size: ${{ steps.analyze.outputs.total_size }}
       total_count: ${{ steps.analyze.outputs.total_count }}
       health_status: ${{ steps.analyze.outputs.health_status }}
+      health_score: ${{ steps.analyze.outputs.health_score }}
       recommendation: ${{ steps.analyze.outputs.recommendation }}
       cache_data: ${{ steps.analyze.outputs.cache_data }}
       
@@ -130,12 +132,11 @@ jobs:
             const MAX_SIZE_GB = 10;
             const MAX_SIZE_BYTES = MAX_SIZE_GB * 1024 * 1024 * 1024;
             
+            // ✅ FIXED: Updated v4 pattern to match actual cache key format
             const CACHE_PATTERNS = {
-              v4: /^ccache-suki-v4-([^-]+)-([^-]+)-([^-]+)-([^-]+)-([^-]+)$/,
+              v4: /^ccache-suki-v4-([^-]+)-([^-]+)-([^-]+)-([^-]+)$/,
               v3: /^ccache-(?:suki-)?v3-([^-]+)-([0-9.]+)-(?:[A-Za-z0-9.-]+-)?(?:clang-[A-Za-z0-9.-]+-)?([A-Za-z0-9._-]+)(?:-.+)?$/,
-              legacy1: /^ccache-[^-]+-[\d.]+-[^-]+-clang-[^-]+-([^-]+)$/,
-              legacy2: /^ccache-[^-]+-[\d.]+-[^-]+-([^-]+)$/,
-              legacy3: /ccache-[^-]+-[^-]+-[^-]+-[^-]+-([^-]+)/
+              legacy: /^ccache-(?!suki-v[34]-)(.+)$/
             };
             
             const toGB = bytes => bytes / 1024 / 1024 / 1024;
@@ -167,7 +168,33 @@ jobs:
               }
             }
             
-            console.log('Fetching repository caches...');
+            // ✅ NEW: Check API rate limit
+            async function checkRateLimit() {
+              try {
+                const rateLimit = await github.rest.rateLimit.get();
+                const remaining = rateLimit.data.rate.remaining;
+                const limit = rateLimit.data.rate.limit;
+                const resetTime = new Date(rateLimit.data.rate.reset * 1000);
+                
+                console.log(`📊 GitHub API Rate Limit:`);
+                console.log(`  Remaining: ${remaining}/${limit}`);
+                console.log(`  Resets at: ${resetTime.toISOString()}`);
+                
+                if (remaining < 100) {
+                  core.warning(`⚠️ Low API rate limit: ${remaining} calls remaining`);
+                }
+                
+                return { remaining, limit, resetTime };
+              } catch (error) {
+                console.log('⚠️ Could not check rate limit:', error.message);
+                return null;
+              }
+            }
+            
+            console.log('🔍 Starting cache analysis...\n');
+            const rateLimitBefore = await checkRateLimit();
+            
+            console.log('\nFetching repository caches...');
             const caches = await github.paginate(
               github.rest.actions.getActionsCacheList,
               {
@@ -177,7 +204,7 @@ jobs:
               }
             );
             
-            console.log(`Found ${caches.length} total caches`);
+            console.log(`Found ${caches.length} total caches\n`);
             
             const stats = {
               totalSize: 0,
@@ -245,32 +272,37 @@ jobs:
                 let device = null;
                 let osVersion = null;
                 let androidVer = null;
-                let kernelVer = null;
+                let buildMode = null;
                 let isV4 = false;
                 let isV3 = false;
                 
+                // ✅ FIXED: Updated v4 parsing logic
                 const v4Match = cache.key.match(CACHE_PATTERNS.v4);
                 if (v4Match) {
                   stats.cacheKeyVersions.v4++;
                   isV4 = true;
-                  device = v4Match[1];
-                  osVersion = v4Match[2];
-                  androidVer = v4Match[3];
-                  kernelVer = v4Match[4];
+                  device = v4Match[1];        // oneplus_ace2_pro_v
+                  osVersion = v4Match[2];     // O2
+                  androidVer = v4Match[3];    // 15.0.0
+                  buildMode = v4Match[4];     // fast
                 } else {
                   const v3Match = cache.key.match(CACHE_PATTERNS.v3);
                   if (v3Match) {
                     stats.cacheKeyVersions.v3++;
                     isV3 = true;
                     androidVer = v3Match[1];
-                    kernelVer = v3Match[2];
+                    const kernelVer = v3Match[2];
                     device = v3Match[3];
                   } else {
-                    stats.cacheKeyVersions.legacy++;
-                    const legacy1 = cache.key.match(CACHE_PATTERNS.legacy1);
-                    const legacy2 = cache.key.match(CACHE_PATTERNS.legacy2);
-                    const legacy3 = cache.key.match(CACHE_PATTERNS.legacy3);
-                    device = legacy1?.[1] || legacy2?.[1] || legacy3?.[1] || null;
+                    const legacyMatch = cache.key.match(CACHE_PATTERNS.legacy);
+                    if (legacyMatch) {
+                      stats.cacheKeyVersions.legacy++;
+                      // Try to extract device from legacy format
+                      const parts = cache.key.split('-');
+                      if (parts.length >= 5) {
+                        device = parts[parts.length - 1];
+                      }
+                    }
                   }
                 }
                 
@@ -282,11 +314,9 @@ jobs:
                       lastAccessed: lastAccessDate,
                       oldestCache: cacheDate,
                       newestCache: cacheDate,
-                      oldestAccess: lastAccessDate,
-                      newestAccess: lastAccessDate,
                       osVersions: new Set(),
                       androidVersions: new Set(),
-                      kernelVersions: new Set(),
+                      buildModes: new Set(),
                       v4Count: 0,
                       v3Count: 0,
                       legacyCount: 0
@@ -303,7 +333,7 @@ jobs:
                   
                   if (osVersion) deviceData.osVersions.add(osVersion);
                   if (androidVer) deviceData.androidVersions.add(androidVer);
-                  if (kernelVer) deviceData.kernelVersions.add(kernelVer);
+                  if (buildMode) deviceData.buildModes.add(buildMode);
                   
                   if (lastAccessDate > deviceData.lastAccessed) {
                     deviceData.lastAccessed = lastAccessDate;
@@ -318,7 +348,7 @@ jobs:
               } else if (cache.key.includes('apt-')) {
                 stats.cachesByType.apt.size += cache.size_in_bytes;
                 stats.cachesByType.apt.count++;
-              } else if (cache.key.includes('kernel-source')) {
+              } else if (cache.key.includes('kernel-source') || cache.key.includes('linux-')) {
                 stats.cachesByType.kernel.size += cache.size_in_bytes;
                 stats.cachesByType.kernel.count++;
               } else {
@@ -329,6 +359,42 @@ jobs:
             
             const usagePercent = stats.totalSize > 0 ? (stats.totalSize / MAX_SIZE_BYTES) * 100 : 0;
             const usagePercentStr = usagePercent.toFixed(1);
+            
+            // ✅ NEW: Calculate health score
+            function calculateHealthScore() {
+              // Size score (0-40 points)
+              const sizeScore = Math.max(0, 40 - (usagePercent * 0.4));
+              
+              // Age score (0-30 points)
+              const freshPercent = stats.totalCount > 0 ? (stats.ageDistribution.fresh / stats.totalCount) * 100 : 0;
+              const ageScore = (freshPercent / 100) * 30;
+              
+              // Activity score (0-20 points)
+              const activePercent = stats.totalCount > 0 ? (stats.activityDistribution.active / stats.totalCount) * 100 : 0;
+              const activityScore = (activePercent / 100) * 20;
+              
+              // Version score (0-10 points)
+              const v4Percent = stats.totalCount > 0 ? (stats.cacheKeyVersions.v4 / stats.totalCount) * 100 : 0;
+              const versionScore = (v4Percent / 100) * 10;
+              
+              const totalScore = sizeScore + ageScore + activityScore + versionScore;
+              
+              return {
+                total: Math.round(totalScore),
+                breakdown: {
+                  size: Math.round(sizeScore),
+                  age: Math.round(ageScore),
+                  activity: Math.round(activityScore),
+                  version: Math.round(versionScore)
+                },
+                grade: totalScore >= 90 ? 'A' :
+                       totalScore >= 80 ? 'B' :
+                       totalScore >= 70 ? 'C' :
+                       totalScore >= 60 ? 'D' : 'F'
+              };
+            }
+            
+            const healthScore = calculateHealthScore();
             
             let healthStatus = 'Healthy';
             let recommendation = '✅ No action needed';
@@ -344,6 +410,66 @@ jobs:
               recommendation = '💡 Monitor usage';
             }
             
+            // ✅ NEW: Generate recommendations
+            function generateRecommendations() {
+              const recommendations = [];
+              
+              if (stats.cacheKeyVersions.legacy > 0) {
+                const legacyPercent = (stats.cacheKeyVersions.legacy / stats.totalCount) * 100;
+                recommendations.push({
+                  priority: 'high',
+                  emoji: '🔴',
+                  action: 'Migrate Legacy Caches',
+                  reason: `${stats.cacheKeyVersions.legacy} caches (${legacyPercent.toFixed(1)}%) use old format`,
+                  command: 'gh workflow run cache-cleanup.yml -f cleanup_type=cache_only -f cache_pattern=ccache_legacy -f dry_run=false'
+                });
+              }
+              
+              const inactiveDevices = Array.from(stats.cachesByDevice.entries())
+                .filter(([_, data]) => {
+                  const daysSinceAccess = (now - data.lastAccessed) / msPerDay;
+                  return daysSinceAccess > 30 && data.size > 100 * 1024 * 1024;
+                })
+                .sort((a, b) => b[1].size - a[1].size);
+              
+              if (inactiveDevices.length > 0) {
+                const totalInactiveSize = inactiveDevices.reduce((sum, [_, d]) => sum + d.size, 0);
+                const savingsGB = fmtGB(totalInactiveSize);
+                
+                recommendations.push({
+                  priority: 'medium',
+                  emoji: '🟡',
+                  action: 'Clean Inactive Devices',
+                  reason: `${inactiveDevices.length} devices unused for 30+ days (${savingsGB} GB potential savings)`,
+                  devices: inactiveDevices.slice(0, 5).map(([device, _]) => device).join(', ')
+                });
+              }
+              
+              if (stats.ageDistribution.stale > 10) {
+                recommendations.push({
+                  priority: 'low',
+                  emoji: '🟢',
+                  action: 'Remove Stale Caches',
+                  reason: `${stats.ageDistribution.stale} caches older than 30 days`,
+                  command: 'gh workflow run cache-cleanup.yml -f cleanup_type=cache_only -f cache_pattern=old_only -f cache_age_days=30 -f dry_run=false'
+                });
+              }
+              
+              if (usagePercent > 80) {
+                recommendations.push({
+                  priority: 'high',
+                  emoji: '🔴',
+                  action: 'Urgent Space Cleanup',
+                  reason: `Cache usage is ${usagePercentStr}% (>${MAX_SIZE_GB * 0.8} GB)`,
+                  command: 'gh workflow run cache-cleanup.yml -f cleanup_type=cache_only -f cache_pattern=ccache_stale -f cache_age_days=7 -f dry_run=false'
+                });
+              }
+              
+              return recommendations;
+            }
+            
+            const recommendations = generateRecommendations();
+            
             const deviceArray = Array.from(stats.cachesByDevice.entries()).map(([device, data]) => ({
               device,
               size: data.size,
@@ -353,7 +479,7 @@ jobs:
               newestCache: data.newestCache.toISOString(),
               osVersions: Array.from(data.osVersions),
               androidVersions: Array.from(data.androidVersions),
-              kernelVersions: Array.from(data.kernelVersions),
+              buildModes: Array.from(data.buildModes),
               v4Count: data.v4Count,
               v3Count: data.v3Count,
               legacyCount: data.legacyCount
@@ -365,6 +491,7 @@ jobs:
             if (usagePercent > 90) healthEmoji = '🔴';
             else if (usagePercent > 75) healthEmoji = '🟡';
             
+            // Generate summary report
             const summary = core.summary
               .addHeading(`${healthEmoji} Repository Cache Health Report`, 2)
               .addRaw(`\n**Analysis Date:** ${new Date().toISOString()}\n\n`);
@@ -375,7 +502,18 @@ jobs:
                 ['Total Cache Size', `${totalSizeGB} GB`, `${usagePercentStr}% of ${MAX_SIZE_GB} GB`],
                 ['Total Cache Count', stats.totalCount.toString(), healthEmoji],
                 ['Health Status', healthStatus, healthEmoji],
+                ['Health Score', `${healthScore.total}/100 (Grade ${healthScore.grade})`, healthScore.grade === 'A' ? '🟢' : healthScore.grade === 'B' ? '🟡' : '🔴'],
                 ['Recommendation', recommendation, '']
+              ]);
+            
+            // ✅ NEW: Health score breakdown
+            summary.addHeading('🎯 Health Score Breakdown', 3)
+              .addTable([
+                [{data: 'Category', header: true}, {data: 'Score', header: true}, {data: 'Weight', header: true}, {data: 'Status', header: true}],
+                ['Size Management', `${healthScore.breakdown.size}/40`, '40%', healthScore.breakdown.size >= 32 ? '✅' : healthScore.breakdown.size >= 24 ? '⚠️' : '❌'],
+                ['Cache Freshness', `${healthScore.breakdown.age}/30`, '30%', healthScore.breakdown.age >= 24 ? '✅' : healthScore.breakdown.age >= 18 ? '⚠️' : '❌'],
+                ['Activity Level', `${healthScore.breakdown.activity}/20`, '20%', healthScore.breakdown.activity >= 16 ? '✅' : healthScore.breakdown.activity >= 12 ? '⚠️' : '❌'],
+                ['Version Compliance', `${healthScore.breakdown.version}/10`, '10%', healthScore.breakdown.version >= 8 ? '✅' : healthScore.breakdown.version >= 6 ? '⚠️' : '❌']
               ]);
             
             summary.addHeading('🗂️ Cache Breakdown by Type', 3)
@@ -483,24 +621,31 @@ jobs:
               }
             }
             
-            summary.addHeading('💡 Recommendations', 3);
-            
-            if (usagePercent > 90) {
-              summary.addRaw(`\n⚠️ **Action Required**: Cache usage is critical (${usagePercentStr}%).\n\n`);
-            } else if (usagePercent > 75) {
-              summary.addRaw(`\n⚠️ **Warning**: Cache usage is high (${usagePercentStr}%).\n\n`);
+            // ✅ NEW: Recommendations section
+            if (recommendations.length > 0) {
+              summary.addHeading('💡 Recommended Actions', 3);
+              
+              for (const rec of recommendations) {
+                summary.addRaw(`\n${rec.emoji} **${rec.action}** (${rec.priority} priority)\n`);
+                summary.addRaw(`   ${rec.reason}\n`);
+                
+                if (rec.command) {
+                  summary.addRaw(`   \`\`\`bash\n   ${rec.command}\n   \`\`\`\n`);
+                }
+                
+                if (rec.devices) {
+                  summary.addRaw(`   Affected devices: ${rec.devices}\n`);
+                }
+              }
             } else {
-              summary.addRaw(`\n✅ **Healthy**: Cache usage is normal (${usagePercentStr}%).\n\n`);
+              summary.addHeading('💡 Recommendations', 3);
+              summary.addRaw(`\n✅ **Excellent!** No immediate actions required.\n\n`);
             }
             
-            if (stats.cacheKeyVersions.v3 > 0) {
-              summary.addRaw(`- 🔄 **v3 Migration**: ${stats.cacheKeyVersions.v3} v3 caches detected.\n`);
-            }
-            if (stats.cacheKeyVersions.legacy > 0) {
-              summary.addRaw(`- 🔄 **Legacy Migration**: ${stats.cacheKeyVersions.legacy} legacy caches detected.\n`);
-            }
-            if (stats.activityDistribution.stale > 0) {
-              summary.addRaw(`- 🧹 **Stale Caches**: ${stats.activityDistribution.stale} caches haven't been accessed in 30+ days.\n`);
+            const rateLimitAfter = await checkRateLimit();
+            if (rateLimitBefore && rateLimitAfter) {
+              const apiCallsUsed = rateLimitBefore.remaining - rateLimitAfter.remaining;
+              summary.addRaw(`\n---\n\n📊 **API Calls Used**: ${apiCallsUsed}\n`);
             }
             
             await summary.write();
@@ -508,17 +653,20 @@ jobs:
             core.setOutput('total_size', totalSizeGB);
             core.setOutput('total_count', stats.totalCount);
             core.setOutput('health_status', healthStatus);
+            core.setOutput('health_score', healthScore.total);
             core.setOutput('recommendation', recommendation);
             core.setOutput('cache_data', JSON.stringify({
               totalSize: stats.totalSize,
               totalCount: stats.totalCount,
               usagePercent: usagePercentStr,
               maxSizeGB: MAX_SIZE_GB,
+              healthScore: healthScore,
               cachesByType: stats.cachesByType,
               cacheKeyVersions: stats.cacheKeyVersions,
               cachesByDevice: deviceArray,
               ageDistribution: stats.ageDistribution,
               activityDistribution: stats.activityDistribution,
+              recommendations: recommendations,
               oldestCache: stats.oldestCache,
               newestCache: stats.newestCache,
               healthStatus,
@@ -529,6 +677,9 @@ jobs:
     name: 🧹 Cleanup Caches
     runs-on: ubuntu-latest
     needs: analyze
+    outputs:
+      deleted_count: ${{ steps.cleanup.outputs.deleted_count }}
+      freed_space: ${{ steps.cleanup.outputs.freed_space }}
     if: |
       (github.event_name == 'workflow_dispatch' && 
        (inputs.cleanup_type == 'cache_only' || inputs.cleanup_type == 'full_cleanup')) ||
@@ -536,6 +687,7 @@ jobs:
     
     steps:
       - name: 🗑️ Delete Matching Caches
+        id: cleanup
         uses: actions/github-script@v7
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
@@ -548,8 +700,10 @@ jobs:
             const cacheAgeDays = isScheduled ? 14 : parseInt('${{ inputs.cache_age_days }}');
             const forceCleanup = isScheduled ? false : ('${{ inputs.force_cleanup }}' === 'true');
             
-            const V4_PATTERN = /^ccache-suki-v4-([^-]+)-([^-]+)-([^-]+)-([^-]+)-([^-]+)$/;
+            // ✅ FIXED: Updated v4 pattern
+            const V4_PATTERN = /^ccache-suki-v4-([^-]+)-([^-]+)-([^-]+)-([^-]+)$/;
             const V3_PATTERN = /^ccache-(?:suki-)?v3-([^-]+)-([0-9.]+)-(?:[A-Za-z0-9.-]+-)?(?:clang-[A-Za-z0-9.-]+-)?([A-Za-z0-9._-]+)(?:-.+)?$/;
+            const LEGACY_PATTERN = /^ccache-(?!suki-v[34]-)(.+)$/;
             
             const toGB = bytes => bytes / 1024 / 1024 / 1024;
             const fmtGB = (bytes, countHint = 0) => {
@@ -580,12 +734,29 @@ jobs:
               }
             }
             
+            // ✅ NEW: Enhanced device matching
+            function matchesDeviceFilter(cacheKey, device, kernel, filter) {
+              if (filter === 'ALL') return true;
+              
+              const normalizedFilter = filter.toLowerCase().replace(/_/g, '-');
+              const normalizedDevice = device?.toLowerCase().replace(/_/g, '-');
+              const normalizedKernel = kernel?.toLowerCase();
+              
+              if (normalizedDevice === normalizedFilter) return true;
+              if (normalizedKernel === filter.toLowerCase()) return true;
+              if (normalizedKernel?.includes(normalizedFilter)) return true;
+              
+              const normalizedKey = cacheKey.toLowerCase().replace(/_/g, '-');
+              return normalizedKey.includes(normalizedFilter);
+            }
+            
             console.log('🧹 Starting cache cleanup...\n');
             console.log(`Configuration:`);
             console.log(`  Device Filter: ${deviceFilter}`);
             console.log(`  Cache Pattern: ${cachePattern}`);
             console.log(`  Age Threshold: ${cacheAgeDays} days`);
             console.log(`  Dry Run: ${dryRun}`);
+            console.log(`  Force: ${forceCleanup}`);
             console.log(`  Scheduled: ${isScheduled}\n`);
             
             const staleCutoffDate = new Date(Date.now() - cacheAgeDays * 24 * 60 * 60 * 1000);
@@ -611,6 +782,7 @@ jobs:
               
               const isV4Format = cacheKey.startsWith('ccache-suki-v4-');
               const isV3Format = cacheKey.startsWith('ccache-v3-') || cacheKey.startsWith('ccache-suki-v3-');
+              const isLegacyFormat = cacheKey.startsWith('ccache-') && !isV4Format && !isV3Format;
               
               if (lastAccessDate > veryRecentCutoffDate && !forceCleanup) {
                 return { delete: false, reason: 'recently_used' };
@@ -623,7 +795,7 @@ jobs:
                 const v4Match = cacheKey.match(V4_PATTERN);
                 if (v4Match) {
                   device = v4Match[1];
-                  kernel = v4Match[4];
+                  kernel = v4Match[3]; // Android version can act as kernel identifier
                 }
               } else if (isV3Format) {
                 const v3Match = cacheKey.match(V3_PATTERN);
@@ -631,23 +803,15 @@ jobs:
                   kernel = v3Match[2];
                   device = v3Match[3];
                 }
-              } else if (cacheKey.startsWith('ccache-')) {
-                const legacy1 = cacheKey.match(/^ccache-[^-]+-[\d.]+-[^-]+-clang-[^-]+-([^-]+)$/);
-                const legacy2 = cacheKey.match(/^ccache-[^-]+-[\d.]+-[^-]+-([^-]+)$/);
-                device = legacy1?.[1] || legacy2?.[1] || null;
+              } else if (isLegacyFormat) {
+                const legacyMatch = cacheKey.match(LEGACY_PATTERN);
+                if (legacyMatch) {
+                  const parts = cacheKey.split('-');
+                  device = parts[parts.length - 1];
+                }
               }
               
-              const exactMatch =
-                deviceFilter === 'ALL' ||
-                (device && deviceFilter.toLowerCase() === device.toLowerCase()) ||
-                (kernel && deviceFilter.toLowerCase() === kernel.toLowerCase());
-              
-              const looseMatch =
-                cacheKey.includes(`-${deviceFilter}-`) ||
-                cacheKey.endsWith(`-${deviceFilter}`) ||
-                cacheKey.startsWith(`${deviceFilter}-`);
-              
-              const deviceMatchesFilter = exactMatch || looseMatch;
+              const deviceMatchesFilter = matchesDeviceFilter(cacheKey, device, kernel, deviceFilter);
               
               if (!deviceMatchesFilter) {
                 return { delete: false, reason: 'device_filter' };
@@ -673,6 +837,14 @@ jobs:
                 
                 case 'ccache_stale':
                   if (cacheKey.startsWith('ccache-') && lastAccessDate < staleCutoffDate) {
+                    patternMatch = true;
+                    category = 'ccache';
+                  }
+                  break;
+                
+                // ✅ NEW: Target only legacy caches
+                case 'ccache_legacy':
+                  if (isLegacyFormat) {
                     patternMatch = true;
                     category = 'ccache';
                   }
@@ -709,6 +881,7 @@ jobs:
                 device: device,
                 isV4: isV4Format,
                 isV3: isV3Format,
+                isLegacy: isLegacyFormat,
                 accessAgeDays: accessAgeDays
               };
             }
@@ -724,13 +897,19 @@ jobs:
               }
             );
             
+            console.log(`Found ${caches.length} caches to evaluate\n`);
+            
+            // ✅ NEW: Batch deletion with progress
+            const cachesToDelete = [];
+            
             for (const cache of caches) {
               const decision = shouldDeleteCache(cache);
-              const sizeMB = (cache.size_in_bytes / 1024 / 1024).toFixed(2);
-              const agedays = Math.floor((new Date() - new Date(cache.created_at)) / (1000 * 60 * 60 * 24));
               
               if (decision.delete) {
-                deletedCaches.push({
+                const sizeMB = (cache.size_in_bytes / 1024 / 1024).toFixed(2);
+                const agedays = Math.floor((new Date() - new Date(cache.created_at)) / (1000 * 60 * 60 * 24));
+                
+                cachesToDelete.push({
                   key: cache.key,
                   size: sizeMB,
                   sizeBytes: cache.size_in_bytes,
@@ -740,42 +919,82 @@ jobs:
                   id: cache.id,
                   category: decision.category,
                   device: decision.device,
-                  accessAgeDays: decision.accessAgeDays
+                  accessAgeDays: decision.accessAgeDays,
+                  isV4: decision.isV4,
+                  isV3: decision.isV3,
+                  isLegacy: decision.isLegacy
                 });
+              }
+            }
+            
+            console.log(`Selected ${cachesToDelete.length} caches for ${dryRun ? 'preview' : 'deletion'}\n`);
+            
+            if (dryRun) {
+              for (const cache of cachesToDelete) {
+                console.log(`🔍 Would delete: ${cache.key}`);
+                console.log(`   Size: ${cache.size} MB | Age: ${cache.age}d | Access: ${cache.accessAgeDays}d ago`);
                 
-                if (dryRun) {
-                  console.log(`🔍 Would delete: ${cache.key}`);
-                  console.log(`   Size: ${sizeMB} MB | Age: ${agedays} days`);
-                } else {
-                  console.log(`🗑️ Deleting: ${cache.key}`);
-                  
-                  try {
-                    await withRetry(() =>
-                      github.rest.actions.deleteActionsCacheById({
-                        owner,
-                        repo,
-                        cache_id: cache.id
-                      })
-                    );
-                    totalDeleted++;
-                    totalFreed += cache.size_in_bytes;
-                    
-                    deletionStats[decision.category].count++;
-                    deletionStats[decision.category].size += cache.size_in_bytes;
-                    
-                    if (decision.category === 'ccache') {
-                      if (decision.isV4) deletionStats.ccache.v4++;
-                      else if (decision.isV3) deletionStats.ccache.v3++;
-                      else deletionStats.ccache.legacy++;
-                    }
-                  } catch (error) {
-                    console.log(`   ⚠️ Failed: ${error.message}`);
-                    failedDeletions.push({
-                      key: cache.key,
-                      error: error.message
-                    });
-                  }
+                deletedCaches.push(cache);
+                totalFreed += cache.sizeBytes;
+                
+                deletionStats[cache.category].count++;
+                deletionStats[cache.category].size += cache.sizeBytes;
+                
+                if (cache.category === 'ccache') {
+                  if (cache.isV4) deletionStats.ccache.v4++;
+                  else if (cache.isV3) deletionStats.ccache.v3++;
+                  else if (cache.isLegacy) deletionStats.ccache.legacy++;
                 }
+              }
+              totalDeleted = cachesToDelete.length;
+            } else {
+              // Process in batches of 10
+              const batchSize = 10;
+              for (let i = 0; i < cachesToDelete.length; i += batchSize) {
+                const batch = cachesToDelete.slice(i, i + batchSize);
+                
+                await Promise.all(
+                  batch.map(async cache => {
+                    try {
+                      console.log(`🗑️ Deleting [${i + batch.indexOf(cache) + 1}/${cachesToDelete.length}]: ${cache.key}`);
+                      
+                      await withRetry(() =>
+                        github.rest.actions.deleteActionsCacheById({
+                          owner,
+                          repo,
+                          cache_id: cache.id
+                        })
+                      );
+                      
+                      totalDeleted++;
+                      totalFreed += cache.sizeBytes;
+                      deletedCaches.push(cache);
+                      
+                      deletionStats[cache.category].count++;
+                      deletionStats[cache.category].size += cache.sizeBytes;
+                      
+                      if (cache.category === 'ccache') {
+                        if (cache.isV4) deletionStats.ccache.v4++;
+                        else if (cache.isV3) deletionStats.ccache.v3++;
+                        else if (cache.isLegacy) deletionStats.ccache.legacy++;
+                      }
+                    } catch (error) {
+                      console.log(`   ⚠️ Failed: ${error.message}`);
+                      failedDeletions.push({
+                        key: cache.key,
+                        error: error.message
+                      });
+                    }
+                  })
+                );
+                
+                // Small delay between batches
+                if (i + batchSize < cachesToDelete.length) {
+                  await new Promise(resolve => setTimeout(resolve, 500));
+                }
+                
+                const progress = ((i + batch.length) / cachesToDelete.length * 100).toFixed(1);
+                console.log(`Progress: ${i + batch.length}/${cachesToDelete.length} (${progress}%)\n`);
               }
             }
             
@@ -783,7 +1002,10 @@ jobs:
             
             console.log(`\n✅ Cleanup ${dryRun ? 'simulation' : 'complete'}:`);
             console.log(`   ${dryRun ? 'Would delete' : 'Deleted'}: ${totalDeleted} caches`);
-            console.log(`   ${dryRun ? 'Would free' : 'Freed'}: ${freedGB} GB\n`);
+            console.log(`   ${dryRun ? 'Would free' : 'Freed'}: ${freedGB} GB`);
+            if (failedDeletions.length > 0) {
+              console.log(`   ⚠️ Failed: ${failedDeletions.length} caches\n`);
+            }
             
             const summary = core.summary
               .addHeading(`🧹 Cache Cleanup ${dryRun ? 'Preview' : 'Report'}`, 2)
@@ -802,6 +1024,7 @@ jobs:
                 [{data: 'Metric', header: true}, {data: 'Value', header: true}],
                 ['Caches ' + (dryRun ? 'to Delete' : 'Deleted'), totalDeleted.toString()],
                 ['Space ' + (dryRun ? 'to Free' : 'Freed'), `${freedGB} GB`],
+                ['Failed Deletions', failedDeletions.length.toString()],
                 ['Device Filter', deviceFilter],
                 ['Cache Pattern', cachePattern],
                 ['Age Threshold', `${cacheAgeDays} days`]
@@ -810,10 +1033,22 @@ jobs:
             summary.addHeading('🗂️ Deletion Breakdown', 3)
               .addTable([
                 [{data: 'Type', header: true}, {data: 'Count', header: true}, {data: 'Size (GB)', header: true}, {data: 'Percentage', header: true}],
-                ['ccache',
+                ['ccache', 
                  deletionStats.ccache.count.toString(),
                  fmtGB(deletionStats.ccache.size, deletionStats.ccache.count),
                  pct(deletionStats.ccache.size, totalFreed)],
+                ['  └─ v4', 
+                 deletionStats.ccache.v4.toString(),
+                 '',
+                 ''],
+                ['  └─ v3', 
+                 deletionStats.ccache.v3.toString(),
+                 '',
+                 ''],
+                ['  └─ legacy', 
+                 deletionStats.ccache.legacy.toString(),
+                 '',
+                 ''],
                 ['apt packages',
                  deletionStats.apt.count.toString(),
                  fmtGB(deletionStats.apt.size, deletionStats.apt.count),
@@ -836,11 +1071,11 @@ jobs:
               summary.addHeading('📦 Top 20 Largest Caches ' + (dryRun ? 'to Delete' : 'Deleted'), 3)
                 .addTable([
                   [{data: 'Cache Key', header: true}, {data: 'Size (MB)', header: true}, 
-                   {data: 'Category', header: true}, {data: 'Last Access', header: true}],
+                   {data: 'Version', header: true}, {data: 'Last Access', header: true}],
                   ...largestDeleted.map(cache => [
-                    cache.key.substring(0, 60) + '...',
+                    cache.key.length > 60 ? cache.key.substring(0, 57) + '...' : cache.key,
                     cache.size,
-                    cache.category,
+                    cache.isV4 ? 'v4' : cache.isV3 ? 'v3' : 'legacy',
                     `${cache.accessAgeDays}d ago`
                   ])
                 ]);
@@ -855,6 +1090,9 @@ jobs:
             }
             
             await summary.write();
+            
+            core.setOutput('deleted_count', totalDeleted);
+            core.setOutput('freed_space', freedGB);
 
   cleanup-runs:
     name: 🗑️ Cleanup Workflow Runs
@@ -955,9 +1193,9 @@ jobs:
                 
                 if (shouldDelete) {
                   if (dryRun) {
-                    console.log(`[DRY RUN] Would delete: Run #${run.run_number}`);
+                    console.log(`[DRY RUN] Would delete: Run #${run.run_number} (${run.conclusion})`);
                   } else {
-                    console.log(`Deleting: Run #${run.run_number}`);
+                    console.log(`Deleting: Run #${run.run_number} (${run.conclusion})`);
                     
                     try {
                       await withRetry(() =>
@@ -1024,7 +1262,8 @@ jobs:
                 .sort((a, b) => b[1] - a[1])
                 .slice(0, 10);
               
-              summary.addHeading('📋 Top 10 Workflows', 3)
+              summary.addHeading('📋 Top 10 
+                            summary.addHeading('📋 Top 10 Workflows', 3)
                 .addTable([
                   [{data: 'Workflow', header: true}, {data: 'Runs Deleted', header: true}],
                   ...topWorkflows.map(([name, count]) => [name, count.toString()])
@@ -1050,6 +1289,7 @@ jobs:
             
             const beforeSize = parseFloat('${{ needs.analyze.outputs.total_size }}') || 0;
             const beforeCount = parseInt('${{ needs.analyze.outputs.total_count }}') || 0;
+            const beforeHealthScore = parseInt('${{ needs.analyze.outputs.health_score }}') || 0;
             
             const caches = await github.paginate(
               github.rest.actions.getActionsCacheList,
@@ -1089,7 +1329,7 @@ jobs:
               .addRaw(`\n**Report Date:** ${new Date().toISOString()}\n\n`);
             
             if (dryRun) {
-              summary.addRaw(`> ⚠️ **DRY RUN MODE**\n\n`);
+              summary.addRaw(`> ⚠️ **DRY RUN MODE** - This is a preview only.\n\n`);
             }
             
             if (isScheduled) {
@@ -1111,24 +1351,136 @@ jobs:
                  `${beforeUsage}%`, 
                  `${afterPercent}%`, 
                  `${(parseFloat(beforeUsage) - parseFloat(afterPercent)).toFixed(1)}% reduction`],
-                ['Health', 
+                ['Health Score',
+                 `${beforeHealthScore}/100`,
+                 dryRun ? 'N/A' : 'Recalculate needed',
+                 dryRun ? 'N/A' : ''],
+                ['Health Status', 
                  '', 
                  healthStatus, 
                  healthEmoji]
               ]);
             
+            // ✅ NEW: Cleanup job results
+            const cacheCleanupResult = '${{ needs.cleanup-caches.result }}';
+            const runsCleanupResult = '${{ needs.cleanup-runs.result }}';
+            
+            if (cacheCleanupResult !== 'skipped') {
+              summary.addHeading('🧹 Cache Cleanup Results', 3);
+              
+              if (cacheCleanupResult === 'success') {
+                const deletedCount = '${{ needs.cleanup-caches.outputs.deleted_count }}' || '0';
+                const freedSpace = '${{ needs.cleanup-caches.outputs.freed_space }}' || '0.00';
+                
+                summary.addRaw(`\n✅ **Success**\n`);
+                summary.addRaw(`- Caches ${dryRun ? 'to delete' : 'deleted'}: ${deletedCount}\n`);
+                summary.addRaw(`- Space ${dryRun ? 'to free' : 'freed'}: ${freedSpace} GB\n\n`);
+              } else if (cacheCleanupResult === 'failure') {
+                summary.addRaw(`\n❌ **Failed** - Check job logs for details\n\n`);
+              }
+            }
+            
+            if (runsCleanupResult !== 'skipped') {
+              summary.addHeading('🗑️ Workflow Runs Cleanup Results', 3);
+              
+              if (runsCleanupResult === 'success') {
+                summary.addRaw(`\n✅ **Success** - Old workflow runs cleaned up\n\n`);
+              } else if (runsCleanupResult === 'failure') {
+                summary.addRaw(`\n❌ **Failed** - Check job logs for details\n\n`);
+              }
+            }
+            
             summary.addHeading('💡 Recommendations', 3);
             
             if (parseFloat(afterPercent) > 90) {
-              summary.addRaw(`\n⚠️ **Critical**: Cache usage is still very high (${afterPercent}%).\n\n`);
+              summary.addRaw(`\n🔴 **Critical**: Cache usage is still very high (${afterPercent}%).\n\n`);
+              summary.addRaw(`**Immediate Actions:**\n`);
+              summary.addRaw(`1. Run aggressive cleanup: \`gh workflow run cache-cleanup.yml -f cleanup_type=cache_only -f cache_pattern=ccache_stale -f cache_age_days=3 -f dry_run=false\`\n`);
+              summary.addRaw(`2. Consider removing inactive device caches\n`);
+              summary.addRaw(`3. Review build configurations to reduce cache size\n\n`);
             } else if (parseFloat(afterPercent) > 75) {
-              summary.addRaw(`\n⚠️ **Warning**: Cache usage is elevated (${afterPercent}%).\n\n`);
+              summary.addRaw(`\n🟡 **Warning**: Cache usage is elevated (${afterPercent}%).\n\n`);
+              summary.addRaw(`**Recommended Actions:**\n`);
+              summary.addRaw(`1. Monitor cache growth over next few days\n`);
+              summary.addRaw(`2. Consider cleanup if usage exceeds 85%\n`);
+              summary.addRaw(`3. Review cache patterns for optimization opportunities\n\n`);
             } else {
               summary.addRaw(`\n✅ **Healthy**: Cache usage is at a good level (${afterPercent}%).\n\n`);
+              summary.addRaw(`**Maintenance:**\n`);
+              summary.addRaw(`- Continue scheduled weekly cleanups\n`);
+              summary.addRaw(`- Monitor for unusual growth patterns\n`);
+              summary.addRaw(`- Keep cache key formats up to date\n\n`);
             }
             
             if (dryRun) {
-              summary.addRaw(`\n> 💡 **Next Steps**: Run with **dry_run: false** to apply changes.\n\n`);
+              summary.addRaw(`\n---\n\n`);
+              summary.addRaw(`> 💡 **Next Steps**: Run with **dry_run: false** to apply changes.\n\n`);
+              summary.addRaw(`\`\`\`bash\n`);
+              summary.addRaw(`gh workflow run cache-cleanup.yml \\\n`);
+              summary.addRaw(`  -f cleanup_type=cache_only \\\n`);
+              summary.addRaw(`  -f cache_pattern=ccache_stale \\\n`);
+              summary.addRaw(`  -f cache_age_days=7 \\\n`);
+              summary.addRaw(`  -f dry_run=false\n`);
+              summary.addRaw(`\`\`\`\n`);
             }
             
+            // ✅ NEW: Add quick actions
+            summary.addHeading('⚡ Quick Actions', 3);
+            summary.addRaw(`\n**Common cleanup commands:**\n\n`);
+            
+            summary.addRaw(`**1. Clean all legacy caches:**\n`);
+            summary.addRaw(`\`\`\`bash\n`);
+            summary.addRaw(`gh workflow run cache-cleanup.yml -f cleanup_type=cache_only -f cache_pattern=ccache_legacy -f dry_run=false\n`);
+            summary.addRaw(`\`\`\`\n\n`);
+            
+            summary.addRaw(`**2. Clean stale caches (>14 days):**\n`);
+            summary.addRaw(`\`\`\`bash\n`);
+            summary.addRaw(`gh workflow run cache-cleanup.yml -f cleanup_type=cache_only -f cache_pattern=ccache_stale -f cache_age_days=14 -f dry_run=false\n`);
+            summary.addRaw(`\`\`\`\n\n`);
+            
+            summary.addRaw(`**3. Clean specific device:**\n`);
+            summary.addRaw(`\`\`\`bash\n`);
+            summary.addRaw(`gh workflow run cache-cleanup.yml -f cleanup_type=cache_only -f device_filter=oneplus_ace2_pro_v -f cache_pattern=ccache_only -f dry_run=false\n`);
+            summary.addRaw(`\`\`\`\n\n`);
+            
+            summary.addRaw(`**4. Full cleanup (caches + runs):**\n`);
+            summary.addRaw(`\`\`\`bash\n`);
+            summary.addRaw(`gh workflow run cache-cleanup.yml -f cleanup_type=full_cleanup -f cache_pattern=ccache_stale -f cache_age_days=7 -f dry_run=false\n`);
+            summary.addRaw(`\`\`\`\n\n`);
+            
+            // ✅ NEW: Add cache health trend (if available)
+            try {
+              const cacheData = JSON.parse('${{ needs.analyze.outputs.cache_data }}');
+              
+              if (cacheData.recommendations && cacheData.recommendations.length > 0) {
+                summary.addHeading('🎯 Priority Recommendations', 3);
+                
+                for (const rec of cacheData.recommendations) {
+                  summary.addRaw(`\n${rec.emoji} **${rec.action}** (${rec.priority} priority)\n`);
+                  summary.addRaw(`${rec.reason}\n`);
+                  
+                  if (rec.command) {
+                    summary.addRaw(`\`\`\`bash\n${rec.command}\n\`\`\`\n`);
+                  }
+                  
+                  if (rec.devices) {
+                    summary.addRaw(`Affected: ${rec.devices}\n`);
+                  }
+                }
+              }
+            } catch (error) {
+              console.log('Could not parse cache data for recommendations');
+            }
+            
+            summary.addRaw(`\n---\n\n`);
+            summary.addRaw(`📅 **Next Scheduled Cleanup**: Every Sunday at 00:00 UTC\n`);
+            summary.addRaw(`🔗 **Workflow**: [Cache & Workflow Cleanup](${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/workflows/cache-cleanup.yml)\n`);
+            
             await summary.write();
+            
+            // ✅ NEW: Set workflow conclusion based on health
+            if (parseFloat(afterPercent) > 95) {
+              core.setFailed(`⚠️ Cache usage critical: ${afterPercent}% - Manual intervention required`);
+            } else if (parseFloat(afterPercent) > 90) {
+              core.warning(`⚠️ Cache usage very high: ${afterPercent}% - Cleanup recommended`);
+            }
