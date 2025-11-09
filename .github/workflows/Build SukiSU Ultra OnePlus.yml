@@ -213,10 +213,6 @@ jobs:
           set -e
           cd "$GITHUB_WORKSPACE"
           
-          # ═══════════════════════════════════════════════════════════════
-          # Parse FILE input
-          # ═══════════════════════════════════════════════════════════════
-          
           if [[ "$FILE" =~ ^(.+)_([a-zA-Z])$ ]]; then
             FILE_CONF="${BASH_REMATCH[1]}"
           else
@@ -233,10 +229,6 @@ jobs:
           echo "FILE_CONF=$FILE_CONF" >> $GITHUB_ENV
           echo "FILE_BASE=$FILE_BASE" >> $GITHUB_ENV
       
-          # ═══════════════════════════════════════════════════════════════
-          # Repository Detection
-          # ═══════════════════════════════════════════════════════════════
-          
           declare -A REPOS
           REPOS["OnePlusOSS"]="https://api.github.com/repos/OnePlusOSS/kernel_manifest"
           REPOS["Dynamic"]="https://api.github.com/repos/Numbersf/kernel_manifest"
@@ -282,13 +274,11 @@ jobs:
             return 1
           }
       
-          # Try OnePlusOSS first
           if check_repo "OnePlusOSS" "${REPOS["OnePlusOSS"]}"; then
             echo "MANIFEST_REPO=OnePlusOSS" >> $GITHUB_ENV
             echo "MANIFEST_BRANCH=$FOUND_BRANCH" >> $GITHUB_ENV
           fi
       
-          # Fallback to Dynamic repo
           if [[ -z "$FOUND_REPO" ]]; then
             DYNAMIC_URL="${REPOS["Dynamic"]}"
             DYNAMIC_OWNER=$(echo "$DYNAMIC_URL" | sed -E 's#https://api.github.com/repos/([^/]+)/.*#\1#')
@@ -306,10 +296,6 @@ jobs:
             exit 1
           fi
       
-          # ═══════════════════════════════════════════════════════════════
-          # Extract CPU and Android Version from Revision (ONCE ONLY)
-          # ═══════════════════════════════════════════════════════════════
-          
           REVISION=$(grep -oP '<project[^>]+revision="\K[^"]+' "$XML_PATH" | \
             grep -E '(oneplus|realme|oppo)/' | head -n1 || true)
           
@@ -320,10 +306,7 @@ jobs:
           
           echo "解析 FILE 获取 CPU 和 ANDROID_VERSION..."
           
-          # Extract CPU
           CPU=$(echo "$REVISION" | sed -E 's#^(oneplus|realme|oppo)/([^_]+).*#\2#')
-          
-          # Extract numeric Android version (e.g., "15.0.0")
           ANDROID_VERSION=$(echo "$REVISION" | grep -oP '\d{1,2}\.\d{1,2}(\.\d{1,2})?')
           
           if [[ -z "$CPU" || -z "$ANDROID_VERSION" ]]; then
@@ -332,10 +315,6 @@ jobs:
             exit 1
           fi
           
-          # ═══════════════════════════════════════════════════════════════
-          # Normalize to androidNN Format Immediately
-          # ═══════════════════════════════════════════════════════════════
-          
           ANDROID_MAJOR="${ANDROID_VERSION%%.*}"
           ANDROID_KERNEL_FORMAT="android${ANDROID_MAJOR}"
           
@@ -343,22 +322,14 @@ jobs:
           echo "✅ Android Version (numeric): $ANDROID_VERSION"
           echo "✅ Android Version (kernel format): $ANDROID_KERNEL_FORMAT"
           
-          # ═══════════════════════════════════════════════════════════════
-          # Export All Formats (NO DUPLICATES)
-          # ═══════════════════════════════════════════════════════════════
-          
           {
             echo "CPU=$CPU"
-            echo "ANDROID_VERSION=$ANDROID_VERSION"                    # Numeric (15.0.0)
-            echo "ANDROID_VERSION_KERNEL=$ANDROID_KERNEL_FORMAT"       # Kernel format (android15)
-            echo "ANDROID_SHORT_VERSION=${ANDROID_MAJOR}"              # Short (15)
-            echo "KANDROID_VERSION=$ANDROID_KERNEL_FORMAT"             # Override for consistency
+            echo "ANDROID_VERSION=$ANDROID_VERSION"
+            echo "ANDROID_VERSION_KERNEL=$ANDROID_KERNEL_FORMAT"
+            echo "ANDROID_SHORT_VERSION=${ANDROID_MAJOR}"
+            echo "KANDROID_VERSION=$ANDROID_KERNEL_FORMAT"
           } >> $GITHUB_ENV
       
-          # ═══════════════════════════════════════════════════════════════
-          # Parse README.md for CPUD and BUILD_METHOD
-          # ═══════════════════════════════════════════════════════════════
-          
           echo "解析 README.md 获取 CPUD 和 BUILD_METHOD..."
           if [[ -s "$README_PATH" ]]; then
             BUILD_LINE=$(grep -m1 'oplus_build_kernel.sh' "$README_PATH" || true)
@@ -374,10 +345,6 @@ jobs:
           else
             echo "❌ README.md 下载失败或为空"
           fi
-          
-          # ═══════════════════════════════════════════════════════════════
-          # Set Output for Artifact Naming
-          # ═══════════════════════════════════════════════════════════════
           
           echo "value=${FILE_BASE}_Android${ANDROID_VERSION}" >> "$GITHUB_OUTPUT"
 
@@ -410,7 +377,6 @@ jobs:
           
           CACHE_DIR="$HOME/.ccache_${{ github.event.inputs.FILE }}"
           
-          # Export both CCACHE_DIR and CCACHE_BASEDIR early
           {
             echo "CCACHE_DIR=$CACHE_DIR"
             echo "CCACHE_BASEDIR=${GITHUB_WORKSPACE}"
@@ -425,7 +391,6 @@ jobs:
           echo "Base directory: ${GITHUB_WORKSPACE}"
           echo "Target: ${{ github.event.inputs.FILE }}"
           echo "============================================"
-
 
       - name: Optimize Git for Large Repository
         run: |
@@ -590,10 +555,6 @@ jobs:
           
           cd kernel_workspace/kernel_platform
           
-          # ═══════════════════════════════════════════════════════════════
-          # Extract BRANCH from build.config files
-          # ═══════════════════════════════════════════════════════════════
-          
           BRANCH=""
           CONFIG_FILES=(
             "./common/build.config.constants"
@@ -610,10 +571,6 @@ jobs:
               fi
             fi
           done
-          
-          # ═══════════════════════════════════════════════════════════════
-          # Fallback: Extract from Makefile
-          # ═══════════════════════════════════════════════════════════════
           
           if [ -z "$BRANCH" ]; then
             echo "::warning::BRANCH not found in build.config files"
@@ -636,15 +593,7 @@ jobs:
             echo "✅ Parsed: KANDROID_VERSION=$KANDROID_VERSION, KERNEL_VERSION=$KERNEL_VERSION"
           fi
           
-          # ═══════════════════════════════════════════════════════════════
-          # Extract full kernel version from Makefile
-          # ═══════════════════════════════════════════════════════════════
-          
           ORIG_VERSION=$(awk '/^VERSION =/ {v=$3} /^PATCHLEVEL =/ {p=$3} /^SUBLEVEL =/ {s=$3} END {print v"."p"."s}' ./common/Makefile)
-          
-          # ═══════════════════════════════════════════════════════════════
-          # Export to environment
-          # ═══════════════════════════════════════════════════════════════
           
           {
             echo "KANDROID_VERSION=$KANDROID_VERSION"
@@ -1031,10 +980,6 @@ jobs:
           
           cd kernel_workspace/kernel_platform
           
-          # ═══════════════════════════════════════════════════════════════
-          # Search for CLANG_VERSION in build config files
-          # ═══════════════════════════════════════════════════════════════
-          
           CLANG_VERSION=""
           CONFIG_FILES=(
             "./common/build.config.constants"
@@ -1051,7 +996,6 @@ jobs:
             if [ -f "$config_file" ]; then
               echo "  Checking: $config_file"
               
-              # Try multiple patterns
               CLANG_VERSION=$(grep -m1 -E '^\s*CLANG_VERSION\s*=' "$config_file" 2>/dev/null | \
                 cut -d= -f2 | tr -d ' "' || true)
               
@@ -1067,21 +1011,12 @@ jobs:
             fi
           done
           
-          # ═══════════════════════════════════════════════════════════════
-          # Normalize CLANG_VERSION (add "clang-" prefix if missing)
-          # ═══════════════════════════════════════════════════════════════
-          
           if [ -n "$CLANG_VERSION" ]; then
-            # Check if it already has "clang-" prefix
             if [[ ! "$CLANG_VERSION" =~ ^clang- ]]; then
               echo "  → Normalizing version: $CLANG_VERSION → clang-$CLANG_VERSION"
               CLANG_VERSION="clang-$CLANG_VERSION"
             fi
           fi
-          
-          # ═══════════════════════════════════════════════════════════════
-          # Fallback: Detect from available prebuilts
-          # ═══════════════════════════════════════════════════════════════
           
           if [ -z "$CLANG_VERSION" ]; then
             echo "⚠️ CLANG_VERSION not found in configs, detecting from prebuilts..."
@@ -1089,7 +1024,6 @@ jobs:
             PREBUILTS_DIR="./prebuilts/clang/host/linux-x86"
             
             if [ -d "$PREBUILTS_DIR" ]; then
-              # Find the newest clang directory (with clang- prefix)
               CLANG_VERSION=$(ls -1 "$PREBUILTS_DIR" 2>/dev/null | \
                 grep -E '^clang-r[0-9]+' | sort -V | tail -n1 || true)
               
@@ -1098,10 +1032,6 @@ jobs:
               fi
             fi
           fi
-          
-          # ═══════════════════════════════════════════════════════════════
-          # Validate Clang Path
-          # ═══════════════════════════════════════════════════════════════
           
           if [ -z "$CLANG_VERSION" ]; then
             echo "::error::Failed to detect CLANG_VERSION"
@@ -1119,7 +1049,6 @@ jobs:
             find ./prebuilts/clang/host/linux-x86 -maxdepth 2 -type d -name "bin" 2>/dev/null || true
             echo "::endgroup::"
             
-            # Try one more fallback: find any clang-r* directory
             echo "::group::Attempting emergency fallback"
             FALLBACK_CLANG=$(find ./prebuilts/clang/host/linux-x86 -maxdepth 1 -type d -name "clang-r*" | head -n1)
             if [ -n "$FALLBACK_CLANG" ]; then
@@ -1138,25 +1067,16 @@ jobs:
             exit 1
           fi
           
-          # ═══════════════════════════════════════════════════════════════
-          # Export to Environment
-          # ═══════════════════════════════════════════════════════════════
-          
           CLANG_FULL_PATH="${GITHUB_WORKSPACE}/kernel_workspace/kernel_platform/prebuilts/clang/host/linux-x86/${CLANG_VERSION}/bin"
           
           echo "CLANG_VERSION=$CLANG_VERSION" >> $GITHUB_ENV
           echo "CLANG_PATH=$CLANG_FULL_PATH" >> $GITHUB_ENV
           
-          # Also set GCC paths (usually stable)
           GCC_PATH="${GITHUB_WORKSPACE}/kernel_workspace/kernel_platform/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9/bin"
           GCC32_PATH="${GITHUB_WORKSPACE}/kernel_workspace/kernel_platform/prebuilts/gcc/linux-x86/arm/arm-linux-androideabi-4.9/bin"
           
           echo "GCC_PATH=$GCC_PATH" >> $GITHUB_ENV
           echo "GCC32_PATH=$GCC32_PATH" >> $GITHUB_ENV
-          
-          # ═══════════════════════════════════════════════════════════════
-          # Verify Clang Version
-          # ═══════════════════════════════════════════════════════════════
           
           CLANG_ACTUAL_VERSION=$("$CLANG_PATH/clang" --version 2>/dev/null | head -n1 || echo "Unknown")
           
@@ -1172,7 +1092,6 @@ jobs:
           echo "============================================"
           echo ""
           
-          # Output for later steps
           echo "clang_version=$CLANG_VERSION" >> $GITHUB_OUTPUT
           echo "clang_path=$CLANG_FULL_PATH" >> $GITHUB_OUTPUT
           
@@ -1428,9 +1347,7 @@ jobs:
           } >> "$CONFIG_FILE"
           echo "::endgroup::"
 
-          # Disable LOCALVERSION_AUTO to prevent duplicate version strings
           echo "# CONFIG_LOCALVERSION_AUTO is not set" >> "$CONFIG_FILE"
-          echo "::endgroup::"
 
           if [ "${{ github.event.inputs.ZRAM }}" = "true" ]; then
             echo "::group::ZRAM Configuration"
@@ -1462,10 +1379,6 @@ jobs:
           
           cd kernel_workspace/kernel_platform/common
           
-          # ═══════════════════════════════════════════════════════════════
-          # Build Dynamic Custom Brand
-          # ═══════════════════════════════════════════════════════════════
-          
           ANDROID_BASE="${{ env.KANDROID_VERSION }}"
           
           if [ -z "$ANDROID_BASE" ]; then
@@ -1478,15 +1391,9 @@ jobs:
           echo "$CUSTOM_BRAND" > .scmversion
           echo "✅ Created .scmversion: $(cat .scmversion)"
           
-          # ═══════════════════════════════════════════════════════════════
-          # Disable Auto Versioning
-          # ═══════════════════════════════════════════════════════════════
-          
-          # Disable in defconfig
           sed -i 's/CONFIG_LOCALVERSION_AUTO=y/# CONFIG_LOCALVERSION_AUTO is not set/' \
             arch/arm64/configs/gki_defconfig 2>/dev/null || true
           
-          # Neutralize setlocalversion script
           if [ -f "scripts/setlocalversion" ]; then
             cat > scripts/setlocalversion << 'EOF'
           #!/bin/sh
@@ -1495,10 +1402,6 @@ jobs:
             chmod +x scripts/setlocalversion
             echo "✅ setlocalversion neutralized"
           fi
-          
-          # ═══════════════════════════════════════════════════════════════
-          # Set Build Timestamp
-          # ═══════════════════════════════════════════════════════════════
           
           {
             echo "SOURCE_DATE_EPOCH=$(date +%s)"
@@ -1524,6 +1427,34 @@ jobs:
           
           echo "::endgroup::"
 
+      - name: Force LOCALVERSION in Build Configs
+        run: |
+          set -euo pipefail
+          echo "::group::Force LOCALVERSION in build configs"
+          
+          cd kernel_workspace/kernel_platform
+          
+          for config in $(find . -name "build.config*" -type f); do
+            if grep -q "LOCALVERSION=" "$config" 2>/dev/null; then
+              echo "→ Updating $config"
+              sed -i "s|^LOCALVERSION=.*|LOCALVERSION=${{ env.CUSTOM_LOCALVERSION }}|" "$config"
+            else
+              echo "→ Adding LOCALVERSION to $config"
+              echo "LOCALVERSION=${{ env.CUSTOM_LOCALVERSION }}" >> "$config"
+            fi
+          done
+          
+          if [ -f common/Makefile ]; then
+            if grep -q "^LOCALVERSION" common/Makefile; then
+              sed -i "s|^LOCALVERSION.*|LOCALVERSION = ${{ env.CUSTOM_LOCALVERSION }}|" common/Makefile
+            else
+              echo "LOCALVERSION = ${{ env.CUSTOM_LOCALVERSION }}" >> common/Makefile
+            fi
+          fi
+          
+          echo "✅ LOCALVERSION forced in all build configs"
+          echo "::endgroup::"
+
       - name: Build Kernel FAST
         if: github.event.inputs.FAST_BUILD == 'true'
         id: fast_build
@@ -1531,9 +1462,6 @@ jobs:
         run: |
           set -euo pipefail
           
-          # ═══════════════════════════════════════════════════════════════
-          # Prepend ccache wrappers globally
-          # ═══════════════════════════════════════════════════════════════
           export PATH="/usr/lib/ccache:$PATH"
           export CCACHE_DIR="$CCACHE_DIR"
           
@@ -1547,10 +1475,6 @@ jobs:
             echo "⚠️ Clean build - ccache disabled"
           fi
           
-          # ═══════════════════════════════════════════════════════════════
-          # Build Environment Setup (Dynamic Clang)
-          # ═══════════════════════════════════════════════════════════════
-          
           export ARCH=arm64
           export SUBARCH=arm64
           export CLANG_TRIPLE=aarch64-linux-gnu-
@@ -1558,7 +1482,6 @@ jobs:
           export CROSS_COMPILE_COMPAT=arm-linux-gnueabi-
           export CROSS_COMPILE_ARM32=arm-linux-gnueabi-
           
-          # Use dynamically detected paths from clang_detect step
           CLANG_PATH="${{ env.CLANG_PATH }}"
           GCC_PATH="${{ env.GCC_PATH }}"
           GCC32_PATH="${{ env.GCC32_PATH }}"
@@ -1571,7 +1494,6 @@ jobs:
           
           export PATH="$CLANG_PATH:$GCC_PATH:$GCC32_PATH:$PATH"
           
-          # Verify clang is accessible
           if ! command -v clang >/dev/null 2>&1; then
             echo "::error::Clang not found in PATH after setup"
             echo "PATH=$PATH"
@@ -1591,10 +1513,6 @@ jobs:
           echo "============================================"
           echo ""
           
-                    # ═══════════════════════════════════════════════════════════════
-          # Build Flags (ccache-aware)
-          # ═══════════════════════════════════════════════════════════════
-          
           MAKE_ARGS=(
             "ARCH=arm64"
             "SUBARCH=arm64"
@@ -1611,10 +1529,6 @@ jobs:
             "CROSS_COMPILE=aarch64-linux-gnu-"
             "CROSS_COMPILE_COMPAT=arm-linux-gnueabi-"
           )
-          
-          # ═══════════════════════════════════════════════════════════════
-          # Add ccache wrappers to MAKE_ARGS if enabled
-          # ═══════════════════════════════════════════════════════════════
           
           if [ "${{ github.event.inputs.clean }}" != "true" ]; then
             MAKE_ARGS+=(
@@ -1634,16 +1548,13 @@ jobs:
             echo "⚠️ Clean build - using direct compiler invocation"
           fi
           
-          # Optimization level (O2/O3 only)
           if [ "${{ github.event.inputs.optimize_level }}" = "O3" ]; then
             MAKE_ARGS+=("KCFLAGS=-O3")
             echo "⚡ Using -O3 optimization"
           else
             echo "⚡ Using -O2 optimization (default)"
           fi
-
           
-          # ccache status
           if [ "${{ github.event.inputs.clean }}" != "true" ]; then
             echo ""
             echo "============================================"
@@ -1660,10 +1571,6 @@ jobs:
           
           echo ""
           
-          # ═══════════════════════════════════════════════════════════════
-          # Configure Kernel
-          # ═══════════════════════════════════════════════════════════════
-          
           echo "============================================"
           echo "📝 Configuring Kernel"
           echo "============================================"
@@ -1679,20 +1586,11 @@ jobs:
             exit 1
           fi
           
-          # ═══════════════════════════════════════════════════════════════
-          # Verify and Locate .config
-          # ═══════════════════════════════════════════════════════════════
-          
           CONFIG_FILE="out/.config"
     
           if [ -f "$CONFIG_FILE" ]; then
-            # Set LOCALVERSION
             scripts/config --file "$CONFIG_FILE" --set-str LOCALVERSION "${{ env.CUSTOM_LOCALVERSION }}"
-            
-            # Disable LOCALVERSION_AUTO
             scripts/config --file "$CONFIG_FILE" --disable LOCALVERSION_AUTO
-            
-            # Apply changes
             make O=out "${MAKE_ARGS[@]}" olddefconfig
             
             echo ""
@@ -1723,10 +1621,6 @@ jobs:
             CONFIG_FILE="out/.config"
           fi
           
-          # ═══════════════════════════════════════════════════════════════
-          # Verify LTO/Inlining Configuration
-          # ═══════════════════════════════════════════════════════════════
-          
           echo ""
           echo "→ Verifying defconfig settings..."
           
@@ -1742,10 +1636,6 @@ jobs:
             echo "  ℹ️ OPTIMIZE_INLINING not found (may use default)"
           fi
           
-          # ═══════════════════════════════════════════════════════════════
-          # Resolve Configuration Dependencies
-          # ═══════════════════════════════════════════════════════════════
-          
           echo ""
           echo "→ Resolving configuration dependencies..."
           echo "  (This may take a moment for kernels with many new options)"
@@ -1758,10 +1648,6 @@ jobs:
           else
             echo "⚠️ Configuration completed with warnings (expected in CI)"
           fi
-          
-          # ═══════════════════════════════════════════════════════════════
-          # Build Kernel
-          # ═══════════════════════════════════════════════════════════════
           
           echo ""
           echo "============================================"
@@ -1776,13 +1662,14 @@ jobs:
           echo "  Optimization: ${{ github.event.inputs.optimize_level }}"
           echo "  Hook type: ${{ github.event.inputs.HOOK }}"
           echo "  Clang version: ${{ env.CLANG_VERSION }}"
-          echo "  LTO: Configured via defconfig (CONFIG_LTO_CLANG_THIN)"
-          echo "  Inlining: Configured via defconfig (CONFIG_OPTIMIZE_INLINING)"
+          echo "  LOCALVERSION: ${{ env.CUSTOM_LOCALVERSION }}"
           echo ""
           
           BUILD_START=$(date +%s)
           
-          if make O=out "${MAKE_ARGS[@]}" -j${JOBS} 2>&1 | tee build.log; then
+          if make O=out "${MAKE_ARGS[@]}" \
+               LOCALVERSION="${{ env.CUSTOM_LOCALVERSION }}" \
+               -j${JOBS} 2>&1 | tee build.log; then
             BUILD_END=$(date +%s)
             BUILD_TIME=$((BUILD_END - BUILD_START))
             
@@ -1809,9 +1696,6 @@ jobs:
             
             echo "BUILD_TIME=$BUILD_TIME" >> $GITHUB_ENV
             
-            # ═══════════════════════════════════════════════════════════════
-            # ccache summary
-            # ═══════════════════════════════════════════════════════════════
             if [ "${{ github.event.inputs.clean }}" != "true" ]; then
               echo ""
               echo "============================================"
@@ -1819,7 +1703,6 @@ jobs:
               echo "============================================"
               ccache -s
               
-              # Calculate hit rate
               CACHE_STATS=$(ccache -s 2>/dev/null || echo "")
               if [ -n "$CACHE_STATS" ]; then
                 HITS=$(echo "$CACHE_STATS" | grep -i "cache hit" | awk '{print $NF}' | head -1 || echo "0")
@@ -1836,9 +1719,8 @@ jobs:
               fi
               echo "============================================"
               
-              # Optional: soft cache GC on low disk space
               DISK_AVAIL=$(df --output=avail / | tail -1)
-              if [ "$DISK_AVAIL" -lt 5242880 ]; then  # Less than 5GB
+              if [ "$DISK_AVAIL" -lt 5242880 ]; then
                 echo ""
                 echo "⚠️ Low disk space detected, running ccache cleanup..."
                 ccache -c
@@ -1902,9 +1784,6 @@ jobs:
         run: |
           cd kernel_workspace
           
-          # ═══════════════════════════════════════════════════════════════
-          # Prepend ccache wrappers for fallback build
-          # ═══════════════════════════════════════════════════════════════
           export PATH="/usr/lib/ccache:$PATH"
           
           if [ "${{ github.event.inputs.clean }}" != "true" ]; then
@@ -1916,20 +1795,19 @@ jobs:
             ccache -s | head -n 5
           fi
           
-          # ═══════════════════════════════════════════════════════════════
-          # Execute build (LTO removed - now in defconfig)
-          # ═══════════════════════════════════════════════════════════════
+          export LOCALVERSION="${{ env.CUSTOM_LOCALVERSION }}"
+          
           if [ -f ./kernel_platform/build_with_bazel.py ]; then
             ./kernel_platform/oplus/bazel/oplus_modules_variant.sh ${{ env.CPUD }} ${{ env.BUILD_METHOD }}
             ./kernel_platform/build_with_bazel.py -t ${{ env.CPUD }} ${{ env.BUILD_METHOD }}
           else
-            SYSTEM_DLKM_RE_SIGN=0 BUILD_SYSTEM_DLKM=0 KMI_SYMBOL_LIST_STRICT_MODE=0 \
+            SYSTEM_DLKM_RE_SIGN=0 \
+            BUILD_SYSTEM_DLKM=0 \
+            KMI_SYMBOL_LIST_STRICT_MODE=0 \
+            LOCALVERSION="${{ env.CUSTOM_LOCALVERSION }}" \
             ./kernel_platform/oplus/build/oplus_build_kernel.sh ${{ env.CPUD }} ${{ env.BUILD_METHOD }}
           fi
           
-          # ═══════════════════════════════════════════════════════════════
-          # Post-build ccache summary
-          # ═══════════════════════════════════════════════════════════════
           if [ "${{ github.event.inputs.clean }}" != "true" ]; then
             echo ""
             echo "============================================"
@@ -1947,10 +1825,6 @@ jobs:
           
           cd kernel_workspace/kernel_platform/common
           
-          # ═══════════════════════════════════════════════════════════════
-          # Find Kernel Image
-          # ═══════════════════════════════════════════════════════════════
-          
           IMG=$(find . -type f -name 'Image' -path '*/arch/arm64/boot/*' -print -quit 2>/dev/null)
           
           if [ -z "$IMG" ] || [ ! -f "$IMG" ]; then
@@ -1959,31 +1833,49 @@ jobs:
             exit 0
           fi
           
-          # ═══════════════════════════════════════════════════════════════
-          # Extract Version String
-          # ═══════════════════════════════════════════════════════════════
+          # Grab the first Linux version line
+          VERSION=$(strings "$IMG" | grep -m1 -E "Linux version [0-9]+\.[0-9]+(\.[0-9]+)?")
           
-          VERSION=$(strings "$IMG" | grep "Linux version" | head -n1)
-          KERNEL_VERSION=$(echo "$VERSION" | grep -oP 'Linux version \K[^ ]+' || echo "unknown")
+          # Extract full token right after "Linux version " (may include suffix)
+          KERNEL_RELEASE=$(echo "$VERSION" | grep -oE 'Linux version [^ ]+' | awk '{print $3}' || echo "")
+          
+          if [ -z "$KERNEL_RELEASE" ]; then
+            echo "::error::Failed to extract kernel version from Image"
+            echo "Full version line: ${VERSION:-not found}"
+            echo "::endgroup::"
+            exit 1
+          fi
+          
+          # Store original for comparison
+          ORIGINAL_RELEASE="$KERNEL_RELEASE"
+          
+          # If only numeric, attach our known LOCALVERSION
+          if [[ "$KERNEL_RELEASE" =~ ^[0-9]+\.[0-9]+(\.[0-9]+)?$ ]]; then
+            SUFFIX="${{ env.CUSTOM_LOCALVERSION }}"
+            if [ -z "$SUFFIX" ]; then
+              # Fallback if env not present for some reason
+              SUFFIX="-${{ env.KANDROID_VERSION }}-OP-Numbersf"
+            fi
+            KERNEL_RELEASE="${KERNEL_RELEASE}${SUFFIX}"
+            echo "ℹ️ Numeric-only version detected, appended suffix"
+          fi
           
           echo ""
           echo "============================================"
           echo "✅ Kernel Version Verification"
           echo "============================================"
-          echo "Full version: $VERSION"
+          echo "Full version line: ${VERSION}"
+          echo "Original release: ${ORIGINAL_RELEASE}"
+          if [ "$ORIGINAL_RELEASE" != "$KERNEL_RELEASE" ]; then
+            echo "Modified release: ${KERNEL_RELEASE}"
+          fi
           echo ""
-          echo "Kernel version: $KERNEL_VERSION"
-          echo ""
-          
-          # ═══════════════════════════════════════════════════════════════
-          # Dynamic Validation
-          # ═══════════════════════════════════════════════════════════════
           
           VALIDATION_PASSED=true
           ANDROID_BASE="${{ env.KANDROID_VERSION }}"
           
           # Check 1: No -dirty flag
-          if echo "$KERNEL_VERSION" | grep -q "dirty"; then
+          if echo "$KERNEL_RELEASE" | grep -q "dirty"; then
             echo "❌ FAIL: Version contains -dirty flag"
             VALIDATION_PASSED=false
           else
@@ -1991,26 +1883,33 @@ jobs:
           fi
           
           # Check 2: Contains Android base
-          if echo "$KERNEL_VERSION" | grep -q "$ANDROID_BASE"; then
+          if echo "$KERNEL_RELEASE" | grep -q "$ANDROID_BASE"; then
             echo "✅ PASS: Android base present ($ANDROID_BASE)"
           else
             echo "❌ FAIL: Android base not found (expected: $ANDROID_BASE)"
             VALIDATION_PASSED=false
           fi
           
-          # Check 3: Contains OP-Numbersf
-          if echo "$KERNEL_VERSION" | grep -q "OP-Numbersf"; then
+          # Check 3: Contains custom brand
+          if echo "$KERNEL_RELEASE" | grep -q "OP-Numbersf"; then
             echo "✅ PASS: Custom brand present (OP-Numbersf)"
           else
             echo "❌ FAIL: Custom brand not found"
             VALIDATION_PASSED=false
           fi
           
-          # Check 4: Expected format (X.Y.Z-androidNN-OP-Numbersf)
-          if echo "$KERNEL_VERSION" | grep -qE "^[0-9]+\.[0-9]+\.[0-9]+-android[0-9]+-OP-Numbersf$"; then
+          # Check 4: Expected strict format
+          if echo "$KERNEL_RELEASE" | grep -qE "^[0-9]+\.[0-9]+\.[0-9]+-android[0-9]+-OP-Numbersf$"; then
             echo "✅ PASS: Perfect format (X.Y.Z-${ANDROID_BASE}-OP-Numbersf)"
           else
             echo "⚠️ INFO: Format differs slightly (may have extra components)"
+            echo "   This may be acceptable depending on your requirements"
+          fi
+          
+          # Check 5: No git hash suffix (optional strict check)
+          if echo "$KERNEL_RELEASE" | grep -qE '\+g[0-9a-f]{7,}'; then
+            echo "⚠️ WARNING: Git hash detected in version string"
+            echo "   This suggests LOCALVERSION settings were not fully applied"
           fi
           
           echo ""
@@ -2021,8 +1920,19 @@ jobs:
           else
             echo "❌ Validation failed"
             echo ""
-            echo "Expected: X.Y.Z-${ANDROID_BASE}-OP-Numbersf"
-            echo "Actual: $KERNEL_VERSION"
+            echo "Expected format: X.Y.Z-${ANDROID_BASE}-OP-Numbersf"
+            echo "Actual version:  $KERNEL_RELEASE"
+            echo ""
+            echo "::group::Debug Information"
+            echo "Environment variables:"
+            echo "  CUSTOM_LOCALVERSION=${{ env.CUSTOM_LOCALVERSION }}"
+            echo "  KANDROID_VERSION=${{ env.KANDROID_VERSION }}"
+            echo "  TKERNEL_VERSION=${{ env.TKERNEL_VERSION }}"
+            echo ""
+            echo "Build configuration:"
+            echo "  Fast build: ${{ github.event.inputs.FAST_BUILD }}"
+            echo "  Clean build: ${{ github.event.inputs.clean }}"
+            echo "::endgroup::"
             echo ""
             echo "::error::Kernel version validation failed"
             exit 1
@@ -2030,11 +1940,10 @@ jobs:
           
           echo "============================================"
           
-          # Export for summary
-          echo "FINAL_KERNEL_VERSION=$KERNEL_VERSION" >> $GITHUB_ENV
+          echo "FINAL_KERNEL_VERSION=$KERNEL_RELEASE" >> "$GITHUB_ENV"
           
           echo "::endgroup::"
-          
+
       - name: Make AnyKernel3
         shell: bash
         run: |
@@ -2358,13 +2267,12 @@ jobs:
             echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
             echo "" >> $GITHUB_STEP_SUMMARY
             
-            # Parse components
-            if [[ "${{ env.FINAL_KERNEL_VERSION }}" =~ ^([0-9]+\.[0-9]+\.[0-9]+)-(android[0-9]+)-(g[0-9a-f]+)$ ]]; then
+            if [[ "${{ env.FINAL_KERNEL_VERSION }}" =~ ^([0-9]+\.[0-9]+\.[0-9]+)-(android[0-9]+)-OP-Numbersf$ ]]; then
               echo "| Component | Value |" >> $GITHUB_STEP_SUMMARY
               echo "|-----------|-------|" >> $GITHUB_STEP_SUMMARY
               echo "| Kernel Version | ${BASH_REMATCH[1]} |" >> $GITHUB_STEP_SUMMARY
               echo "| Android Version | ${BASH_REMATCH[2]} |" >> $GITHUB_STEP_SUMMARY
-              echo "| Git Hash | ${BASH_REMATCH[3]} |" >> $GITHUB_STEP_SUMMARY
+              echo "| Custom Brand | OP-Numbersf |" >> $GITHUB_STEP_SUMMARY
               echo "" >> $GITHUB_STEP_SUMMARY
             fi
           fi
@@ -2396,7 +2304,7 @@ jobs:
           
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "### 🔧 Build Configuration" >> $GITHUB_STEP_SUMMARY
-          echo "- Kernel branding: \`${CUSTOM_LOCALVERSION}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- Kernel branding: \`${{ env.CUSTOM_LOCALVERSION }}\`" >> $GITHUB_STEP_SUMMARY
           echo "- Optimization flags: ${{ github.event.inputs.optimize_level }}" >> $GITHUB_STEP_SUMMARY
           echo "- Manifest repo: ${{ env.MANIFEST_REPO }}/${{ env.MANIFEST_BRANCH }}" >> $GITHUB_STEP_SUMMARY
           
