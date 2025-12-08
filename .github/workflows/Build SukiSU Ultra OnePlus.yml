@@ -6,7 +6,7 @@ on:
         type: choice
         description: "配置文件"
         required: true
-        default: oneplus_ace2_pro_v
+        default: oneplus_13_b
         options:
           - oneplus_nord_ce4_lite_5g_v
           - oneplus_nord_ce4_v
@@ -75,7 +75,7 @@ on:
         type: string
         description: "自定义构建时间(输入F使用当前UTC时间)"
         required: false
-        default: "Mon Aug 18 09:30:24 UTC 2025"
+        default: "F"
       KSU_META:
         type: string
         description: "分支名(必填)/自定义版本标识(留空不修改)/回退分支提交哈希版本(留空不修改)"
@@ -85,7 +85,7 @@ on:
         type: string
         description: "自定义内核后缀(不输入使用随机字符串)"
         required: false
-        default: ""
+        default: "8-style-g9k9d8-4k"
       SUBLEVEL:
         description: "自定义内核等级欺骗(SUBLEVEL)"
         required: false
@@ -99,12 +99,12 @@ on:
         type: boolean
         description: "是否启用内核模块(KPM)？"
         required: true
-        default: true
+        default: false
       LSM:
         type: boolean
         description: "是否启用关键分区写入保护模块(BBG)？"
         required: true
-        default: true
+        default: false
       NETFILTER:
         type: boolean
         description: "是否启用网络功能拓展(NETFILTER)？"
@@ -119,12 +119,12 @@ on:
         type: boolean
         description: "是否添加风驰驱动1.0？"
         required: true
-        default: false
+        default: true
       ZRAM:
         type: boolean
         description: "是否添加更多ZRAM算法？"
         required: true
-        default: false
+        default: true
       SUSFS_DEV:
         type: boolean
         description: "是否拉取SUSFS-DEV分支？"
