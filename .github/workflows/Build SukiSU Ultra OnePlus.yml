@@ -94,7 +94,7 @@ on:
         type: boolean
         description: "是否启用极速构建？"
         required: true
-        default: true
+        default: false
       KPM:
         type: boolean
         description: "是否启用内核模块(KPM)？"
