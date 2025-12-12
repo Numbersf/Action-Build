@@ -40,6 +40,7 @@ on:
           - oneplus_pad_2_pro_b
           - oneplus_pad_3_b
           - oneplus_ace5_ultra
+          - oneplus_pad2_mt6991_b
           - oneplus_ace_6
           - oneplus_15
       MANAGER_SOURCE:
@@ -79,7 +80,7 @@ on:
         type: string
         description: "分支名(必填)/自定义版本标识(留空不修改)/回退分支提交哈希版本(留空不修改)"
         required: false
-        default: "tmp-builtin/Numbersf/"
+        default: "builtin/Numbersf/"
       SUFFIX:
         type: string
         description: "自定义内核后缀(不输入使用随机字符串)"
@@ -649,7 +650,7 @@ jobs:
           SUBLEVEL=$(grep '^SUBLEVEL *=' Makefile | head -n1 | cut -d= -f2 | tr -d ' ')
 
           if [ "$GKI_V" == "android13-5.15" ] && [ "$SUBLEVEL" -lt 123 ]; then
-            echo "修复内核版本5.15.0到5.15.123仅支持旧版C库造成的一些bug"
+            echo "修复内核版本为5.15.0~5.15.123仅支持旧版C库造成的一些bug"
             cp ../../Action-Build/patches/fix_5.15.legacy ./fix_5.15.legacy.patch
             patch -p1 < fix_5.15.legacy.patch
             echo "fix_5.15_patch完成"
@@ -662,7 +663,7 @@ jobs:
             echo "trusty_exists=$TRUSTY_EXISTS" >> $GITHUB_OUTPUT
 
             if [[ "$TRUSTY_EXISTS" == "false" && "$(printf '%s\n' "${{ env.TKERNEL_VERSION }}" "6.6.30" | sort -V | head -n1)" = "${{ env.TKERNEL_VERSION }}" ]]; then
-              echo "修复内核版本6.6部分机型缺失Trusty OS导致的susfs的报错"
+              echo "修复内核版本为6.6.0~6.6.30的机型源码及清单中缺失TrustyOS导致的susfs报错"
               sed -i 's/-32,12 +32,38/-32,11 +32,37/g' 50_add_susfs_in_gki-${{ env.KANDROID_VERSION }}-${{ env.KERNEL_VERSION }}.patch
               sed -i '/#include <trace\/hooks\/fs.h>/d' 50_add_susfs_in_gki-${{ env.KANDROID_VERSION }}-${{ env.KERNEL_VERSION }}.patch
             fi
@@ -973,7 +974,7 @@ jobs:
           cd kernel_workspace
           if [ -f ./kernel_platform/build_with_bazel.py ]; then
             ./kernel_platform/oplus/bazel/oplus_modules_variant.sh ${{ env.CPUD }} ${{ env.BUILD_METHOD }}
-            ./kernel_platform/build_with_bazel.py --lto=thin -t ${{ env.CPUD }} ${{ env.BUILD_METHOD }}
+            ./kernel_platform/build_with_bazel.py -t ${{ env.CPUD }} ${{ env.BUILD_METHOD }}
           else
             LTO=thin SYSTEM_DLKM_RE_SIGN=0 BUILD_SYSTEM_DLKM=0 KMI_SYMBOL_LIST_STRICT_MODE=0 \
             ./kernel_platform/oplus/build/oplus_build_kernel.sh ${{ env.CPUD }} ${{ env.BUILD_METHOD }}
@@ -984,16 +985,12 @@ jobs:
           git clone https://github.com/Numbersf/AnyKernel3 --depth=1
           rm -rf ./AnyKernel3/.git
           mkdir -p kernel_workspace/kernel_platform/out/Final-Image-Find/
-          dir1=""
-          dir2=""
           image_path=$(find "./kernel_workspace/kernel_platform/common/out/" -name "Image" | head -n 1)
           if [ -n "$image_path" ]; then
-            dir1=$(dirname "$image_path")/
             echo "使用 make 编译的统一路径，成功找到 Image 文件"
           else
             image_path=$(find "./kernel_workspace/kernel_platform/out/" -name "Image" | head -n 1)
             if [ -n "$image_path" ]; then
-              dir2=$(dirname "$image_path")/
               echo "使用官方脚本编译，成功找到 Image 文件"
             else
               echo "未找到 Image 文件，构建失败" >&2
@@ -1004,21 +1001,6 @@ jobs:
             echo "Image file finally located at: $image_path"
             cp "$image_path" ./AnyKernel3/Image
             cp "$image_path" kernel_workspace/kernel_platform/out/Final-Image-Find/Image
-          fi
-          if [ -n "$dir2" ] && [ "${{ env.CPU }}" = "sm8750" ] && [ "${{ github.event.inputs.FAST_BUILD }}" = "false" ]; then
-            echo "当前正在使用官方脚本构建 sm8750，需额外复制一些其它镜像文件：dtbo.img、system_dlkm.img。请注意，如果你在刷完官方脚本构建后想换成极速构建，请还原这些分区！"
-            echo "You are currently building sm8750 with the official script. Additional image files will be copied: dtbo.img, system_dlkm.img. Please note: If you switch to fast build after flashing this build, make sure to restore these partitions!"
-            for file in dtbo.img system_dlkm.erofs.img; do
-              if [ -f "$dir2$file" ]; then
-                target_name="$file"
-                if [ "$file" = "system_dlkm.erofs.img" ]; then
-                  target_name="system_dlkm.img"
-                fi
-                cp "$dir2$file" "./AnyKernel3/$target_name"
-              else
-                echo "$file 不存在，跳过复制"
-              fi
-            done
           fi
 
       - name: Apply patch_linux and Replace Image

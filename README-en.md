@@ -68,8 +68,6 @@
 > [!CAUTION]
 > Do not use volume down to install modules during root-retaining updates, use volume up to skip! Generally, installation is no longer necessary, just use the SukiSU Ultra Add-on Module  
 >
-> If your kernel is ``6.6``, and you previously used the official script to build,but now want to use ``Fast Build``, please **restore** the following images first:`dtbo.img`, ``system_dlkm(.erofs).img``,**otherwise the device may fail to boot!**  
->
 > If you have enabled the ``ZRAM`` algorithm, make sure to install the ``ZRAM`` module **before rebooting** after flashing with ``Anykernel3``. You may need to adjust some parameters manually.The 5.10 kernel is not supported ``ZRAM`` , as the ``zram.ko`` module path could not be found.However, the generated ``Anykernel3`` is still usable  
 >
 >``OnePlus Ace5`` does not support enabling Fengchi. Older models cannot use it even if the kernel includes it — do not force it  
