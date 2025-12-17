@@ -42,6 +42,7 @@ on:
           - oneplus_ace5_ultra
           - oneplus_pad2_mt6991_b
           - oneplus_ace_6
+          - oneplus_ace_6t
           - oneplus_15
       MANAGER_SOURCE:
         type: choice
