@@ -1,0 +1,466 @@
+name: Custom Kernel Build
+
+on:
+  workflow_dispatch:
+    inputs:
+      kernel_source:
+        description: 'Kernel source URL'
+        required: true
+        default: 'https://github.com/OnePlusOSS/android_kernel_oneplus_sm8845'
+      kernel_branch:
+        description: 'Kernel branch/tag'
+        required: true
+        default: 'oneplus/sm8845'
+      build_type:
+        description: 'Build type (release/debug)'
+        required: true
+        default: 'release'
+        type: choice
+        options:
+          - release
+          - debug
+          - perf
+          
+  push:
+    branches: [ main, master ]
+    paths:
+      - '.github/workflows/kernel-build.yml'
+      - 'kernel_config/**'
+
+env:
+  BUILD_DIR: ${{ github.workspace }}/build_output
+  CONFIG_DIR: ${{ github.workspace }}/kernel_config
+
+jobs:
+  validate-config:
+    name: Validate Configuration
+    runs-on: ubuntu-latest
+    
+    outputs:
+      config_valid: ${{ steps.validate.outputs.valid }}
+      build_config: ${{ steps.load-config.outputs.config }}
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      
+    - name: Load build configuration
+      id: load-config
+      run: |
+        if [ -f "$CONFIG_DIR/build_config.json" ]; then
+          echo "加载构建配置..."
+          CONFIG_CONTENT=$(cat $CONFIG_DIR/build_config.json | jq -c .)
+          echo "config=$CONFIG_CONTENT" >> $GITHUB_OUTPUT
+        else
+          echo "使用默认配置..."
+          echo 'config={"kernel_name":"custom-kernel","version":"1.0.0","toolchain":"clang-17","enable_ccache":true}' >> $GITHUB_OUTPUT
+        fi
+        
+    - name: Validate configuration
+      id: validate
+      run: |
+        echo "验证配置..."
+        
+        # 检查必要的配置文件
+        REQUIRED_FILES=(
+          "$CONFIG_DIR/build_config.json"
+          "$CONFIG_DIR/defconfig_override"
+        )
+        
+        for file in "${REQUIRED_FILES[@]}"; do
+          if [ ! -f "$file" ]; then
+            echo "❌ 缺少必需文件: $(basename $file)"
+            echo "valid=false" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+        done
+        
+        echo "✅ 配置验证通过"
+        echo "valid=true" >> $GITHUB_OUTPUT
+
+  build-kernel:
+    name: Build Kernel
+    needs: validate-config
+    if: needs.validate-config.outputs.config_valid == 'true'
+    
+    runs-on: ubuntu-22.04
+    timeout-minutes: 180
+    
+    env:
+      KERNEL_NAME: ${{ fromJson(needs.validate-config.outputs.build_config).kernel_name }}
+      KERNEL_VERSION: ${{ fromJson(needs.validate-config.outputs.build_config).version }}
+    
+    steps:
+    - name: Checkout with custom config
+      uses: actions/checkout@v4
+      
+    - name: Setup build environment
+      run: |
+        echo "设置构建环境..."
+        sudo apt-get update
+        
+        # 从配置文件读取依赖
+        if [ -f "$CONFIG_DIR/build_config.json" ]; then
+          DEPS=$(jq -r '.dependencies[]' $CONFIG_DIR/build_config.json 2>/dev/null || echo "")
+          if [ -n "$DEPS" ]; then
+            echo "安装自定义依赖: $DEPS"
+            sudo apt-get install -y $DEPS
+          fi
+        fi
+        
+        # 基础依赖
+        sudo apt-get install -y \
+          bc bison build-essential ccache cpio curl \
+          flex gcc-multilib g++-multilib git kmod \
+          libelf-dev libncurses5-dev libssl-dev \
+          python3 python3-pip rsync wget xz-utils zstd \
+          jq xmlstarlet  # 配置处理工具
+        
+        # 安装ccache
+        ccache --max-size=2G
+        echo "CCACHE_DIR=/tmp/ccache" >> $GITHUB_ENV
+        
+    - name: Configure Git
+      run: |
+        git config --global user.name "GitHub Actions"
+        git config --global user.email "actions@github.com"
+        
+    - name: Load custom configuration
+      id: custom-config
+      run: |
+        echo "加载自定义配置..."
+        
+        # 从JSON配置读取参数
+        CONFIG_FILE="$CONFIG_DIR/build_config.json"
+        
+        # 设置环境变量
+        jq -r 'to_entries[] | "\(.key | ascii_upcase)=\(.value)"' $CONFIG_FILE | \
+          while read line; do
+            if [[ $line != "DEPENDENCIES="* ]]; then
+              echo "$line" >> $GITHUB_ENV
+            fi
+          done
+        
+        # 显示配置摘要
+        echo "=== 构建配置摘要 ==="
+        echo "内核名称: $KERNEL_NAME"
+        echo "版本: $KERNEL_VERSION"
+        echo "工具链: $TOOLCHAIN"
+        echo "启用CCache: $ENABLE_CCACHE"
+        
+    - name: Clone kernel source
+      run: |
+        echo "克隆内核源码..."
+        
+        mkdir -p $BUILD_DIR
+        cd $BUILD_DIR
+        
+        KERNEL_SOURCE="${{ github.event.inputs.kernel_source || 'https://github.com/OnePlusOSS/android_kernel_oneplus_sm8845' }}"
+        KERNEL_BRANCH="${{ github.event.inputs.kernel_branch || 'oneplus/sm8845' }}"
+        
+        # 克隆内核
+        git clone --depth=1 \
+          --branch "$KERNEL_BRANCH" \
+          --single-branch \
+          "$KERNEL_SOURCE" \
+          kernel-source
+        
+        cd kernel-source
+        
+        echo "KERNEL_SRC_DIR=$(pwd)" >> $GITHUB_ENV
+        
+    - name: Apply custom patches
+      run: |
+        echo "应用自定义补丁..."
+        cd $KERNEL_SRC_DIR
+        
+        PATCH_DIR="$CONFIG_DIR/patches"
+        if [ -d "$PATCH_DIR" ]; then
+          echo "找到 $(ls -1 $PATCH_DIR/*.patch 2>/dev/null | wc -l) 个补丁"
+          
+          for patch in $PATCH_DIR/*.patch; do
+            if [ -f "$patch" ]; then
+              echo "应用补丁: $(basename $patch)"
+              patch -p1 < "$patch" || {
+                echo "补丁应用失败: $patch"
+                exit 1
+              }
+            fi
+          done
+        else
+          echo "无补丁目录，跳过"
+        fi
+        
+    - name: Setup toolchain from config
+      run: |
+        echo "设置工具链..."
+        cd $BUILD_DIR
+        
+        mkdir -p toolchain
+        
+        # 根据配置选择工具链
+        case "$TOOLCHAIN" in
+          "clang-17")
+            echo "使用 Clang 17 工具链"
+            wget -q https://github.com/llvm/llvm-project/releases/download/llvmorg-17.0.0/clang+llvm-17.0.0-x86_64-linux-gnu-ubuntu-22.04.tar.xz
+            tar -xf clang+llvm-17.0.0-x86_64-linux-gnu-ubuntu-22.04.tar.xz -C toolchain/clang
+            ;;
+          "clang-16")
+            echo "使用 Clang 16 工具链"
+            wget -q https://github.com/llvm/llvm-project/releases/download/llvmorg-16.0.0/clang+llvm-16.0.0-x86_64-linux-gnu-ubuntu-22.04.tar.xz
+            tar -xf clang+llvm-16.0.0-x86_64-linux-gnu-ubuntu-22.04.tar.xz -C toolchain/clang
+            ;;
+          "aosp-clang")
+            echo "使用 AOSP Clang"
+            wget -q https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/tags/android-14.0.0_r1/clang-r510928.tar.gz
+            tar -xzf clang-r510928.tar.gz -C toolchain/clang
+            ;;
+          *)
+            echo "使用默认 Clang 17"
+            wget -q https://github.com/llvm/llvm-project/releases/download/llvmorg-17.0.0/clang+llvm-17.0.0-x86_64-linux-gnu-ubuntu-22.04.tar.xz
+            tar -xf clang+llvm-17.0.0-x86_64-linux-gnu-ubuntu-22.04.tar.xz -C toolchain/clang
+            ;;
+        esac
+        
+        # 下载 GCC 交叉编译工具链
+        wget -q https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9/+archive/refs/tags/android-14.0.0_r1.tar.gz
+        tar -xzf android-14.0.0_r1.tar.gz -C toolchain/gcc
+        
+        # 设置路径
+        export CLANG_PATH="$BUILD_DIR/toolchain/clang/bin"
+        export GCC_PATH="$BUILD_DIR/toolchain/gcc/bin"
+        
+        echo "CLANG_PATH=$CLANG_PATH" >> $GITHUB_ENV
+        echo "GCC_PATH=$GCC_PATH" >> $GITHUB_ENV
+        
+        # 验证工具链
+        $CLANG_PATH/clang --version | head -2
+        $GCC_PATH/aarch64-linux-android-gcc --version | head -2
+        
+    - name: Run pre-build script
+      run: |
+        echo "运行预构建脚本..."
+        
+        if [ -f "$CONFIG_DIR/scripts/pre-build.sh" ]; then
+          chmod +x "$CONFIG_DIR/scripts/pre-build.sh"
+          cd $KERNEL_SRC_DIR
+          source "$CONFIG_DIR/scripts/pre-build.sh"
+        else
+          echo "无预构建脚本，跳过"
+        fi
+        
+    - name: Configure kernel with custom settings
+      run: |
+        echo "配置内核..."
+        cd $KERNEL_SRC_DIR
+        
+        # 清理
+        make clean 2>/dev/null || true
+        make mrproper 2>/dev/null || true
+        
+        # 设置编译环境
+        export ARCH=arm64
+        export SUBARCH=arm64
+        export CROSS_COMPILE=$GCC_PATH/aarch64-linux-android-
+        export CC=$CLANG_PATH/clang
+        export LD=$CLANG_PATH/ld.lld
+        
+        # 根据构建类型选择配置
+        BUILD_TYPE="${{ github.event.inputs.build_type || 'release' }}"
+        
+        case $BUILD_TYPE in
+          "release")
+            DEFCONFIG="oneplus/sm8845_defconfig"
+            ;;
+          "debug")
+            DEFCONFIG="oneplus/sm8845_debug_defconfig"
+            if [ ! -f "arch/arm64/configs/$DEFCONFIG" ]; then
+              DEFCONFIG="oneplus/sm8845_defconfig"
+            fi
+            ;;
+          "perf")
+            DEFCONFIG="oneplus/sm8845_perf_defconfig"
+            if [ ! -f "arch/arm64/configs/$DEFCONFIG" ]; then
+              DEFCONFIG="oneplus/sm8845_defconfig"
+            fi
+            ;;
+        esac
+        
+        echo "使用配置: $DEFCONFIG"
+        echo "DEFCONFIG=$DEFCONFIG" >> $GITHUB_ENV
+        
+        # 应用defconfig
+        make O=out $DEFCONFIG
+        
+        # 应用自定义配置覆盖
+        if [ -f "$CONFIG_DIR/defconfig_override" ]; then
+          echo "应用自定义配置覆盖..."
+          cat "$CONFIG_DIR/defconfig_override" >> out/.config
+          
+          # 应用配置
+          make O=out olddefconfig
+        fi
+        
+        # 可选：显示配置差异
+        echo "=== 配置变更摘要 ==="
+        if [ -f "out/.config.old" ]; then
+          diff -u out/.config.old out/.config | grep "^[+-]" | grep -v "^---" | grep -v "^+++" | head -20
+        fi
+        
+    - name: Build kernel
+      run: |
+        echo "编译内核..."
+        cd $KERNEL_SRC_DIR
+        
+        # 设置环境
+        export ARCH=arm64
+        export SUBARCH=arm64
+        export CROSS_COMPILE=$GCC_PATH/aarch64-linux-android-
+        export CC=$CLANG_PATH/clang
+        export LD=$CLANG_PATH/ld.lld
+        
+        # 启用ccache（如果配置允许）
+        if [ "$ENABLE_CCACHE" = "true" ]; then
+          export PATH="/usr/lib/ccache:$PATH"
+          export CCACHE_DIR=/tmp/ccache
+          echo "启用CCache加速"
+        fi
+        
+        # 根据构建类型设置额外参数
+        BUILD_TYPE="${{ github.event.inputs.build_type || 'release' }}"
+        
+        case $BUILD_TYPE in
+          "debug")
+            export KCFLAGS="-O0 -g"
+            ;;
+          "perf")
+            export KCFLAGS="-O3 -march=native"
+            ;;
+        esac
+        
+        # 编译
+        echo "开始编译 (类型: $BUILD_TYPE)"
+        
+        # 并行编译
+        JOBS=$(( $(nproc) * 2 ))
+        
+        # 编译目标
+        time make O=out -j$JOBS Image.gz dtbs modules 2>&1 | tee build.log
+        
+        # 检查结果
+        if [ $? -eq 0 ]; then
+          echo "✅ 编译成功"
+          
+          # 生成版本信息
+          echo "$KERNEL_NAME $KERNEL_VERSION" > out/version.txt
+          echo "Build Type: $BUILD_TYPE" >> out/version.txt
+          echo "Build Date: $(date)" >> out/version.txt
+          echo "Git Commit: $(git rev-parse --short HEAD)" >> out/version.txt
+          
+        else
+          echo "❌ 编译失败"
+          tail -50 build.log
+          exit 1
+        fi
+        
+    - name: Run post-build script
+      run: |
+        echo "运行后构建脚本..."
+        
+        if [ -f "$CONFIG_DIR/scripts/post-build.sh" ]; then
+          chmod +x "$CONFIG_DIR/scripts/post-build.sh"
+          cd $KERNEL_SRC_DIR
+          source "$CONFIG_DIR/scripts/post-build.sh"
+        else
+          echo "无后构建脚本，跳过"
+        fi
+        
+    - name: Package artifacts
+      run: |
+        echo "打包产物..."
+        
+        # 创建输出目录
+        OUTPUT_DIR="$BUILD_DIR/output"
+        mkdir -p $OUTPUT_DIR
+        
+        cd $KERNEL_SRC_DIR
+        
+        # 复制内核镜像
+        cp out/arch/arm64/boot/Image.gz $OUTPUT_DIR/
+        cp out/arch/arm64/boot/Image $OUTPUT_DIR/ 2>/dev/null || true
+        
+        # 复制设备树
+        mkdir -p $OUTPUT_DIR/dtbs
+        find out/arch/arm64/boot/dts -name "*.dtb" -exec cp {} $OUTPUT_DIR/dtbs/ \; 2>/dev/null || true
+        
+        # 复制模块
+        if [ -d "out/modules" ] || find out -name "*.ko" | grep -q .; then
+          mkdir -p $OUTPUT_DIR/modules
+          find out -name "*.ko" -exec cp {} $OUTPUT_DIR/modules/ \; 2>/dev/null || true
+        fi
+        
+        # 复制配置文件
+        cp out/.config $OUTPUT_DIR/kernel.config
+        cp out/version.txt $OUTPUT_DIR/
+        
+        # 复制编译日志
+        cp build.log $OUTPUT_DIR/ 2>/dev/null || true
+        
+        # 生成manifest文件
+        cat > $OUTPUT_DIR/manifest.json << EOF
+        {
+          "kernel_name": "$KERNEL_NAME",
+          "kernel_version": "$KERNEL_VERSION",
+          "build_type": "$BUILD_TYPE",
+          "build_date": "$(date -Iseconds)",
+          "git_commit": "$(git rev-parse --short HEAD)",
+          "toolchain": "$TOOLCHAIN",
+          "files": [
+            "Image.gz",
+            "kernel.config",
+            "version.txt"
+          ]
+        }
+        EOF
+        
+        # 创建压缩包
+        cd $OUTPUT_DIR
+        tar -czf ../$KERNEL_NAME-$KERNEL_VERSION-$BUILD_TYPE.tar.gz .
+        
+        echo "ARTIFACT_PATH=$BUILD_DIR/$KERNEL_NAME-$KERNEL_VERSION-$BUILD_TYPE.tar.gz" >> $GITHUB_ENV
+        
+    - name: Upload artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ env.KERNEL_NAME }}-${{ env.KERNEL_VERSION }}
+        path: |
+          ${{ env.ARTIFACT_PATH }}
+          $BUILD_DIR/output/build.log
+        retention-days: 30
+        
+    - name: Create GitHub Release
+      if: success() && github.event_name == 'workflow_dispatch'
+      uses: softprops/action-gh-release@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        tag_name: ${{ env.KERNEL_VERSION }}-${{ github.run_number }}
+        name: ${{ env.KERNEL_NAME }} ${{ env.KERNEL_VERSION }}
+        body: |
+          # ${{ env.KERNEL_NAME }} ${{ env.KERNEL_VERSION }}
+          
+          **构建信息**
+          - 类型: ${{ github.event.inputs.build_type || 'release' }}
+          - 内核源码: ${{ github.event.inputs.kernel_source }}
+          - 分支: ${{ github.event.inputs.kernel_branch }}
+          - 工具链: ${{ env.TOOLCHAIN }}
+          - 构建时间: $(date -u)
+          
+          **包含文件**
+          - Image.gz (内核镜像)
+          - 设备树文件
+          - 内核模块
+          - 配置文件
+        files: ${{ env.ARTIFACT_PATH }}
+        draft: false
+        prerelease: ${{ github.event.inputs.build_type != 'release' }}
