@@ -1,0 +1,30 @@
+{
+  "kernel_name": "OnePlus-SM8845-Kernel",
+  "version": "1.0.0",
+  "description": "Custom kernel for OnePlus SM8845 devices",
+  "author": "Your Name",
+  "toolchain": "clang-17",
+  "enable_ccache": true,
+  "defconfig": "oneplus/sm8845_defconfig",
+  "dependencies": [
+    "device-tree-compiler",
+    "libssl-dev",
+    "libelf-dev",
+    "libncurses5-dev",
+    "python3",
+    "python3-pip"
+  ],
+  "modules": true,
+  "dtbs": true,
+  "compression": "gz",
+  "extra_cflags": "",
+  "extra_ldflags": "",
+  "patch_level": 1,
+  "features": {
+    "kprobes": true,
+    "ftrace": true,
+    "kgdb": false,
+    "perf": true,
+    "debug": false
+  }
+}
