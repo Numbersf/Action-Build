@@ -1,0 +1,77 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Your Name <your.email@example.com>
+Date: Mon, 1 Jan 2024 00:00:00 +0000
+Subject: [PATCH] Add custom feature
+
+---
+ drivers/char/myfeature.c | 100 +++++++++++++++++++++++++++++++++++++++
+ drivers/char/Kconfig     |  10 ++++
+ drivers/char/Makefile    |   1 +
+ 3 files changed, 111 insertions(+)
+ create mode 100644 drivers/char/myfeature.c
+
+diff --git a/drivers/char/myfeature.c b/drivers/char/myfeature.c
+new file mode 100644
+index 000000000000..a1b2c3d4e5f6
+--- /dev/null
++++ b/drivers/char/myfeature.c
+@@ -0,0 +1,100 @@
++// SPDX-License-Identifier: GPL-2.0
++/*
++ * Custom feature driver
++ */
++
++#include <linux/module.h>
++#include <linux/kernel.h>
++#include <linux/init.h>
++
++static int myfeature_init(void)
++{
++    pr_info("My custom feature loaded\n");
++    return 0;
++}
++
++static void myfeature_exit(void)
++{
++    pr_info("My custom feature unloaded\n");
++}
++
++module_init(myfeature_init);
++module_exit(myfeature_exit);
++
++MODULE_LICENSE("GPL");
++MODULE_AUTHOR("Your Name");
++MODULE_DESCRIPTION("Custom feature module");
+diff --git a/drivers/char/Kconfig b/drivers/char/Kconfig
+index 123456789abc..abcdef123456 100644
+--- a/drivers/char/Kconfig
++++ b/drivers/char/Kconfig
+@@ -500,6 +500,16 @@ config RANDOM_TRUST_CPU
+ 	  by the CPU's random number generator (if present) over the random
+ 	  pool.
+ 
++config MY_CUSTOM_FEATURE
++	tristate "My custom feature support"
++	default n
++	help
++	  This enables my custom feature.
++
++	  If unsure, say N.
++
++	  To compile this driver as a module, choose M here.
++
+ endmenu
+ 
+ endif # HAS_IOMEM
+diff --git a/drivers/char/Makefile b/drivers/char/Makefile
+index 987654321abc..fedcba123456 100644
+--- a/drivers/char/Makefile
++++ b/drivers/char/Makefile
+@@ -44,6 +44,7 @@ obj-$(CONFIG_PS3_FLASH)		+= ps3flash.o
+ obj-$(CONFIG_XILLYBUS)		+= xillybus/
+ obj-$(CONFIG_POWERNV_OP_PANEL)	+= powernv-op-panel.o
+ obj-$(CONFIG_ADI)		+= adi.o
++obj-$(CONFIG_MY_CUSTOM_FEATURE) += myfeature.o
+ 
+ obj-$(CONFIG_HANGCHECK_TIMER)	+= hangcheck-timer.o
+ obj-$(CONFIG_TCG_TPM)		+= tpm/
