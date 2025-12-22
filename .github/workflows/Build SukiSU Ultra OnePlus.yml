@@ -8,14 +8,20 @@ on:
         required: true
         default: oneplus_ace2_pro_v
         options:
+          - oneplus_10r_v
+          - oneplus_nord_3_v
           - oneplus_nord_ce4_lite_5g_v
           - oneplus_nord_ce4_v
           - oneplus_nord_4_b
           - oneplus_ace_3v_b
+          - oneplus_ace_v
+          - oneplus_ace_race_v
           - oneplus_10_pro_v
           - oneplus_10t_v
           - oneplus_11r_v
           - oneplus_ace2_v
+          - oneplus_pad_mt6983_v
+          - oneplus_ace2v_v
           - oneplus_ace_pro_v
           - oneplus_11_v
           - oneplus_11_b
@@ -27,18 +33,21 @@ on:
           - oneplus_open_v
           - oneplus_open_b
           - oneplus_12_b
+          - oneplus_pad_mt6897_v
           - oneplus_13r_b
           - oneplus_ace3_pro_b
           - oneplus_ace5_b
           - oneplus_pad_pro_b
           - oneplus_pad2_b
           - oneplus_nord_5_b
+          - oneplus_nord_ce5_v
           - oneplus_ace5_pro_b
           - oneplus_13_b
           - oneplus_13t
           - oneplus_13s_b
           - oneplus_pad_2_pro_b
           - oneplus_pad_3_b
+          - oneplus_ace5_race_b
           - oneplus_ace5_ultra
           - oneplus_pad2_mt6991_b
           - oneplus_ace_6
@@ -124,6 +133,11 @@ on:
       ZRAM:
         type: boolean
         description: "是否添加更多ZRAM算法？"
+        required: true
+        default: false
+      UNICODE_BYPASS:
+        type: boolean
+        description: "是否添加Unicode零宽绕过修复与内存优化补丁？"
         required: true
         default: false
       SUSFS_DEV:
@@ -303,6 +317,7 @@ jobs:
           echo "Selected FAST_BUILD: ${{ github.event.inputs.FAST_BUILD }}"
           echo "Selected SCHED: ${{ github.event.inputs.SCHED }}"
           echo "Selected ZRAM: ${{ github.event.inputs.ZRAM }}"
+          echo "Selected UNICODE_BYPASS: ${{ github.event.inputs.UNICODE_BYPASS }}"
           echo "-----------------------"
 
       - name: Check Disk Space
@@ -678,7 +693,7 @@ jobs:
               fake_patched=1
             fi
           fi
-          if [ "$GKI_V" = "android12-5.10" ] || [ "$GKI_V" = "android13-5.15" ]; then
+          if [ "$GKI_V" = "android12-5.10" ] || [ "$GKI_V" = "android13-5.15" ] || [ "$GKI_V" = "android14-6.1" ]; then
             if ! grep -qxF $'\tif (!vma_pages(vma))' ./fs/proc/task_mmu.c; then
               echo "未找到 vma_pages，正在进行补丁修复"
               fake_patched=1
@@ -696,7 +711,7 @@ jobs:
                 sed -i -e '/unsigned int nr_subpages \= __PAGE_SIZE \/ PAGE_SIZE;/d' -e '/pagemap_entry_t \*res = NULL;/d' ./fs/proc/task_mmu.c
               fi
             fi
-            if [ "$GKI_V" = "android12-5.10" ] || [ "$GKI_V" = "android13-5.15" ]; then
+            if [ "$GKI_V" = "android12-5.10" ] || [ "$GKI_V" = "android13-5.15" ] || [ "$GKI_V" = "android14-6.1" ]; then
               if grep -qxF $'\t\tgoto show_pad;' ./fs/proc/task_mmu.c; then
                 sed -i -e 's/goto show_pad;/return 0;/' ./fs/proc/task_mmu.c
               fi
@@ -707,6 +722,7 @@ jobs:
       - name: Apply Convert HMBIRD_OGKI to HMBIRD_GKI
         if: ${{ fromJSON(env.KV1) >= 6 && fromJSON(env.KV2) >= 66 && github.event.inputs.SCHED == 'false' }}
         run: |
+          PATCH_DIR="${GITHUB_WORKSPACE}/kernel_workspace/Action-Build/patches"
           cd kernel_workspace/kernel_platform/common
           for p in ./kernel/sched/hmbird* ./vendor/oplus/kernel/cpu/sched_ext/hmbird*; do
             [ -d "$p" ] && {
@@ -714,24 +730,39 @@ jobs:
               exit 0
             }
           done
-
           sed -i '1iobj-y += hmbird_patch.o' drivers/Makefile
-          cp ../../Action-Build/patches/hmbird_patch.patch ./hmbird_patch.patch
           echo "正在打OGKI转换GKI补丁"
-          patch -p1 -F 3 < hmbird_patch.patch
+          patch -p1 -F 3 < "${PATCH_DIR}/hmbird_patch.patch" || true
           echo "OGKI转换GKI_patch完成"
+
+      - name: Apply UNICODE_BYPASS and MEMORY_OPT
+        if: ${{ github.event.inputs.UNICODE_BYPASS == 'true' }}
+        run: |
+          PATCH_DIR="${GITHUB_WORKSPACE}/kernel_workspace/Action-Build/patches"
+          cd kernel_workspace/kernel_platform/common
+          patch -p1 --forward < "${PATCH_DIR}/optimized_mem_operations.patch"
+          patch -p1 --forward < "${PATCH_DIR}/file_struct_8bytes_align.patch"
+          patch -p1 --forward < "${PATCH_DIR}/reduce_cache_pressure.patch"
+          if [ "$KV1" -lt 6 ]; then
+            patch -p1 --forward < "${PATCH_DIR}/clear_page_16bytes_align.patch"
+            echo "Patching unicode!"
+            patch -p1 --forward < "${PATCH_DIR}/unicode_bypass_fix_6.1-.patch"
+          else
+            cat "${PATCH_DIR}/clear_page_16bytes_align.patch" | sed -e 's/SYM_FUNC_START_PI(clear_page)/SYM_FUNC_START_PI(__pi_clear_page)/' | patch -p1 -F3 --forward
+            echo "Patching unicode!"
+            patch -p1 --forward < "${PATCH_DIR}/unicode_bypass_fix_6.1+.patch"
+          fi
 
       - name: Apply ZRAM
         if: ${{ github.event.inputs.ZRAM == 'true' }}
         run: |
+          PATCH_DIR="${GITHUB_WORKSPACE}/kernel_workspace/SukiSU_patch/other/zram/zram_patch/${{ env.KERNEL_VERSION }}"
           cd kernel_workspace/kernel_platform/common
-          cp ../../SukiSU_patch/other/zram/zram_patch/${{ env.KERNEL_VERSION }}/lz4kd.patch ./
           echo "正在打lz4kd补丁"
-          patch -p1 -F 3 < lz4kd.patch || true
+          patch -p1 -F 3 < "${PATCH_DIR}/lz4kd.patch" || true
           echo 'lz4kd_patch完成'
-          cp ../../SukiSU_patch/other/zram/zram_patch/${{ env.KERNEL_VERSION }}/lz4k_oplus.patch ./
           echo "正在打lz4k_oplus补丁"
-          patch -p1 -F 3 < lz4k_oplus.patch || true
+          patch -p1 -F 3 < "${PATCH_DIR}/lz4k_oplus.patch" || true
           echo 'lz4k_oplus_patch完成'
 
       - name: Apply SCHED
@@ -846,17 +877,22 @@ jobs:
             echo "CONFIG_IP6_NF_TARGET_MASQUERADE=y" >> "$CONFIG_FILE"
           fi
 
+          # 修复构建问题
+          if [ "$KERNEL_VERSION" = "6.1" ] && [[ "$CPU" == mt* ]]; then
+            echo "CONFIG_DEBUG_INFO_BTF=n" >> "$CONFIG_FILE"
+          fi
+
           # 移除构建审查
           sed -i 's/check_defconfig//' ./build.config.gki
 
       - name: Fix IPv6_NAT Error
         if: ${{ github.event.inputs.NETFILTER == 'true' }}
         run: |
+          PATCH_DIR="${GITHUB_WORKSPACE}/kernel_workspace/Action-Build/patches"
           cd kernel_workspace/kernel_platform/common
           if [[ "${CPU}" == sm* ]]; then
             echo "修复启用IPv6 NAT后可能出现的设备误报…"
-            cp ../../Action-Build/patches/IPv6_NAT_FIX.patch ./IPv6_NAT_FIX.patch
-            patch -p1 -F 3 < IPv6_NAT_FIX.patch
+            patch -p1 -F 3 < "${PATCH_DIR}/IPv6_NAT_FIX.patch"
           else
             echo "你的设备不支持 IPv6 NAT，跳过此步骤。"
           fi
@@ -897,6 +933,12 @@ jobs:
           sed -i 's/^CONFIG_LTO_CLANG_FULL=y/CONFIG_LTO_CLANG_THIN=y/' "$DEFCONFIG"
           sed -i 's/^CONFIG_LTO_CLANG_NONE=y/CONFIG_LTO_CLANG_THIN=y/' "$DEFCONFIG"
           grep -q '^CONFIG_LTO_CLANG_THIN=y' "$DEFCONFIG" || echo 'CONFIG_LTO_CLANG_THIN=y' >> "$DEFCONFIG"
+
+      - name: Disable GPUEB
+        if: ${{ env.KERNEL_VERSION == '5.10' && startsWith(env.CPU, 'mt') }}
+        run: |
+          echo "Disabling GPUEB for MTK kernel 5.10"
+          sed -i '/obj-y.*gpueb/d' kernel_workspace/kernel-5.10/drivers/gpu/mediatek/Makefile
 
       - name: Build Kernel FAST
         if: ${{ github.event.inputs.FAST_BUILD == 'true' }}
@@ -1007,14 +1049,15 @@ jobs:
       - name: Apply patch_linux and Replace Image
         if: ${{ github.event.inputs.KPM == 'true' }}
         run: |
-          cd kernel_workspace/kernel_platform/common
-          cp ../../SukiSU_patch/kpm/patch_linux ../out/Final-Image-Find/
-          cd ../out/Final-Image-Find
+          PATCH_DIR="${GITHUB_WORKSPACE}/kernel_workspace/SukiSU_patch/kpm"
+          OUT_DIR="${GITHUB_WORKSPACE}/kernel_workspace/kernel_platform/out/Final-Image-Find"
+          cd "${OUT_DIR}"
+          cp "${PATCH_DIR}/patch_linux" .
           chmod +x patch_linux
           ./patch_linux
           rm -f Image
           mv oImage Image
-          cp Image $GITHUB_WORKSPACE/AnyKernel3/Image
+          cp Image "${GITHUB_WORKSPACE}/AnyKernel3/Image"
 
       - name: Download Latest SUSFS Module from CI
         if: ${{ github.event.inputs.SUSFS_CI == 'CI' }}
