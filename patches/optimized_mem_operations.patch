@@ -1,0 +1,326 @@
+commit 93398e05bd4d96b270b7db2b601875d353e9f2e6
+Author: Matteo Croce <mcroce@microsoft.com>
+Date:   Fri Jul 16 19:26:42 2021 +0530
+
+    lib/string: Optimized memset
+    
+    The generic memset is defined as a byte at time write.  This is always
+    safe, but it's slower than a 4 byte or even 8 byte write.
+    
+    Write a generic memset which fills the data one byte at time until the
+    destination is aligned, then fills using the largest size allowed, and
+    finally fills the remaining data one byte at time.
+    
+    On a RISC-V machine the speed goes from 140 Mb/s to 241 Mb/s, and this the
+    binary size increase according to bloat-o-meter:
+    
+    Function     old     new   delta
+    memset        32     148    +116
+    
+    Link: https://lkml.kernel.org/r/20210702123153.14093-4-mcroce@linux.microsoft.com
+    Signed-off-by: Matteo Croce <mcroce@microsoft.com>
+    Cc: Christoph Hellwig <hch@infradead.org>
+    Cc: David Laight <David.Laight@aculab.com>
+    Cc: Drew Fustini <drew@beagleboard.org>
+    Cc: Emil Renner Berthing <kernel@esmil.dk>
+    Cc: Guo Ren <guoren@kernel.org>
+    Cc: Nick Desaulniers <ndesaulniers@google.com>
+    Cc: Nick Kossifidis <mick@ics.forth.gr>
+    Cc: Palmer Dabbelt <palmer@dabbelt.com>
+    Signed-off-by: Andrew Morton <akpm@linux-foundation.org>
+    Signed-off-by: Stephen Rothwell <sfr@canb.auug.org.au>
+    Signed-off-by: Jebaitedneko <Jebaitedneko@gmail.com>
+    Signed-off-by: Forenche <prahul2003@gmail.com>
+
+commit dcd468f841a7a850a8ed80e5f1c459149ecb073a
+Author: Matteo Croce <mcroce@microsoft.com>
+Date:   Fri Jul 16 19:26:31 2021 +0530
+
+    lib/string: Optimized memmove
+    
+    When the destination buffer is before the source one, or when the buffers
+    doesn't overlap, it's safe to use memcpy() instead, which is optimized to
+    use a bigger data size possible.
+    
+    This "optimization" only covers a common case.  In future, proper code
+    which does the same thing as memcpy() does but backwards can be done.
+    
+    Link: https://lkml.kernel.org/r/20210702123153.14093-3-mcroce@linux.microsoft.com
+    Signed-off-by: Matteo Croce <mcroce@microsoft.com>
+    Cc: Christoph Hellwig <hch@infradead.org>
+    Cc: David Laight <David.Laight@aculab.com>
+    Cc: Drew Fustini <drew@beagleboard.org>
+    Cc: Emil Renner Berthing <kernel@esmil.dk>
+    Cc: Guo Ren <guoren@kernel.org>
+    Cc: Nick Desaulniers <ndesaulniers@google.com>
+    Cc: Nick Kossifidis <mick@ics.forth.gr>
+    Cc: Palmer Dabbelt <palmer@dabbelt.com>
+    Signed-off-by: Andrew Morton <akpm@linux-foundation.org>
+    Signed-off-by: Stephen Rothwell <sfr@canb.auug.org.au>
+    Signed-off-by: Jebaitedneko <Jebaitedneko@gmail.com>
+    Signed-off-by: Forenche <prahul2003@gmail.com>
+
+commit 2885e8d60ca64ecc778e07550ca5c4fef1c0b3f6
+Author: Matteo Croce <mcroce@microsoft.com>
+Date:   Fri Jul 16 19:26:15 2021 +0530
+
+    lib/string: Optimized memcpy
+    
+    Patch series "lib/string: optimized mem* functions", v2.
+    
+    Rewrite the generic mem{cpy,move,set} so that memory is accessed with the
+    widest size possible, but without doing unaligned accesses.
+    
+    This was originally posted as C string functions for RISC-V[1], but as
+    there was no specific RISC-V code, it was proposed for the generic
+    lib/string.c implementation.
+    
+    Tested on RISC-V and on x86_64 by undefining __HAVE_ARCH_MEM{CPY,SET,MOVE}
+    and HAVE_EFFICIENT_UNALIGNED_ACCESS.
+    
+    These are the performances of memcpy() and memset() of a RISC-V machine on
+    a 32 mbyte buffer:
+    
+    memcpy:
+    original aligned:        75 Mb/s
+    original unaligned:      75 Mb/s
+    new aligned:            114 Mb/s
+    new unaligned:          107 Mb/s
+    
+    memset:
+    original aligned:       140 Mb/s
+    original unaligned:     140 Mb/s
+    new aligned:            241 Mb/s
+    new unaligned:          241 Mb/s
+    
+    The size increase is negligible:
+    
+    $ scripts/bloat-o-meter vmlinux.orig vmlinux
+    add/remove: 0/0 grow/shrink: 4/1 up/down: 427/-6 (421)
+    Function                                     old     new   delta
+    memcpy                                        29     351    +322
+    memset                                        29     117     +88
+    strlcat                                       68      78     +10
+    strlcpy                                       50      57      +7
+    memmove                                       56      50      -6
+    Total: Before=8556964, After=8557385, chg +0.00%
+    
+    These functions will be used for RISC-V initially.
+    
+    [1] https://lore.kernel.org/linux-riscv/20210617152754.17960-1-mcroce@linux.microsoft.com/
+    
+    This patch (of 3):
+    
+    Rewrite the generic memcpy() to copy a word at time, without generating
+    unaligned accesses.
+    
+    The procedure is made of three steps: First copy data one byte at time
+    until the destination buffer is aligned to a long boundary.  Then copy the
+    data one long at time shifting the current and the next long to compose a
+    long at every cycle.  Finally, copy the remainder one byte at time.
+    
+    This is the improvement on RISC-V:
+    
+    original aligned:        75 Mb/s
+    original unaligned:      75 Mb/s
+    new aligned:            114 Mb/s
+    new unaligned:          107 Mb/s
+    
+    and this the binary size increase according to bloat-o-meter:
+    
+    Function     old     new   delta
+    memcpy        36     324    +288
+    
+    Link: https://lkml.kernel.org/r/20210702123153.14093-1-mcroce@linux.microsoft.com
+    Link: https://lkml.kernel.org/r/20210702123153.14093-2-mcroce@linux.microsoft.com
+    Signed-off-by: Matteo Croce <mcroce@microsoft.com>
+    Cc: Nick Kossifidis <mick@ics.forth.gr>
+    Cc: Guo Ren <guoren@kernel.org>
+    Cc: Christoph Hellwig <hch@infradead.org>
+    Cc: David Laight <David.Laight@aculab.com>
+    Cc: Palmer Dabbelt <palmer@dabbelt.com>
+    Cc: Emil Renner Berthing <kernel@esmil.dk>
+    Cc: Drew Fustini <drew@beagleboard.org>
+    Cc: Nick Desaulniers <ndesaulniers@google.com>
+    Signed-off-by: Andrew Morton <akpm@linux-foundation.org>
+    Signed-off-by: Stephen Rothwell <sfr@canb.auug.org.au>
+    Signed-off-by: Jebaitedneko <Jebaitedneko@gmail.com>
+    Signed-off-by: Forenche <prahul2003@gmail.com>
+
+diff --git a/lib/string.c b/lib/string.c
+index b2de45a581f4..ec39eee4b60b 100644
+--- a/lib/string.c
++++ b/lib/string.c
+@@ -34,6 +34,23 @@
+ #include <asm/word-at-a-time.h>
+ #include <asm/page.h>
+ 
++#define BYTES_LONG	sizeof(long)
++#define WORD_MASK	(BYTES_LONG - 1)
++#define MIN_THRESHOLD	(BYTES_LONG * 2)
++
++/* convenience union to avoid cast between different pointer types */
++union types {
++	u8 *as_u8;
++	unsigned long *as_ulong;
++	uintptr_t as_uptr;
++};
++
++union const_types {
++	const u8 *as_u8;
++	const unsigned long *as_ulong;
++	uintptr_t as_uptr;
++};
++
+ #ifndef __HAVE_ARCH_STRNCASECMP
+ /**
+  * strncasecmp - Case insensitive, length-limited string comparison
+@@ -794,10 +811,38 @@ EXPORT_SYMBOL(__sysfs_match_string);
+  */
+ void *memset(void *s, int c, size_t count)
+ {
+-	char *xs = s;
++	union types dest = { .as_u8 = s };
++
++	if (count >= MIN_THRESHOLD) {
++		unsigned long cu = (unsigned long)c;
+ 
++		/* Compose an ulong with 'c' repeated 4/8 times */
++#ifdef CONFIG_ARCH_HAS_FAST_MULTIPLIER
++		cu *= 0x0101010101010101UL;
++#else
++		cu |= cu << 8;
++		cu |= cu << 16;
++		/* Suppress warning on 32 bit machines */
++		cu |= (cu << 16) << 16;
++#endif
++		if (!IS_ENABLED(CONFIG_HAVE_EFFICIENT_UNALIGNED_ACCESS)) {
++			/*
++			 * Fill the buffer one byte at time until
++			 * the destination is word aligned.
++			 */
++			for (; count && dest.as_uptr & WORD_MASK; count--)
++				*dest.as_u8++ = c;
++		}
++
++		/* Copy using the largest size allowed */
++		for (; count >= BYTES_LONG; count -= BYTES_LONG)
++			*dest.as_ulong++ = cu;
++	}
++
++	/* copy the remainder */
+ 	while (count--)
+-		*xs++ = c;
++		*dest.as_u8++ = c;
++
+ 	return s;
+ }
+ EXPORT_SYMBOL(memset);
+@@ -870,6 +915,13 @@ EXPORT_SYMBOL(memset64);
+ #endif
+ 
+ #ifndef __HAVE_ARCH_MEMCPY
++
++#ifdef __BIG_ENDIAN
++#define MERGE_UL(h, l, d) ((h) << ((d) * 8) | (l) >> ((BYTES_LONG - (d)) * 8))
++#else
++#define MERGE_UL(h, l, d) ((h) >> ((d) * 8) | (l) << ((BYTES_LONG - (d)) * 8))
++#endif
++
+ /**
+  * memcpy - Copy one area of memory to another
+  * @dest: Where to copy to
+@@ -881,14 +933,64 @@ EXPORT_SYMBOL(memset64);
+  */
+ void *memcpy(void *dest, const void *src, size_t count)
+ {
+-	char *tmp = dest;
+-	const char *s = src;
++	union const_types s = { .as_u8 = src };
++	union types d = { .as_u8 = dest };
++	int distance = 0;
++
++	if (!IS_ENABLED(CONFIG_HAVE_EFFICIENT_UNALIGNED_ACCESS)) {
++		if (count < MIN_THRESHOLD)
++			goto copy_remainder;
+ 
++		/* Copy a byte at time until destination is aligned. */
++		for (; d.as_uptr & WORD_MASK; count--)
++			*d.as_u8++ = *s.as_u8++;
++
++		distance = s.as_uptr & WORD_MASK;
++	}
++
++	if (distance) {
++		unsigned long last, next;
++
++		/*
++		 * s is distance bytes ahead of d, and d just reached
++		 * the alignment boundary. Move s backward to word align it
++		 * and shift data to compensate for distance, in order to do
++		 * word-by-word copy.
++		 */
++		s.as_u8 -= distance;
++
++		next = s.as_ulong[0];
++		for (; count >= BYTES_LONG; count -= BYTES_LONG) {
++			last = next;
++			next = s.as_ulong[1];
++
++			d.as_ulong[0] = MERGE_UL(last, next, distance);
++
++			d.as_ulong++;
++			s.as_ulong++;
++		}
++
++		/* Restore s with the original offset. */
++		s.as_u8 += distance;
++	} else {
++		/*
++		 * If the source and dest lower bits are the same, do a simple
++		 * 32/64 bit wide copy.
++		 */
++		for (; count >= BYTES_LONG; count -= BYTES_LONG)
++			*d.as_ulong++ = *s.as_ulong++;
++	}
++
++copy_remainder:
+ 	while (count--)
+-		*tmp++ = *s++;
++		*d.as_u8++ = *s.as_u8++;
++
+ 	return dest;
+ }
+ EXPORT_SYMBOL(memcpy);
++
++#undef MERGE_UL
++
+ #endif
+ 
+ #ifndef __HAVE_ARCH_MEMMOVE
+@@ -902,19 +1004,13 @@ EXPORT_SYMBOL(memcpy);
+  */
+ void *memmove(void *dest, const void *src, size_t count)
+ {
+-	char *tmp;
+-	const char *s;
++	if (dest < src || src + count <= dest)
++		return memcpy(dest, src, count);
++
++	if (dest > src) {
++		const char *s = src + count;
++		char *tmp = dest + count;
+ 
+-	if (dest <= src) {
+-		tmp = dest;
+-		s = src;
+-		while (count--)
+-			*tmp++ = *s++;
+-	} else {
+-		tmp = dest;
+-		tmp += count;
+-		s = src;
+-		s += count;
+ 		while (count--)
+ 			*--tmp = *--s;
+ 	}

@@ -51,32 +51,16 @@
 ------
 > [!IMPORTANT]
 >Data reference on the question of how long to run
-> <details>
-> <summary><strong>Click to view build time using ultra-fast clang + make</strong></summary>
 >
->|Device Type| Average Duration Range               | Maximum Duration|
->|------------------------|---------------------|------------|
->| `≥Android15` | `1st:19min ~ 35min 2nd:9min ~ 19min` | `42min`|
->| `<Android15`| `1st:27min ~ 40min 2nd:18min ~ 30min`| `50min` |
+>|| Average Duration Range|Maximum Duration|
+>|------------------|----------------------|------------|
+>| `Ultra-fast build for all devices` | `1st:19min ~ 35min 2nd:9min ~ 19min` | `42min`|
+>| `Kernel versions 5.10–5.15 built using official script` | `29min ~ 35min`| `45min`    |
+>| `Kernel versions 6.1-6.12 built using official script` | `59min ~ 1h12min`| `1h28min` |
 >
-> >Using ccache may slow down the first build.
+> >Using ccache may slow down the first build; this only applies to ultra-fast builds.
 >
-> >Differences in the version of the repo tool may affect the build duration.
-> </details>
->
-> <details>
-> <summary><strong>Click to view build time using official build.sh</strong></summary>
->
->
->|Device Type| Average Duration Range               | Maximum Duration|
->|--------------------------|-----------------------------|------------------|
->| `sm8450, sm8475, sm8550` | `29min ~ 35min`             | `45min`
->| `sm7675, sm7550, sm8650` |`59min ~ 1h12min`| `1h28min`        |
->| `sm8750`|`1h1min ~ 1h8min`| `1h24min`       |
->|`<Android15`| `39min ~ 49min`  |`59min`|
->
-> >Differences in the version of the repo tool may affect the build duration.
-></details>
+> >Differences in repo tool versions may affect the build time.
 >
 >So, if your build time exceeds the maximum time for your model, please stop and rerun, and check the steps, especially the Initialize Repo and Sync step. This often fails due to upstream REPO toolchain issues. If this step takes more than 15min, try again. If it still fails, wait for a fix
  
@@ -84,11 +68,11 @@
 > [!CAUTION]
 > Do not use volume down to install modules during root-retaining updates, use volume up to skip! Generally, installation is no longer necessary, just use the SukiSU Ultra Add-on Module  
 >
-> If your kernel is ``6.6``, and you previously used the official script to build,but now want to use ``Fast Build``, please **restore** the following images first:`dtbo.img`, ``system_dlkm(.erofs).img``,**otherwise the device may fail to boot!**  
->
 > If you have enabled the ``ZRAM`` algorithm, make sure to install the ``ZRAM`` module **before rebooting** after flashing with ``Anykernel3``. You may need to adjust some parameters manually.The 5.10 kernel is not supported ``ZRAM`` , as the ``zram.ko`` module path could not be found.However, the generated ``Anykernel3`` is still usable  
 >
->``OnePlus Ace5`` does not support enabling FengChi. Older models cannot use it even if the kernel includes it — do not force it  
+>``MTK`` devices do not support enabling network feature extensions and do not support disabling fast build  
+>
+>``OnePlus Ace5`` does not support enabling Fengchi. Older models cannot use it even if the kernel includes it — do not force it  
 >
 >``CAll Build Start UP`` is an **extremely dangerous** new workflow.**It has no new features and everything remains default and non-customizable**.This workflow is **strictly prohibited** for regular users and should use ``Build OnePlus_SukiSU Ultra All`` instead!  
 >
@@ -102,18 +86,26 @@
 # Changelog
 > Minor updates will be ignored. For more details, please refer to the commit.
  
-- Allow calling third-party dynamic source manifest repositories to support originally incompatible devices. It is essential to ensure that the naming of the source manifest and channel branches complies with the specifications. In the third-party manifest repository's ``README.md``, if ``CPUD`` is not defined, any placeholder value can be used,the fast build feature must remain enabled and cannot be disabled.  
+- Added `Unicode` zero-width bypass fix(prevents app package-name checks involving zero-width spaces and mitigates some related vulnerabilities)、memory optimization patches.  
  
-- Support ``Baseband-guard(LSMBBG)``.  
+- Initial release with support for a large number of `MTK` devices; manifest list and path issues have been successfully resolved.  
+ 
+- Supports modifying the `SUSFS` hash for rollback(Entering `-1` in this field will disable `SUSFS`)、Using the `SUSFS-DEV` development branch.  
+ 
+- For kernel versions `6.6–6.12`, supports replacing the `type` property in the device tree from `HMBIRD_OGKI` to `HMBIRD_GKI`; supports enabling Fengchi Driver[@reigadegr](https://github.com/reigadegr) [@cctv18](https://github.com/cctv18) [@Numbersf](https://github.com/Numbersf) [@HanKuCha](https://github.com/HanKuCha)  
+ 
+- Allow calling third-party dynamic source manifest repositories to support originally incompatible devices. It is essential to ensure that the naming of the source manifest and channel branches complies with the specifications. In the third-party manifest repository's `README.md`, if `CPUD` is not defined, any placeholder value can be used,the fast build feature must remain enabled and cannot be disabled.  
+ 
+- Support `Baseband-guard(LSMBBG)`.  
  
 - Support setting branches、custom version identifiers、fallback hash.  
 ```
-Set Branch: Change the original `susfs-main` to another `susfs-*` branch. Please modify according to the channel name in the SukiSU Ultra repository. Do not modify unless you are a developer. Do not leave it empty or remove it.
+Set Branch: Change the original `susfs-main` to another `builtin` branch. Please modify according to the channel name in the SukiSU Ultra repository. Do not modify unless you are a developer. Do not leave it empty or remove it.
 Custom Version Tag:
 Replace the original commit hash with your custom content, and move the commit hash to the end. This can be modified freely, but keep it reasonably short.
-v3.1.7-f5541e21@susfs-*
+v3.1.7-f5541e21@builtin
 ↓
-v3.1.7-CustomContent@susfs-*[f5541e21]
+v3.1.7-CustomContent@builtin[f5541e21]
 If you don’t want to use a custom version tag, just leave it empty (e.g. susfs-main/).
 Regardless of whether the custom version identifier and fallback hash are enabled, they must be separated by two /(U+002F) and cannot be removed
 ```  
@@ -121,9 +113,6 @@ Regardless of whether the custom version identifier and fallback hash are enable
 - Fully automated retrieval of kernel information and build information.  
  
 - Allow modifying `SUBLEVEL`,Used to fix the issue where the device fails to boot after a system update changes the `SUBLEVEL` but the kernel source has not been updated.  
-```
-6.1.75->6.1.99
-```  
  
 - Allows running multiple workflows in batches of `9` each time.Ordinary users are prohibited from using.  
  
@@ -140,13 +129,11 @@ to manually delete the corresponding keys.
 When there is a kernel-level update or a significant slowdown caused by changes in the GitHub upstream toolchain, you need to perform the above actions.
 ```  
  
-- First to support for the sm8750's new setlocalversion format using echo, fixing the issue where custom and randomly-generated pseudo-official suffixes were not applied. Now, this feature is fully supported across all device models and build methods.  
+- First to support for the kernel version `6.6+` new `setlocalversion` format using `echo`, fixing the issue where custom and randomly-generated pseudo-official suffixes were not applied. Now, this feature is fully supported across all device models and build methods.  
  
 - Add `TRUSTY_EXISTS` to automatically detect whether the `6.6` kernel has defects in the kernel source code and determine whether `sed` is needed.  
  
-- Supports enabling the NEW Fengchi kernel for **certain device** models (optional to enable), with drivers sourced from [@cctv18](https://github.com/cctv18)  
- 
-- When `ZRAM` is enabled, automatically download and modify the ZRAM additional module. [@FURLC](https://github.com/FURLC)  
+- When `ZRAM` is enabled, automatically download and modify the ZRAM additional module.[@FURLC](https://github.com/FURLC)  
  
 - Fix issues where `ZRAM` is unusable or unable to launch non-system apps.  
  
@@ -161,8 +148,6 @@ When there is a kernel-level update or a significant slowdown caused by changes 
  
 - Support fast-build `(5.10[Debut], 5.15[Debut], 6.1, 6.6)`.  
  
-- Fixed OnePlus Ace5Pro and OnePlus 13 boot issues after build failure; using official dtbo now allows booting directly. [@reigadegr](https://github.com/reigadegr)  
- 
 - Support displaying user-defined inputs during `Debug Show Selected Inputs` step; workflow name will also reflect some values.  
  
 - Removed potential version codes from the suffix of `Anykernel3.zip` config file, replaced with exact `Android` version numbers `XX.X.X`.
@@ -172,7 +157,7 @@ AnyKernel3_SukiSUUltra_12896_oneplus_13_Android15.0.2_KPM_VFS.zip
 AnyKernel3_SukiSUUltra_12896_oneplus_11_Android14.1.0_KPM_VFS.zip
 ```  
  
-- Added support for the `LZ4K` compression algorithm in the `zram` module.   [@ShirkNeko](https://github.com/ShirkNeko)  
+- Added support for the `LZ4K、LZ4KD` compression algorithm in the `zram` module.   [@ShirkNeko](https://github.com/ShirkNeko)  
  
-- Support automatic download of latest `CI` version of `susfs` module and install via `ksud`; also automatically extracts manager `CI-APK` but does not install it.  
+- Support automatic download of latest `CI` version of `susfs` module and install via `ksud`; also automatically extracts different types manager `CI-APK` but does not install it.  
  

@@ -51,32 +51,16 @@
 ------
 > [!IMPORTANT]
 >关于要跑多久的问题的数据参考
-> <details>
-> <summary><strong>点击查看使用极速编译clang make的用时</strong></summary>
 >
->| 机型类型                     | 平均耗时范围        | 最大耗时   |
->|------------------------|---------------------|------------|
->| `≥Android15` | `1st:19min ~ 35min 2nd:9min ~ 19min` | `42min`|
->| `<Android15`| `1st:27min ~ 40min 2nd:18min ~ 30min`| `50min` |
+>|| 平均耗时范围|最大耗时|
+>|------------------|----------------------|------------|
+>| `极速构建所有机型` | `1st:19min ~ 35min 2nd:9min ~ 19min` | `42min`|
+>| `内核版本5.10-5.15使用官方脚本构建` | `29min ~ 35min`| `45min`    |
+>| `内核版本6.1-6.12使用官方脚本构建` | `59min ~ 1h12min`| `1h28min` |
 >
-> >使用ccache第一次会减速
->
-> >repo工具版本差异可能会影响耗时
-> </details>
->
-> <details>
-> <summary><strong>点击查看使用官方build.sh的用时</strong></summary>
->
->
->| 机型类型             | 平均耗时范围           | 最大耗时   |
->|----------------------|------------------------|------------|
->| `sm8450,sm8475,sm8550` | `29min ~ 35min`| `45min`    |
->| `sm7675,sm7550,sm8650` | `59min ~ 1h12min`| `1h28min` |
->| `sm8750+`| `1h1min ~ 1h8min`| `1h24min`     |
->|`<Android15`| `39min ~ 49min`| `59min` |
+> >使用ccache第一次可能会减速、仅极速构建生效
 >
 > >repo工具版本差异可能会影响耗时
-></details>
 >
 >也就是说,如果你运行的时长超过了对应机型的最高时间,请暂停重新运行并查看step,看看有没有占用时间过长的步骤,特别注意Initialize Repo and Sync这一步,受到上游REPO工具链的影响会经常出问题.这一步超过15min可以重新尝试一次,如果依旧失败请等待修复
  
@@ -84,9 +68,9 @@
 > [!CAUTION]
 >请不要在**保``root``更新**时音量下安装模块请使用音量上跳过!现在也基本上不需要安装了,使用``SukiSU Ultra附加模块``即可  
 >
->如果你的内核版本是``6.6``,并且曾经使用了官方脚本构建,而现在需要使用``Fast Build(极速构建)``,请先还原``dtbo.img、system_dlkm(.erofs).img``**否则会无法开机!**  
->
 >如果你开启了``ZRAM``算法,请在刷入``Anykernel3``重启**前**安装``ZRAM``模块,部分参数请自行调整。另外``5.10``内核暂不支持开启``ZRAM``算法,因为没有找到``zram.ko``路径,但是生成的``Anykernel3``依旧可用  
+>
+>``MTK``设备不支持开启网络功能拓展,不支持关闭极速构建  
 >
 >``OnePlus Ace5``不支持开启风驰,较老的机型即使内核加入也无法使用,不要勉强  
 >
@@ -102,28 +86,33 @@
 # 更新日志
 >小的更新内容将被忽略 更多内容请参看提交
  
-- 允许调用第三方动态源码清单仓库,以支持原本不兼容的机型。必须确保源码清单与频道分支的命名符合规范。在第三方清单仓库的``README.md``中,如未定义``CPUD``,可填写任意占位值。此外,极速构建功能必须保持启用,不可关闭  
+- 新增`Unicode`零宽绕过修复(可以避免应用包名关于零宽空格的检测点、阻止部分相关漏洞)、内存优化补丁  
  
-- 支持``Baseband-guard(LSMBBG)``  
+- 首发新增支持大量`MTK`机型,清单和路径问题成功被攻克  
  
-- 支持设置分支、自定义版本标识、修改对应分支的提交``hash``来进行回退  
+- 支持修改`SUSFS`哈希值进行回退(此项输入`-1`则关闭`SUSFS`)、调用`SUSFS-DEV`开发分支  
+ 
+- 内核版本为``6.6-6.12``支持将设备树中的`type`属性从`HMBIRD_OGKI`替换为`HMBIRD_GKI`;支持开启风驰驱动[@reigadegr](https://github.com/reigadegr) [@cctv18](https://github.com/cctv18) [@Numbersf](https://github.com/Numbersf) [@HanKuCha](https://github.com/HanKuCha)  
+ 
+- 允许调用第三方动态源码清单仓库,以支持原本不兼容的机型。必须确保源码清单与频道分支的命名符合规范。在第三方清单仓库的`README.md`中,如未定义`CPUD`,可填写任意占位值。此外,极速构建必须保持启用,不可关闭  
+ 
+- 支持`Baseband-guard(LSMBBG)`  
+ 
+- 支持设置分支、自定义版本标识、修改对应分支的提交哈希来进行回退  
 ```
-设置分支:原susfs-main改成其他susfs-*分支,请按照SukiSU Ultra仓库频道名进行修改,非开发者禁止修改,不可留空、删除
+设置分支:原builtin改成其他分支,请按照SukiSU Ultra仓库频道名进行修改,非开发者禁止修改,不可留空、删除
 自定义版本标识:
 将原先的提交hash改成自定义内容,再将提交hash放在最后 这个可以随意改,不要太长
-v3.1.7-f5541e21@susfs-*
+v3.1.7-f5541e21@builtin
 ↓
-v3.1.7-自定义内容@susfs-*[f5541e21]
-当你不想起用自定义版本标识时,就留空(susfs-main/)
-无论是否启用自定义版本标识和回退hash,必须用两个/(U+002F)隔开,不可删除
+v3.1.7-自定义内容@builtin[f5541e21]
+当你不想起用自定义版本标识时,就留空(builtin/)
+无论是否启用自定义版本标识和回退哈希,必须用两个/(U+002F)隔开,不可删除
 ```  
  
 - 全自动化获取内核信息及构建信息  
  
-- 允许修改内核等级`SUBLEVEL`,用于解决系统更新后`SUBLEVEL`改变而内核源码没有更新导致的无法开机的问题  
-```
-6.1.75->6.1.99
-```  
+- 允许修改内核等级`SUBLEVEL`,用于欺骗系统-解决系统更新后`SUBLEVEL`改变但内核源码没有更新导致的验证而无法开机的问题  
  
 - 允许分批次每次`9`个运行多个工作流,普通用户禁止使用  
  
@@ -140,11 +129,9 @@ https://github.com/你的用户名(username)/你的仓库名/actions/caches
 当内核级别更新、GitHub上游工具链改变导致的速度明显变慢时,就需要进行以上操作
 ```  
  
-- 首发适配`sm8750`的`setlocalversion`文件中`echo`新格式,修复自定义&随机伪官方后缀失效。现在,全机型、全编译方式完美支持此功能  
+- 首发适配内核版本`6.6+`的`setlocalversion`文件中`echo`新格式,修复自定义&随机伪官方后缀失效。现在,全机型、全编译方式完美支持此功能  
  
 - 添加`TRUSTY_EXISTS`用于自动检测`6.6`内核是否内核源码存在缺陷,判断是否`sed`处理  
- 
-- 支持**部分机型**开启新风驰内核(自选是否开启),驱动来自[@cctv18](https://github.com/cctv18)  
  
 - 当`ZRAM`开启时,自动下载并修改`ZRAM附加模块`,附加模块来自[@FURLC](https://github.com/FURLC)  
  
@@ -161,8 +148,6 @@ https://github.com/你的用户名(username)/你的仓库名/actions/caches
  
 - 支持极速编译`(5.10[首发]、5.15[首发]、6.1、6.6)`  
  
-- 修复`OnePlus Ace5Pro、OnePlus 13`跑不出来或者无法开机问题,直接使用官方`dtbo`就可以直接开机[@reigadegr](https://github.com/reigadegr)  
- 
 - 支持显示自己填入的内容在`Debug Show Selected Inputs`这一步,同时工作流名称也可以看到一些东西  
  
 - 从写入 `Anykernel3.zip` 的配置文件后缀中删除潜在的版本代码,替换成精确的 `Android` 版本号`XX.X.X`
@@ -172,7 +157,7 @@ AnyKernel3_SukiSUUltra_12896_oneplus_13_Android15.0.2_KPM_VFS.zip
 AnyKernel3_SukiSUUltra_12896_oneplus_11_Android14.1.0_KPM_VFS.zip
 ```  
  
-- 添加 `zram` 模块的 `LZ4K` 压缩算法支持[@ShirkNeko](https://github.com/ShirkNeko)  
+- 添加 `zram` 模块的 `LZ4K、LZ4KD` 压缩算法支持[@ShirkNeko](https://github.com/ShirkNeko)  
  
-- 支持自动下载最新 `CI/Release` 的 `susfs` 模块并调用 `ksud` 安装、自动获取管理器`CI-APK`解压到`Anykernel3`但不安装  
+- 支持自动下载最新 `CI/Release` 的 `susfs` 模块并调用 `ksud` 安装、自动获取不同类型的管理器`CI-APK`解压到`Anykernel3`但不安装  
  
