@@ -70,6 +70,8 @@
 >
 > If you have enabled the ``ZRAM`` algorithm, make sure to install the ``ZRAM`` module **before rebooting** after flashing with ``Anykernel3``. You may need to adjust some parameters manually.The 5.10 kernel is not supported ``ZRAM`` , as the ``zram.ko`` module path could not be found.However, the generated ``Anykernel3`` is still usable  
 >
+>``MTK`` devices do not support enabling network feature extensions and do not support disabling fast build  
+>
 >``OnePlus Ace5`` does not support enabling Fengchi. Older models cannot use it even if the kernel includes it — do not force it  
 >
 >``CAll Build Start UP`` is an **extremely dangerous** new workflow.**It has no new features and everything remains default and non-customizable**.This workflow is **strictly prohibited** for regular users and should use ``Build OnePlus_SukiSU Ultra All`` instead!  
@@ -84,7 +86,11 @@
 # Changelog
 > Minor updates will be ignored. For more details, please refer to the commit.
  
-- Supports modifying the `SUSFS` hash for rollback and supports using the `SUSFS-DEV` development branch.
+- Added `Unicode` zero-width bypass fix(prevents app package-name checks involving zero-width spaces and mitigates some related vulnerabilities)、memory optimization patches.  
+ 
+- Initial release with support for a large number of `MTK` devices; manifest list and path issues have been successfully resolved.  
+ 
+- Supports modifying the `SUSFS` hash for rollback(Entering `-1` in this field will disable `SUSFS`)、Using the `SUSFS-DEV` development branch.  
  
 - For kernel versions `6.6–6.12`, supports replacing the `type` property in the device tree from `HMBIRD_OGKI` to `HMBIRD_GKI`; supports enabling Fengchi Driver[@reigadegr](https://github.com/reigadegr) [@cctv18](https://github.com/cctv18) [@Numbersf](https://github.com/Numbersf) [@HanKuCha](https://github.com/HanKuCha)  
  

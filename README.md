@@ -70,6 +70,8 @@
 >
 >如果你开启了``ZRAM``算法,请在刷入``Anykernel3``重启**前**安装``ZRAM``模块,部分参数请自行调整。另外``5.10``内核暂不支持开启``ZRAM``算法,因为没有找到``zram.ko``路径,但是生成的``Anykernel3``依旧可用  
 >
+>``MTK``设备不支持开启网络功能拓展,不支持关闭极速构建  
+>
 >``OnePlus Ace5``不支持开启风驰,较老的机型即使内核加入也无法使用,不要勉强  
 >
 >``CAll Build Start UP``是一个极其危险的新工作流文件,**它没有新功能且一切保持默认不可自定义**,新工作流**禁止**普通用户使用!普通用户请使用``Build OnePlus_SukiSU Ultra All``!  
@@ -84,7 +86,11 @@
 # 更新日志
 >小的更新内容将被忽略 更多内容请参看提交
  
-- 支持修改`SUSFS`哈希值进行回退、支持调用`SUSFS-DEV`开发分支  
+- 新增`Unicode`零宽绕过修复(可以避免应用包名关于零宽空格的检测点、阻止部分相关漏洞)、内存优化补丁  
+ 
+- 首发新增支持大量`MTK`机型,清单和路径问题成功被攻克  
+ 
+- 支持修改`SUSFS`哈希值进行回退(此项输入`-1`则关闭`SUSFS`)、调用`SUSFS-DEV`开发分支  
  
 - 内核版本为``6.6-6.12``支持将设备树中的`type`属性从`HMBIRD_OGKI`替换为`HMBIRD_GKI`;支持开启风驰驱动[@reigadegr](https://github.com/reigadegr) [@cctv18](https://github.com/cctv18) [@Numbersf](https://github.com/Numbersf) [@HanKuCha](https://github.com/HanKuCha)  
  
