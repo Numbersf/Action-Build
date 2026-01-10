@@ -412,6 +412,22 @@ jobs:
             rm -f "$dir/android/abi_gki_protected_exports_"* 2>/dev/null || echo "No protected exports in $dir"
           done
 
+      - name: Upstream Kernel to 5.15.196
+        run: |
+          cd kernel_workspace/kernel_platform/common
+          # 添加 Linux Stable 官方远程仓库
+          git remote add stable https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux-stable.git
+          # 仅获取 5.15.196 的标签数据
+          git fetch stable v5.15.196 --depth=1
+          
+          # 强制合并（允许合并不相关的历史）
+          echo "正在尝试合并上游代码..."
+          git merge FETCH_HEAD --no-edit --allow-unrelated-histories || {
+            echo "❌ 自动合并失败，尝试使用倾向于上游的策略..."
+            # 如果有冲突，优先使用 Linux 官方代码 (theirs)
+            git merge FETCH_HEAD -X theirs --no-edit --allow-unrelated-histories
+          }
+
       - name: Kernel Version Handling
         run: |
           cd kernel_workspace/kernel_platform
@@ -459,22 +475,6 @@ jobs:
           echo "KV3=${NEW_VERSION}"     | tr -d '.' >> $GITHUB_ENV
 
       # 自定义内核后缀
-     - name: Upstream Kernel to 5.15.196
-        run: |
-          cd kernel_workspace/kernel_platform/common
-          # 添加 Linux Stable 官方远程仓库
-          git remote add stable https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux-stable.git
-          # 仅获取 5.15.196 的标签数据
-          git fetch stable v5.15.196 --depth=1
-          
-          # 强制合并（允许合并不相关的历史）
-          echo "正在尝试合并上游代码..."
-          git merge FETCH_HEAD --no-edit --allow-unrelated-histories || {
-            echo "❌ 自动合并失败，尝试使用倾向于上游的策略..."
-            # 如果有冲突，优先使用 Linux 官方代码 (theirs)
-            git merge FETCH_HEAD -X theirs --no-edit --allow-unrelated-histories
-          }
-          
       - name: Custom Kernel Suffix if set
         if: ${{ github.event.inputs.SUFFIX != '' }}
         run: |
