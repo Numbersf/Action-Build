@@ -4,13 +4,17 @@ on:
   workflow_dispatch:
     inputs:
       BATCH:
-        description: "9个一组分批并行-选择分支(1-3)"
+        description: "9个一组分批并行-选择分支(1-4)"
         required: true
         default: "1"
       CONFIRMATION:
         description: "我已看完README.md,了解此工作流的风险和作用,有能力取消卡住的工作流运行和删除缓存,并执意继续运行"
         required: true
         default: "请输入完整标题"
+
+permissions:
+  actions: read
+  contents: read
 
 jobs:
   generate-matrix:
@@ -52,7 +56,7 @@ jobs:
               "oneplus_ace2_pro_v"
               "oneplus_ace3_v"
               "oneplus_open_v"
-              "oneplus12_v"
+              "oneplus_12_v"
               "oneplus_13r"
               "oneplus_ace3_pro_v"
               "oneplus_ace5"
@@ -63,11 +67,22 @@ jobs:
               "oneplus_pad2_v"
               "oneplus_nord_5"
               "oneplus_ace5_pro"
+              "oneplus_ace5_pro_b"
               "oneplus_13"
+              "oneplus_13_b"
               "oneplus_13t"
+              "oneplus_13t_b"
+            )
+          elif [[ "$BATCH" == "4" ]]; then
+            FILE_LIST=(
+              "oneplus_13_global"
               "oneplus_13s"
+              "oneplus_13s_b"
               "oneplus_pad_2_pro"
               "oneplus_pad_3"
+              "oneplus_ace5_ultra"
+              "oneplus_ace_6"
+              "oneplus_15"
             )
           else
             echo "无效的 BATCH 值: $BATCH"
@@ -78,11 +93,14 @@ jobs:
             split("\n")[:-1] |
             map({
               file: .,
-              file_short: (sub("_[a-z]$"; "") | sub("_v$"; "")),
+              file_short: (sub("_[a-z]$"; ""))
               enable_sched: (
                 . == "oneplus_pad_2_pro" or
                 . == "oneplus_13" or
+                . == "oneplus_13_global" or
                 . == "oneplus_13t" or
+                . == "oneplus_13s" or
+                . == "oneplus_ace5_ultra" or
                 . == "oneplus_ace5_pro"
               )
             })
@@ -124,26 +142,15 @@ jobs:
           echo "等待目标构建 $FILE 上传对应 Artifact..."
 
           SECONDS=0
-          MAX_TIME=$((35 * 60))  # 最大等待35分钟
-          echo "优先等待生成...休息10min"
+          MAX_TIME=$((35 * 60))
           sleep 600
 
           while (( SECONDS < MAX_TIME )); do
             echo "查询已上传的 Artifact（已等待 $SECONDS 秒）..."
+            ALL_ARTIFACTS=$(gh api --paginate repos/${{ github.repository }}/actions/artifacts --jq '.artifacts[].name')
 
-            # 获取所有 Artifact 名称（字符串，每个名称一行）
-            ALL_ARTIFACTS=$(gh api repos/${{ github.repository }}/actions/artifacts --jq '.artifacts[].name')
-
-            MATCHED=0
-            for ART in $ALL_ARTIFACTS; do
-              if [[ "$ART" == *"$FILE"* ]]; then
-                echo "✅ 找到匹配的 Artifact: $ART，构建成功！"
-                MATCHED=1
-                break
-              fi
-            done
-
-            if [[ $MATCHED -eq 1 ]]; then
+            if echo "$ALL_ARTIFACTS" | grep -E -q "$FILE"; then
+              echo "✅ 找到匹配的 Artifact：$(echo "$ALL_ARTIFACTS" | grep -E "$FILE" | head -n1)"
               exit 0
             fi
 
@@ -199,7 +206,7 @@ jobs:
               "oneplus_ace2_pro_v"
               "oneplus_ace3_v"
               "oneplus_open_v"
-              "oneplus12_v"
+              "oneplus_12_v"
               "oneplus_13r"
               "oneplus_ace3_pro_v"
               "oneplus_ace5"
@@ -210,25 +217,35 @@ jobs:
               "oneplus_pad2_v"
               "oneplus_nord_5"
               "oneplus_ace5_pro"
+              "oneplus_ace5_pro_b"
               "oneplus_13"
+              "oneplus_13_b"
               "oneplus_13t"
+              "oneplus_13t_b"
+            )
+          elif [[ "$BATCH" == "4" ]]; then
+            FILE_LIST=(
+              "oneplus_13_global"
               "oneplus_13s"
+              "oneplus_13s_b"
               "oneplus_pad_2_pro"
               "oneplus_pad_3"
+              "oneplus_ace5_ultra"
+              "oneplus_ace_6"
+              "oneplus_15"
             )
           else
             echo "无效的 BATCH 值: $BATCH"
             exit 1
           fi
 
-          # 生成 short 名称
           SHORT_LIST=()
           for FILE in "${FILE_LIST[@]}"; do
             SHORT=$(echo "$FILE" | sed -E 's/_[a-z]$//' | sed -E 's/_v$//')
             SHORT_LIST+=("$SHORT")
           done
 
-          ALL_ARTIFACTS=$(gh api repos/${{ github.repository }}/actions/artifacts --jq '.artifacts[].name')
+          ALL_ARTIFACTS=$(gh api --paginate repos/${{ github.repository }}/actions/artifacts --jq '.artifacts[].name')
 
           MATCHED_ARTIFACTS=()
           for FILE in "${SHORT_LIST[@]}"; do
