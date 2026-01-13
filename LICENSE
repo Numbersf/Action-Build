@@ -1,0 +1,32 @@
+Copyright (c) 2026 Numbersf-Action.Build
+
+Permission is hereby granted to any person to view, study, and modify
+this software for personal, internal, or development use.
+
+Forking this repository is explicitly permitted for personal use,
+experimentation, development, or contribution, regardless of whether
+modifications are made.
+
+Redistribution, publication, or public promotion of the source code,
+in whole or in part, is NOT permitted, except under the following
+conditions:
+
+1. The redistributed version contains clear and distinguishable
+   modifications compared to the original source code, such that it
+   cannot reasonably be considered an unmodified mirror; OR
+
+2. Explicit written permission has been obtained from the copyright
+   holder.
+
+Public redistribution or promotion of an unmodified fork of this
+repository is strictly prohibited.
+
+The distribution of compiled or generated artifacts (including but not
+limited to binaries, kernel images, ZIP packages, or other build outputs)
+produced from this software is explicitly permitted, regardless of
+whether the source code has been modified, provided that no claim of
+original authorship is made.
+
+This software is provided "AS IS", without warranty of any kind, express
+or implied, including but not limited to the warranties of
+merchantability, fitness for a particular purpose, and noninfringement.

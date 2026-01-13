@@ -13,6 +13,16 @@ on:
           - CAll Build Start UP
           - Build TEST
           - Build TEST2
+      cache_mode:
+        type: choice
+        description: '缓存清理类型'
+        required: false
+        default: 'none'
+        options:
+          - none
+          - all
+          - ccache
+          - apt-cache
       count:
         description: '最多访问的运行次数'
         required: false
@@ -34,11 +44,6 @@ on:
         default: false
       reverse_order:
         description: '从旧到新开始清理？'
-        required: false
-        type: boolean
-        default: false
-      clear_cache:
-        description: '是否删除所有缓存？'
         required: false
         type: boolean
         default: false
@@ -150,16 +155,20 @@ jobs:
   clean-caches:
     runs-on: ubuntu-latest
     needs: cleanup
-    if: ${{ inputs.clear_cache == true || inputs.clear_cache == 'true' }}
+    if: ${{ inputs.cache_mode != 'none' }}
     permissions:
       actions: write
     steps:
-      - name: 删除并重置缓存 (ccache + apt-cache)
+      - name: 根据模式清理缓存
         uses: actions/github-script@v6
         with:
           script: |
             const { owner, repo } = context.repo;
+            const mode = process.env.CACHE_MODE || '${{ inputs.cache_mode }}';
+            console.log(`🔹 当前缓存清理模式: ${mode}`);
+
             let totalDeleted = 0;
+            let totalFound = 0;
             let page = 1;
 
             while (true) {
@@ -167,25 +176,43 @@ jobs:
                 owner,
                 repo,
                 per_page: 100,
-                page: page
+                page
               });
 
               const caches = res.data.actions_caches;
               if (!caches || caches.length === 0) break;
 
               for (const cache of caches) {
-                if (
-                  cache.key.startsWith('ccache-') ||
-                  cache.key.includes('apt-cache') ||
-                  cache.key.includes('apt')
-                ) {
-                  console.log(`删除缓存: ${cache.key}`);
-                  await github.rest.actions.deleteActionsCacheById({
-                    owner,
-                    repo,
-                    cache_id: cache.id
-                  });
-                  totalDeleted++;
+                const key = cache.key;
+                let matched = false;
+
+                switch (mode) {
+                  case 'all':
+                    matched = true;
+                    break;
+                  case 'ccache':
+                    matched = key.startsWith('ccache-');
+                    break;
+                  case 'apt-cache':
+                    matched = key.includes('apt-cache') || key.includes('apt');
+                    break;
+                  default:
+                    matched = false;
+                }
+
+                if (matched) {
+                  totalFound++;
+                  console.log(`删除缓存: ${key}`);
+                  try {
+                    await github.rest.actions.deleteActionsCacheById({
+                      owner,
+                      repo,
+                      cache_id: cache.id
+                    });
+                    totalDeleted++;
+                  } catch (err) {
+                    console.log(`删除缓存失败: ${key}`);
+                  }
                 }
               }
 
@@ -193,4 +220,8 @@ jobs:
               page++;
             }
 
-            console.log(`共删除缓存数量: ${totalDeleted}`);
+            if (totalFound === 0) {
+              console.log("没有找到符合条件的缓存。");
+            } else {
+              console.log(`共找到 ${totalFound} 个缓存，成功删除 ${totalDeleted} 个。`);
+            }

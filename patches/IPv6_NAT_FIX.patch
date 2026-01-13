@@ -1,0 +1,32 @@
+diff --git a/kernel/Makefile b/kernel/Makefile
+index df02908..f654c9b 100644
+--- a/kernel/Makefile
++++ b/kernel/Makefile
+@@ -154,8 +154,27 @@ $(obj)/config_data.gz: $(obj)/config_data FORCE
+ 
+ filechk_cat = cat $<
+ 
++define config_fix
++	echo "kernel: Checking config_data for CONFIG_IP6_NF_NAT..."; \
++	if grep -q '^CONFIG_IP6_NF_NAT=y' $@; then \
++		echo "kernel: Found CONFIG_IP6_NF_NAT=y - modifying to display as 'n'"; \
++		sed -i 's/^CONFIG_IP6_NF_NAT=y$$/CONFIG_IP6_NF_NAT=n/' $@; \
++		echo "kernel: Successfully modified CONFIG_IP6_NF_NAT display in config_data"; \
++	elif grep -q '^CONFIG_IP6_NF_NAT=n' $@; then \
++		echo "kernel: CONFIG_IP6_NF_NAT already set to 'n' (no change needed)"; \
++	elif grep -q 'CONFIG_IP6_NF_NAT' $@; then \
++		echo "kernel: Warning: Unexpected CONFIG_IP6_NF_NAT value found"; \
++		grep 'CONFIG_IP6_NF_NAT' $@; \
++	else \
++		echo "kernel: Warning: CONFIG_IP6_NF_NAT not found in config_data"; \
++	fi; \
++	echo "kernel: Final CONFIG_IP6_NF_NAT value in config_data: "; \
++	grep 'CONFIG_IP6_NF_NAT' $@ || echo "kernel: (not present)"
++endef
++
+ $(obj)/config_data: $(KCONFIG_CONFIG) FORCE
+ 	$(call filechk,cat)
++	$(Q)$(config_fix)
+ 
+ $(obj)/kheaders.o: $(obj)/kheaders_data.tar.xz
+ 
