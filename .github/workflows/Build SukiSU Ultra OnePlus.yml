@@ -562,83 +562,57 @@ jobs:
 
       - name: Add SukiSU Ultra
         run: |
-          cd kernel_workspace/kernel_platform
+          ROOT_DIR=$(pwd)
+          PLATFORM_DIR="$ROOT_DIR/kernel_workspace/kernel_platform"
+          COMMON_DIR="$PLATFORM_DIR/common"
+          
+          cd "$PLATFORM_DIR"
 
           KSU_META="${{ github.event.inputs.KSU_META }}"
-
-          # 必须包含两个分隔符（至少三个字段）
-          if [[ "$(grep -o '/' <<< "$KSU_META" | wc -l)" -lt 2 ]]; then
-            echo "错误: KSU_META 参数缺少必要的分隔符 '/'，格式应为: 分支名/自定义标识(可省略)/提交hash(可省略)"
-            exit 10
-          fi
-
-          # 解析字段：分支 / 自定义标识 / 手动 hash
           IFS='/' read -r BRANCH_NAME CUSTOM_TAG MANUAL_HASH <<< "$KSU_META"
 
-          echo "分支名: $BRANCH_NAME"
-          [[ -n "$CUSTOM_TAG" ]] && echo "自定义版本标识: $CUSTOM_TAG" || echo "自定义版本标识: 未启用"
-          [[ -n "$MANUAL_HASH" ]] && echo "手动指定 hash: $MANUAL_HASH" || echo "手动指定 hash: 未启用"
-
+          # 1. 运行安装脚本
           curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash -s "$BRANCH_NAME"
-          cd ./KernelSU
-
-          # 如果指定了手动 hash，就切换到该提交
-          if [[ -n "$MANUAL_HASH" ]]; then
-            git fetch origin "$BRANCH_NAME" --depth=50
-            git checkout "$MANUAL_HASH"
-            SHORT_HASH=${MANUAL_HASH:0:8}
+          
+          # 2. 【修正版】动态定位 SukiSU 驱动目录并同步
+          echo "Looking for SukiSU source..."
+          # 自动寻找含有 Kbuild 的目录，通常是 KernelSU/kernel 或 KernelSU/
+          KSU_SRC=$(find "$PLATFORM_DIR/KernelSU" -name "Kbuild" -exec dirname {} + | head -n1)
+          
+          if [ -d "$KSU_SRC" ]; then
+            echo "Found SukiSU source at: $KSU_SRC"
+            mkdir -p "$COMMON_DIR/drivers/kernelsu"
+            cp -rf "$KSU_SRC/"* "$COMMON_DIR/drivers/kernelsu/"
+            echo "✅ 驱动同步完成"
+          else
+            echo "❌ 错误: 找不到 SukiSU 驱动源码！"
+            exit 1
           fi
 
-          KSU_API_VERSION=$(curl -fsSL "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/$BRANCH_NAME/kernel/Kbuild" | \
-            grep -m1 "KSU_VERSION_API :=" | awk -F'= ' '{print $2}' | tr -d '[:space:]')
-          if [[ -z "$KSU_API_VERSION" || "$(printf '%s\n' "$KSU_API_VERSION" "3.1.7" | sort -V | head -n1)" != "3.1.7" ]]; then
-            KSU_API_VERSION="3.1.7"
-          fi
-          echo "KSU_API_VERSION=$KSU_API_VERSION" >> $GITHUB_ENV
+          # 3. 修复符号名 (Undefined symbol: ksu_handle_vfs_fstat)
+          echo "Fixing symbols in stat.c..."
+          find "$COMMON_DIR/fs" -name "stat.c" -exec sed -i 's/ksu_handle_vfs_fstat/ksu_handle_stat/g' {} +
 
+          # 4. 强制 Makefile 包含
+          if ! grep -q "obj-y += kernelsu/" "$COMMON_DIR/drivers/Makefile"; then
+            echo 'obj-y += kernelsu/' >> "$COMMON_DIR/drivers/Makefile"
+          fi
+          
+          # 5. 版本号处理
+          TARGET_KBUILD="$COMMON_DIR/drivers/kernelsu/Kbuild"
+          cd "$PLATFORM_DIR/KernelSU"
+          [[ -n "$MANUAL_HASH" ]] && git checkout "$MANUAL_HASH"
+          
           GIT_HASH=$(git rev-parse --short HEAD)
-          echo "GIT_HASH=$GIT_HASH"
-
-          # 组装版本号
-          if [[ -n "$MANUAL_HASH" ]]; then
-            USE_HASH="$SHORT_HASH"
-          else
-            USE_HASH="$GIT_HASH"
-          fi
-          if [[ -z "$CUSTOM_TAG" ]]; then
-            VERSION_FULL="v$KSU_API_VERSION-$USE_HASH@$BRANCH_NAME"
-          else
-            VERSION_FULL="v$KSU_API_VERSION-$CUSTOM_TAG@$BRANCH_NAME[$USE_HASH]"
-          fi
-
-          # 清理并写入 Kbuild 版本信息
-          sed -i '/define get_ksu_version_full/,/endef/d' kernel/Kbuild
-          sed -i '/KSU_VERSION_API :=/d' kernel/Kbuild
-          sed -i '/KSU_VERSION_FULL :=/d' kernel/Kbuild
-
-          VERSION_DEFINITIONS=$(cat <<EOF
-            define get_ksu_version_full
-            $VERSION_FULL
-            endef
-
-            KSU_VERSION_API := $KSU_API_VERSION
-            KSU_VERSION_FULL := $VERSION_FULL
-          EOF
-          )
-
-          awk -v def="$VERSION_DEFINITIONS" '
-            /REPO_OWNER :=/ {print; print def; inserted=1; next}
-            1
-            END {if (!inserted) print def}
-          ' kernel/Kbuild > kernel/Kbuild.tmp && mv kernel/Kbuild.tmp kernel/Kbuild
-
-          KSU_VERSION=$(expr $(git rev-list --count main 2>/dev/null || echo 13000) + 37185)
-          echo "KSUVER=$KSU_VERSION" >> $GITHUB_ENV
-
-          echo "::group::最终 Kbuild 中版本信息及部分调试结果预览"
-          grep -A10 "REPO_OWNER" kernel/Kbuild
-          grep "KSU_VERSION_FULL" kernel/Kbuild
-          echo "::endgroup::"
+          KSU_API_VERSION=$(grep "KSU_VERSION_API :=" "$TARGET_KBUILD" | head -n1 | awk -F'= ' '{print $2}' | tr -d '[:space:]' || echo "3.1.7")
+          VERSION_FULL="v$KSU_API_VERSION-${CUSTOM_TAG:-$GIT_HASH}@$BRANCH_NAME"
+          
+          # 写入真正的 Kbuild
+          sed -i '/define get_ksu_version_full/,/endef/d' "$TARGET_KBUILD"
+          echo -e "define get_ksu_version_full\n$VERSION_FULL\nendef" >> "$TARGET_KBUILD"
+          
+          echo "KSU_VERSION_API=$KSU_API_VERSION" >> $GITHUB_ENV
+          echo "KSUVER=$(expr $(git rev-list --count HEAD) + 37185)" >> $GITHUB_ENV
 
       - name: Apply Patches SukiSU Ultra
         env:
