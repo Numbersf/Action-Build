@@ -590,8 +590,8 @@ jobs:
           fi
 
           # 3. 修复符号名 (Undefined symbol: ksu_handle_vfs_fstat)
-          echo "Fixing symbols in stat.c..."
-          find "$COMMON_DIR/fs" -name "stat.c" -exec sed -i 's/ksu_handle_vfs_fstat/ksu_handle_stat/g' {} +
+          #echo "Fixing symbols in stat.c..."
+          #find "$COMMON_DIR/fs" sed -i 's/ksu_c" -exec sed -i 's/ksu_handle_vfs_fstat/ksu_handle_stat/g' {} +
 
           # 4. 强制 Makefile 包含
           if ! grep -q "obj-y += kernelsu/" "$COMMON_DIR/drivers/Makefile"; then
