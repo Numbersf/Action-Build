@@ -777,6 +777,29 @@ jobs:
           curl -LSs https://raw.githubusercontent.com/vc-teahouse/Baseband-guard/main/setup.sh | bash
           sed -i '/^config LSM$/,/^help$/{ /^[[:space:]]*default/ { /baseband_guard/! s/selinux/selinux,baseband_guard/ } }' ./security/Kconfig
 
+      - name: Fix KernelSU Compilation Error [BATE] [TEMP]
+        run: |
+          cd kernel_workspace/kernel_platform
+          
+          # 查找所有 throne_tracker.c 文件
+          find . -name "throne_tracker.c" -type f | while read THRONE_FILE; do
+            echo "正在尝试修复 $THRONE_FILE"
+            
+            # 检查宏定义是否存在
+            if ! grep -q "^#define SYSTEM_PACKAGES_LIST_PATH" "$THRONE_FILE"; then
+              echo "必要的宏定义不存在，正在重新添加"
+              sed -i '1i #ifndef SYSTEM_PACKAGES_LIST_PATH\n#define SYSTEM_PACKAGES_LIST_PATH "/data/system/packages.list"\n#endif' "$THRONE_FILE"
+            fi
+
+            # 替换所有 SYSTEM_PACKAGES_LIST_PATH 为字符串
+            sed -i 's|SYSTEM_PACKAGES_LIST_PATH|"/data/system/packages.list"|g' "$THRONE_FILE"
+            
+            # 修复 pr_err 的字符串拼接问题
+            sed -i 's|"%s: open " "/data/system/packages.list" " failed: %ld\\n"|"%s: open /data/system/packages.list failed: %ld\\n"|g' "$THRONE_FILE"
+            
+            echo "完成"
+          done
+           
       # 配置信息，带*为附加项目，具有一定危险性和不确定性
       - name: Add Configuration Settings
         run: |
