@@ -571,33 +571,37 @@ jobs:
           KSU_META="${{ github.event.inputs.KSU_META }}"
           IFS='/' read -r BRANCH_NAME CUSTOM_TAG MANUAL_HASH <<< "$KSU_META"
 
-          # 1. 运行安装脚本
+          # 1. 运行安装脚本 (此脚本会自动 patch fs/stat.c)
           curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash -s "$BRANCH_NAME"
           
-          # 2. 【修正版】动态定位 SukiSU 驱动目录并同步
-          echo "Looking for SukiSU source..."
-          # 自动寻找含有 Kbuild 的目录，通常是 KernelSU/kernel 或 KernelSU/
+          # 2. 同步驱动源码到 common 编译目录
           KSU_SRC=$(find "$PLATFORM_DIR/KernelSU" -name "Kbuild" -exec dirname {} + | head -n1)
-          
           if [ -d "$KSU_SRC" ]; then
-            echo "Found SukiSU source at: $KSU_SRC"
             mkdir -p "$COMMON_DIR/drivers/kernelsu"
             cp -rf "$KSU_SRC/"* "$COMMON_DIR/drivers/kernelsu/"
             echo "✅ 驱动同步完成"
-          else
-            echo "❌ 错误: 找不到 SukiSU 驱动源码！"
-            exit 1
           fi
 
-          # 3. 修复符号名 (Undefined symbol: ksu_handle_vfs_fstat)
-          #echo "Fixing symbols in stat.c..."
-          #find "$COMMON_DIR/fs" sed -i 's/ksu_c" -exec sed -i 's/ksu_handle_vfs_fstat/ksu_handle_stat/g' {} +
+          # 3. 【关键修复】消除 fs/stat.c 中的重复定义
+          # 逻辑：删除 fs/stat.c 中以 void ksu_handle_vfs_fstat 开头的整个函数块
+          # 这样 stat.c 只剩声明和调用，而真正的函数体由 drivers/kernelsu/ksu.c 提供
+          if [ -f "$COMMON_DIR/fs/stat.c" ]; then
+            echo "正在清理 fs/stat.c 中的重复定义..."
+            # 使用 sed 删除从函数头到花括号结束的整段代码
+            sed -i '/void ksu_handle_vfs_fstat/,/^}/d' "$COMMON_DIR/fs/stat.c"
+            
+            # 补偿性添加：确保文件末尾或合适位置有 extern 声明，防止编译器报“未声明”错误
+            if ! grep -q "extern void ksu_handle_vfs_fstat" "$COMMON_DIR/fs/stat.c"; then
+              sed -i '1i extern void ksu_handle_vfs_fstat(int dfd, const char __user *filename, int flags, struct kstat *stat);' "$COMMON_DIR/fs/stat.c"
+            fi
+            echo "✅ fs/stat.c 清理完成"
+          fi
 
-          # 4. 强制 Makefile 包含
+          # 4. 确保 Makefile 引用驱动
           if ! grep -q "obj-y += kernelsu/" "$COMMON_DIR/drivers/Makefile"; then
             echo 'obj-y += kernelsu/' >> "$COMMON_DIR/drivers/Makefile"
           fi
-          
+
           # 5. 版本号处理
           TARGET_KBUILD="$COMMON_DIR/drivers/kernelsu/Kbuild"
           cd "$PLATFORM_DIR/KernelSU"
@@ -607,13 +611,12 @@ jobs:
           KSU_API_VERSION=$(grep "KSU_VERSION_API :=" "$TARGET_KBUILD" | head -n1 | awk -F'= ' '{print $2}' | tr -d '[:space:]' || echo "3.1.7")
           VERSION_FULL="v$KSU_API_VERSION-${CUSTOM_TAG:-$GIT_HASH}@$BRANCH_NAME"
           
-          # 写入真正的 Kbuild
           sed -i '/define get_ksu_version_full/,/endef/d' "$TARGET_KBUILD"
           echo -e "define get_ksu_version_full\n$VERSION_FULL\nendef" >> "$TARGET_KBUILD"
           
           echo "KSU_VERSION_API=$KSU_API_VERSION" >> $GITHUB_ENV
           echo "KSUVER=$(expr $(git rev-list --count HEAD) + 37185)" >> $GITHUB_ENV
-
+          
       - name: Apply Patches SukiSU Ultra
         env:
           FILE: ${{ github.event.inputs.FILE }}
