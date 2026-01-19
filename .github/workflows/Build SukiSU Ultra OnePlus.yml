@@ -27,6 +27,7 @@ on:
           - oneplus_open_b
           - oneplus_nord_ce4_b
           - oneplus_12_b
+          - oneplus_pad_go_2_b
           - oneplus_nord_ce4_lite_5g_v
           - oneplus_nord_4_b
           - oneplus_ace_3v_b
@@ -49,6 +50,7 @@ on:
           - oneplus_pad2_mt6991_b
           - oneplus_ace_6
           - oneplus_ace_6t
+          - oneplus_15r
           - oneplus_15
       MANAGER_SOURCE:
         type: choice
