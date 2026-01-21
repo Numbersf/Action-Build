@@ -89,7 +89,7 @@ on:
         type: string
         description: "分支名(必填)/自定义版本标识(留空不修改)/回退分支提交哈希版本(留空不修改)"
         required: false
-        default: "builtin/Numbersf/"
+        default: "builtin/Enkaiyuegure/"
       SUFFIX:
         type: string
         description: "自定义内核后缀(不输入使用随机字符串)"
@@ -99,6 +99,16 @@ on:
         description: "自定义内核等级欺骗(SUBLEVEL)"
         required: false
         default: ""
+      BUILD_USER:
+        type: string
+        description: "自定义编译用户名"
+        required: false
+        default: "kleaf"
+      BUILD_HOST:
+        type: string
+        description: "自定义编译主机名"
+        required: false
+        default: "build-host"
       FAST_BUILD:
         type: boolean
         description: "是否启用极速构建？"
@@ -165,6 +175,8 @@ jobs:
     name: ${{ github.event.inputs.FAST_BUILD == 'true' && ' [FAST]' || '' }}${{ github.event.inputs.KPM == 'true' && ' [KPM]' || '' }}${{ github.event.inputs.LSM == 'true' && ' [LSM]' || '' }}${{ github.event.inputs.SCHED == 'true' && ' [SCHED]' || '' }}${{ github.event.inputs.ZRAM == 'true' && ' [ZRAM]' || '' }}For ${{ github.event.inputs.FILE }} ${{ github.event.inputs.SUFFIX }}
     runs-on: ubuntu-latest
     env:
+      KBUILD_BUILD_USER: ${{ github.event.inputs.BUILD_USER }}
+      KBUILD_BUILD_HOST: ${{ github.event.inputs.BUILD_HOST }}
       CCACHE_COMPILERCHECK: "%compiler% -dumpmachine; %compiler% -dumpversion"
       CCACHE_NOHASHDIR: "true"
       CCACHE_HARDLINK: "true"
@@ -914,6 +926,8 @@ jobs:
       - name: Custom BUILD_TIME
         shell: bash
         run: |
+          export KBUILD_BUILD_USER="${{ github.event.inputs.BUILD_USER }}"
+          export KBUILD_BUILD_HOST="${{ github.event.inputs.BUILD_HOST }}"
           INPUT_TIME="${{ github.event.inputs.BUILD_TIME }}"
           if [[ -n "$INPUT_TIME" && "$INPUT_TIME" != "F" && "$INPUT_TIME" != "f" ]]; then
             DATESTR="$INPUT_TIME"
