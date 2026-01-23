@@ -8,6 +8,7 @@
 **```Build All OnePlus Devices SukiSU Ultra Kernel```**
 > More efficient · More comprehensive · More Faster · More stable
  
+Prohibit the promotion of forked repositories with **no modifications**; see [LICENSE](LICENSE)
 <details>
 <summary><strong>Click to view how to fork the project</strong></summary>
 <img src="https://github.com/Numbersf/Action-Build/blob/SukiSU-Ultra/pic/make.gif" width="500"/>
@@ -85,8 +86,6 @@
  
 # Changelog
 > Minor updates will be ignored. For more details, please refer to the commit.
- 
-- Added `Unicode` zero-width bypass fix(prevents app package-name checks involving zero-width spaces and mitigates some related vulnerabilities)、memory optimization patches.  
  
 - Initial release with support for a large number of `MTK` devices; manifest list and path issues have been successfully resolved.  
  

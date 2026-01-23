@@ -8,6 +8,7 @@
 **```Build All OnePlus Devices SukiSU Ultra Kernel```**
 >更高效 更全面 更快速 更稳定
  
+禁止宣传**没有任何修改**的`fork`仓库，详见[LICENSE](LICENSE)
 <details>
 <summary><strong>点击查看如何fork项目</strong></summary>
 <img src="https://github.com/Numbersf/Action-Build/blob/SukiSU-Ultra/pic/make.gif" width="500"/>
@@ -85,8 +86,6 @@
  
 # 更新日志
 >小的更新内容将被忽略 更多内容请参看提交
- 
-- 新增`Unicode`零宽绕过修复(可以避免应用包名关于零宽空格的检测点、阻止部分相关漏洞)、内存优化补丁  
  
 - 首发新增支持大量`MTK`机型,清单和路径问题成功被攻克  
  

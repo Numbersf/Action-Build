@@ -14,8 +14,8 @@ on:
           - oneplus_ace_race_v
           - oneplus_10_pro_v
           - oneplus_10t_v
-          - oneplus_11r_v
-          - oneplus_ace2_v
+          - oneplus_11r_b
+          - oneplus_ace2_b
           - oneplus_pad_lite_v
           - oneplus_pad_mt6983_v
           - oneplus_ace_2v_v
@@ -25,8 +25,9 @@ on:
           - oneplus_ace2_pro_b
           - oneplus_ace3_b
           - oneplus_open_b
-          - oneplus_nord_ce4_v
+          - oneplus_nord_ce4_b
           - oneplus_12_b
+          - oneplus_pad_go_2_b
           - oneplus_nord_ce4_lite_5g_v
           - oneplus_nord_4_b
           - oneplus_ace_3v_b
@@ -49,6 +50,7 @@ on:
           - oneplus_pad2_mt6991_b
           - oneplus_ace_6
           - oneplus_ace_6t
+          - oneplus_15r
           - oneplus_15
       MANAGER_SOURCE:
         type: choice
@@ -124,9 +126,9 @@ on:
         default: true
       UNICODE_BYPASS:
         type: boolean
-        description: "是否添加Unicode零宽绕过修复与内存优化补丁？"
+        description: "是否添加Unicode不可见字码点绕过读取漏洞修复？"
         required: true
-        default: true
+        default: false
       SCHED:
         type: boolean
         description: "是否添加风驰驱动1.0？"
@@ -135,6 +137,11 @@ on:
       ZRAM:
         type: boolean
         description: "是否添加更多ZRAM算法？"
+        required: true
+        default: false
+      XUS_FIX:
+        type: boolean
+        description: "是否阻止5US报错文件产生？"
         required: true
         default: false
       SUSFS_DEV:
@@ -211,9 +218,9 @@ jobs:
             local REPO_URL=$2
 
             echo "🌐 尝试拉取 ${OWNER} 分支列表..."
-            BRANCHES=$(curl -s ${REPO_URL}/branches | jq -r '.[].name' || true)
+            BRANCHES=$(curl -fsL ${REPO_URL}/branches | jq -r 'if type=="array" then .[].name else empty end' 2>/dev/null || true)
             if [[ -z "$BRANCHES" ]]; then
-              echo "⚠️ ${OWNER} 分支列表获取失败，跳过。"
+              echo "⚠️ ${OWNER} 分支列表获取失败，请尝试重新运行工作流。"
               return 1
             fi
             for BRANCH in $BRANCHES; do
@@ -315,6 +322,7 @@ jobs:
           echo "Selected SCHED: ${{ github.event.inputs.SCHED }}"
           echo "Selected ZRAM: ${{ github.event.inputs.ZRAM }}"
           echo "Selected UNICODE_BYPASS: ${{ github.event.inputs.UNICODE_BYPASS }}"
+          echo "Selected XUS_FIX: ${{ github.event.inputs.XUS_FIX }}"
           echo "-----------------------"
 
       - name: Check Disk Space
@@ -720,6 +728,10 @@ jobs:
                 fi
               fi
             fi
+            if [ "${{ github.event.inputs.SUSFS_META }}" != "-1" ] && [ "${{ github.event.inputs.XUS_FIX }}" = "true" ]; then
+              cp ../../Action-Build/patches/No_5uS.patch ./
+              patch -p1 < No_5uS.patch || true
+            fi    
           fi
 
       # OGKI转换GKI，无需修改 dtbo 开机
@@ -739,22 +751,15 @@ jobs:
           patch -p1 -F 3 < "${PATCH_DIR}/hmbird_patch.patch" || true
           echo "OGKI转换GKI_patch完成"
 
-      - name: Apply UNICODE_BYPASS and MEMORY_OPT
+      - name: Apply UNICODE_BYPASS
         if: ${{ github.event.inputs.UNICODE_BYPASS == 'true' }}
         run: |
           PATCH_DIR="${GITHUB_WORKSPACE}/kernel_workspace/Action-Build/patches"
           cd kernel_workspace/kernel_platform/common
-          patch -p1 --forward < "${PATCH_DIR}/optimized_mem_operations.patch"
-          patch -p1 --forward < "${PATCH_DIR}/file_struct_8bytes_align.patch"
-          patch -p1 --forward < "${PATCH_DIR}/reduce_cache_pressure.patch"
           if [ "$KV1" -lt 6 ]; then
-            patch -p1 --forward < "${PATCH_DIR}/clear_page_16bytes_align.patch"
-            echo "Patching unicode!"
-            patch -p1 --forward < "${PATCH_DIR}/unicode_bypass_fix_6.1-.patch"
+            patch -p1 --forward < "${PATCH_DIR}/unicode_bypass_fix_6.1-.patch" || true
           else
-            cat "${PATCH_DIR}/clear_page_16bytes_align.patch" | sed -e 's/SYM_FUNC_START_PI(clear_page)/SYM_FUNC_START_PI(__pi_clear_page)/' | patch -p1 -F3 --forward
-            echo "Patching unicode!"
-            patch -p1 --forward < "${PATCH_DIR}/unicode_bypass_fix_6.1+.patch"
+            patch -p1 --forward < "${PATCH_DIR}/unicode_bypass_fix_6.1+.patch" || true
           fi
 
       - name: Apply ZRAM
@@ -1057,7 +1062,8 @@ jobs:
       - name: Apply patch_linux and Replace Image
         if: ${{ github.event.inputs.KPM == 'true' }}
         run: |
-          PATCH_DIR="${GITHUB_WORKSPACE}/kernel_workspace/SukiSU_patch/kpm"
+          # PATCH_DIR="${GITHUB_WORKSPACE}/kernel_workspace/SukiSU_patch/kpm"
+          PATCH_DIR="${GITHUB_WORKSPACE}/kernel_workspace/Action-Build/patches"
           OUT_DIR="${GITHUB_WORKSPACE}/kernel_workspace/kernel_platform/out/Final-Image-Find"
           cd "${OUT_DIR}"
           cp "${PATCH_DIR}/patch_linux" .

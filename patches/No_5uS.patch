@@ -1,0 +1,72 @@
+diff --git a/fs/namei.c b/fs/namei.c
+index ce97b60fe557..418f4a9080a7 100644
+--- a/fs/namei.c
++++ b/fs/namei.c
+@@ -1569,19 +1569,21 @@
+ #ifdef CONFIG_KSU_SUSFS_SUS_PATH
+ 	if (base && base->d_inode && !found_sus_path) {
+ 		if (susfs_is_base_dentry_android_data_dir(base) &&
+ 			susfs_is_sus_android_data_d_name_found(name->name))
+ 		{
+-			dentry = lookup_dcache(&susfs_fake_qstr_name, base, flags);
+-			found_sus_path = true;
+-			goto retry;
++			return ERR_PTR(-ENOENT);
++			// dentry = lookup_dcache(&susfs_fake_qstr_name, base, flags);
++			// found_sus_path = true;
++			// goto retry;
+ 		} else if (susfs_is_base_dentry_sdcard_dir(base) &&
+ 				   susfs_is_sus_sdcard_d_name_found(name->name))
+ 		{
+-			dentry = lookup_dcache(&susfs_fake_qstr_name, base, flags);
+-			found_sus_path = true;
+-			goto retry;
++			return ERR_PTR(-ENOENT);
++			// dentry = lookup_dcache(&susfs_fake_qstr_name, base, flags);
++			// found_sus_path = true;
++			// goto retry;
+ 		}
+ 	}
+ 	dentry = lookup_dcache(name, base, flags);
+ retry:
+ #endif
+@@ -3576,16 +3584,22 @@
+ #ifdef CONFIG_KSU_SUSFS_SUS_PATH
+ 	if (is_nd_state_open_last) {
+ 		if (susfs_is_base_dentry_android_data_dir(dir) &&
+ 			susfs_is_sus_android_data_d_name_found(nd->last.name))
+ 		{
++			if (op->open_flag & (O_CREAT | O_TRUNC | O_EXCL)) {
++				return ERR_PTR(-ENOENT);
++			}
+ 			dentry = d_lookup(dir, &susfs_fake_qstr_name);
+ 			found_sus_path = true;
+ 			goto skip_orig_flow1;
+ 		} else if (susfs_is_base_dentry_sdcard_dir(dir) &&
+ 				   susfs_is_sus_sdcard_d_name_found(nd->last.name))
+ 		{
++			if (op->open_flag & (O_CREAT | O_TRUNC | O_EXCL)) {
++				return ERR_PTR(-ENOENT);
++			}
+ 			dentry = d_lookup(dir, &susfs_fake_qstr_name);
+ 			found_sus_path = true;
+ 			goto skip_orig_flow1;
+ 		}
+ 	}
+diff --git a/fs/susfs.c b/fs/susfs.c
+index ce97b60fe557..418f4a9080a7 100644
+--- a/fs/susfs.c
++++ b/fs/susfs.c
+@@ -270,11 +270,11 @@
+ 	}
+ }
+ 
+ static inline bool is_i_uid_in_android_data_not_allowed(uid_t i_uid) {
+ 	return (likely(susfs_is_current_proc_umounted()) &&
+-		unlikely(current_uid().val != i_uid));
++		unlikely(current_uid().val != i_uid) && unlikely(current_uid().val != 0));
+ }
+ 
+ static inline bool is_i_uid_in_sdcard_not_allowed(void) {
+ 	return (likely(susfs_is_current_proc_umounted()));
+ }
