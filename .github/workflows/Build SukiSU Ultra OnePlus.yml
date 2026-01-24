@@ -70,6 +70,15 @@ on:
           - CI
           - Release
           - NoN
+      KPM:
+        type: choice
+        description: "内核模块实现方式"
+        required: true
+        default: KPM
+        options:
+          - KPM
+          - KPN
+          - NoN
       SUSFS_META:
         type: string
         description: "回退SUSFS到指定哈希版本"
@@ -102,11 +111,6 @@ on:
       FAST_BUILD:
         type: boolean
         description: "是否启用极速构建？"
-        required: true
-        default: true
-      KPM:
-        type: boolean
-        description: "是否启用内核模块(KPM)？"
         required: true
         default: true
       LSM:
@@ -162,7 +166,7 @@ on:
 
 jobs:
   build:
-    name: ${{ github.event.inputs.FAST_BUILD == 'true' && ' [FAST]' || '' }}${{ github.event.inputs.KPM == 'true' && ' [KPM]' || '' }}${{ github.event.inputs.LSM == 'true' && ' [LSM]' || '' }}${{ github.event.inputs.SCHED == 'true' && ' [SCHED]' || '' }}${{ github.event.inputs.ZRAM == 'true' && ' [ZRAM]' || '' }}For ${{ github.event.inputs.FILE }} ${{ github.event.inputs.SUFFIX }}
+    name: ${{ github.event.inputs.FAST_BUILD == 'true' && ' [FAST]' || '' }}${{ github.event.inputs.KPM == 'KPM' && ' [KPM]' || github.event.inputs.KPM == 'KPN' && ' [KPN]' || '' }}${{ github.event.inputs.LSM == 'true' && ' [LSM]' || '' }}${{ github.event.inputs.SCHED == 'true' && ' [SCHED]' || '' }}${{ github.event.inputs.ZRAM == 'true' && ' [ZRAM]' || '' }}For ${{ github.event.inputs.FILE }} ${{ github.event.inputs.SUFFIX }}
     runs-on: ubuntu-latest
     env:
       CCACHE_COMPILERCHECK: "%compiler% -dumpmachine; %compiler% -dumpversion"
@@ -305,6 +309,7 @@ jobs:
           echo "Selected FILE: ${{ github.event.inputs.FILE }}"
           echo "Selected MANAGER_SOURCE: ${{ github.event.inputs.MANAGER_SOURCE }}"
           echo "Selected SUSFS_CI: ${{ github.event.inputs.SUSFS_CI }}"
+          echo "Selected KPM: ${{ github.event.inputs.KPM }}"
           echo "Custom SUSFS_META: ${{ github.event.inputs.SUSFS_META }}"
           echo "Custom KSU_META: ${{ github.event.inputs.KSU_META }}"
           echo "Custom BUILD_TIME: ${{ github.event.inputs.BUILD_TIME }}"
@@ -313,7 +318,6 @@ jobs:
           echo "Custom SUFFIX: ${{ github.event.inputs.SUFFIX }}"
           echo -n "SUFFIX Unicode: "
           python3 -c "import unicodedata; print(''.join(f'\033[31mU+{ord(c):04X}\033[0m ' if c.isspace() or unicodedata.category(c)=='Cf' else f'U+{ord(c):04X} ' for c in '''${{ github.event.inputs.SUFFIX }}'''))"
-          echo "Selected KPM: ${{ github.event.inputs.KPM }}"
           echo "Selected LSM: ${{ github.event.inputs.LSM }}"
           echo "Selected NETFILTER: ${{ github.event.inputs.NETFILTER }}"
           echo "Selected BBR_ECN: ${{ github.event.inputs.BBR_ECN }}"
@@ -812,7 +816,12 @@ jobs:
           echo "CONFIG_KSU=y" >> "$CONFIG_FILE"
 
           # KPM配置
-          echo "CONFIG_KPM=y" >> "$CONFIG_FILE"
+          if [ "${{ github.event.inputs.KPM }}" = "KPM" ] || [ "${{ github.event.inputs.KPM }}" = "NoN" ]; then
+            echo "CONFIG_KPM=y" >> "$CONFIG_FILE"
+          fi
+          if [ "${{ github.event.inputs.KPM }}" = "KPN" ]; then
+            echo "CONFIG_KPM=n" >> "$CONFIG_FILE"
+          fi
 
           # SUSFS配置
           if [ "${{ github.event.inputs.SUSFS_META }}" != "-1" ]; then
@@ -1060,7 +1069,7 @@ jobs:
           fi
 
       - name: Apply patch_linux and Replace Image
-        if: ${{ github.event.inputs.KPM == 'true' }}
+        if: ${{ github.event.inputs.KPM == 'KPM' }}
         run: |
           # PATCH_DIR="${GITHUB_WORKSPACE}/kernel_workspace/SukiSU_patch/kpm"
           PATCH_DIR="${GITHUB_WORKSPACE}/kernel_workspace/Action-Build/patches"
@@ -1145,7 +1154,7 @@ jobs:
       - name: Set zip Suffix
         id: suffix
         run: |
-          echo "value=${{ github.event.inputs.ZRAM == 'true' && '_LZ4KD' || '' }}${{ github.event.inputs.KPM == 'true' && '_KPM' || '' }}${{ github.event.inputs.LSM == 'true' && '_LSM' || '' }}_ILH${{ github.event.inputs.SCHED== 'true' && '_SCHED' || '' }}" >> $GITHUB_OUTPUT
+          echo "value=${{ github.event.inputs.ZRAM == 'true' && '_LZ4KD' || '' }}${{ github.event.inputs.KPM == 'KPM' && '_KPM' || github.event.inputs.KPM == 'KPN' && '_KPN' || '' }}${{ github.event.inputs.LSM == 'true' && '_LSM' || '' }}_ILH${{ github.event.inputs.SCHED== 'true' && '_SCHED' || '' }}" >> $GITHUB_OUTPUT
 
       - name: Upload AnyKernel3
         uses: actions/upload-artifact@v4
