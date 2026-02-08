@@ -28,7 +28,7 @@ jobs:
           EXPECT="我已看完README.md,了解此工作流的风险和作用,有能力取消卡住的工作流运行和删除缓存,并执意继续运行"
 
           if [[ "$CONFIRM" != "$EXPECT" ]]; then
-            echo "❌ 输入无效，您未正确确认工作流风险。请阅读更新日志并正确输入确认内容。如果你仅仅只是想运行单个机型，这不是你该来的地方，请使用本仓库的另外一个工作流文件 Build OnePlus_SukiSU Ultra All"
+            echo "❌ 输入无效，您未正确确认工作流风险。请阅读更新日志并正确输入确认内容。如果你仅仅只是想运行单个机型，这不是你该来的地方，请使用本仓库的另外一个工作流文件 Build All OnePlus Kernels"
             exit 1
           fi
 
@@ -118,7 +118,7 @@ jobs:
       - name: Call Original Workflow
         uses: benc-uk/workflow-dispatch@v1
         with:
-          workflow: Build OnePlus_SukiSU Ultra All
+          workflow: Build All OnePlus Kernels
           token: ${{ secrets.GITHUB_TOKEN }}
           inputs: |
             {

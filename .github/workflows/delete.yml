@@ -7,9 +7,9 @@ on:
         type: choice
         description: '清理的工作流名称'
         required: true
-        default: 'Build OnePlus_SukiSU Ultra All'
+        default: 'Build All OnePlus Kernels'
         options:
-          - Build OnePlus_SukiSU Ultra All
+          - Build All OnePlus Kernels
           - CAll Build Start UP
           - Build TEST
           - Build TEST2
@@ -59,7 +59,10 @@ permissions:
 jobs:
   cleanup:
     runs-on: ubuntu-latest
-
+    if: ${{ inputs.cancel_all
+     || inputs.delete_failed
+     || inputs.delete_success
+     || inputs.delete_cancelled }}
     steps:
       - name: 安装环境
         run: |
@@ -84,7 +87,12 @@ jobs:
           set -e
 
           echo "查找工作流 \"$WORKFLOW_NAME\" 的 ID..."
-          WORKFLOW_ID=$(gh api repos/$REPO/actions/workflows | jq -r ".workflows[] | select(.name == \"$WORKFLOW_NAME\") | .id")
+          WORKFLOWS_JSON=$(gh api repos/$REPO/actions/workflows || true)
+          if ! echo "$WORKFLOWS_JSON" | jq -e '.workflows | type=="array"' >/dev/null 2>&1; then
+            echo "❌ 无法获取 workflows（GitHub API 非 JSON）"
+            exit 1
+          fi
+          WORKFLOW_ID=$(echo "$WORKFLOWS_JSON" | jq -r ".workflows[] | select(.name == \"$WORKFLOW_NAME\") | .id")
           if [ -z "$WORKFLOW_ID" ]; then
             echo "未找到工作流 \"$WORKFLOW_NAME\"，退出。"
             exit 1
@@ -95,7 +103,12 @@ jobs:
           PAGE=1
           ALL_RUNS="[]"
           while true; do
-            RESP=$(gh api "repos/$REPO/actions/workflows/$WORKFLOW_ID/runs?per_page=$PER_PAGE&page=$PAGE")
+            RESP=$(gh api "repos/$REPO/actions/workflows/$WORKFLOW_ID/runs?per_page=$PER_PAGE&page=$PAGE" || true)
+            if ! echo "$RESP" | jq -e '.workflow_runs | type=="array"' >/dev/null 2>&1; then
+              echo "⚠️ runs API 返回非 JSON，停止分页"
+              break
+            fi
+
             RUNS=$(echo "$RESP" | jq '.workflow_runs')
             COUNT_THIS_PAGE=$(echo "$RUNS" | jq 'length')
             if [ "$COUNT_THIS_PAGE" -eq 0 ]; then break; fi
@@ -108,7 +121,7 @@ jobs:
           if [[ "$CANCEL_ALL" == "true" ]]; then
             echo "开始取消进行中或排队中的运行..."
             CANCEL_COUNT=0
-            echo "$ALL_RUNS" | jq -c '.[] | select(.status == "in_progress" or .status == "queued")' | while read run; do
+            echo "$ALL_RUNS" | jq -c '.[] | select((.status == "in_progress") or (.status == "queued"))' | while read run; do
               ID=$(echo "$run" | jq -r '.id')
               if [[ "$ID" == "$CURRENT_RUN_ID" ]]; then continue; fi
               echo "取消运行 ID: $ID"
@@ -154,7 +167,6 @@ jobs:
 
   clean-caches:
     runs-on: ubuntu-latest
-    needs: cleanup
     if: ${{ inputs.cache_mode != 'none' }}
     permissions:
       actions: write
