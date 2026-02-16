@@ -17,7 +17,7 @@ on:
           - oneplus_11r_b
           - oneplus_ace2_b
           - oneplus_pad_lite_v
-          - oneplus_pad_mt6983_v
+          - oneplus_pad_mt6983_b
           - oneplus_ace_2v_v
           - oneplus_ace_pro_v
           - oneplus_11_b
@@ -85,7 +85,7 @@ on:
           - NoN
       SUSFS_META:
         type: string
-        description: "回退SUSFS到指定哈希版本"
+        description: "回退SUSFS(输入哈希或次数或-1关闭)"
         required: false
         default: ""
       DYNAMIC_REPO:
@@ -103,6 +103,11 @@ on:
         description: "分支名(必填)/自定义版本标识(留空不修改)/回退分支提交哈希版本(留空不修改)"
         required: false
         default: "builtin/Numbersf/"
+      ZRAM:
+        type: string
+        description: "ZRAM(0关闭1开启)/算法名/大小"
+        required: true
+        default: "0/lz4kd/8589934592"
       SUFFIX:
         type: string
         description: "自定义内核后缀(不输入使用随机字符串)"
@@ -142,11 +147,6 @@ on:
         description: "是否添加风驰驱动1.0？"
         required: true
         default: false
-      ZRAM:
-        type: boolean
-        description: "是否添加更多ZRAM算法？"
-        required: true
-        default: false
       XUS_FIX:
         type: boolean
         description: "是否阻止5US报错文件产生？"
@@ -155,11 +155,6 @@ on:
       SUSFS_DEV:
         type: boolean
         description: "是否拉取SUSFS-DEV分支？"
-        required: true
-        default: false
-      AOSP:
-        type: boolean
-        description: "是否切换到AOSP源？"
         required: true
         default: false
       SPACE_NOCLEAN:
@@ -175,7 +170,7 @@ on:
 
 jobs:
   build:
-    name: ${{ github.event.inputs.FAST_BUILD == 'true' && ' [FAST]' || '' }}${{ github.event.inputs.AOSP == 'true' && ' [AOSP]' || '' }}${{ github.event.inputs.KPM == 'KPM' && ' [KPM]' || github.event.inputs.KPM == 'KPN' && ' [KPN]' || '' }}${{ github.event.inputs.LSM == 'true' && ' [LSM]' || '' }}${{ github.event.inputs.SCHED == 'true' && ' [SCHED]' || '' }}${{ github.event.inputs.ZRAM == 'true' && ' [ZRAM]' || '' }}For ${{ github.event.inputs.FILE }} ${{ github.event.inputs.SUFFIX }}
+    name: ${{ github.event.inputs.FAST_BUILD == 'true' && ' [FAST]' || '' }}${{ endsWith(github.event.inputs.FILE, '_aosp') && ' [AOSP]' || '' }}${{ github.event.inputs.KPM == 'KPM' && ' [KPM]' || github.event.inputs.KPM == 'KPN' && ' [KPN]' || '' }}${{ github.event.inputs.LSM == 'true' && ' [LSM]' || '' }}${{ github.event.inputs.SCHED == 'true' && ' [SCHED]' || '' }}${{ startsWith(github.event.inputs.ZRAM, '1/') && ' [ZRAM]' || '' }}For ${{ github.event.inputs.FILE }} ${{ github.event.inputs.SUFFIX }}
     runs-on: ubuntu-latest
     env:
       CCACHE_COMPILERCHECK: "%compiler% -dumpmachine; %compiler% -dumpversion"
@@ -340,7 +335,7 @@ jobs:
 
       - name: Debug Show Selected Inputs
         run: |
-          echo "-----------------------"
+          echo "------------------------------"
           echo "Selected CPU: ${{ env.CPU }}"
           echo "Selected CPUD: ${{ env.CPUD }}"
           echo "Selected ANDROID_VERSION: ${{ env.ANDROID_VERSION }}"
@@ -351,6 +346,7 @@ jobs:
           echo "Selected KPM: ${{ github.event.inputs.KPM }}"
           echo "Custom SUSFS_META: ${{ github.event.inputs.SUSFS_META }}"
           echo "Custom KSU_META: ${{ github.event.inputs.KSU_META }}"
+          echo "Selected ZRAM: ${{ github.event.inputs.ZRAM }}"
           echo "Custom BUILD_TIME: ${{ github.event.inputs.BUILD_TIME }}"
           echo -n "BUILD_TIME Unicode: "
           python3 -c "import unicodedata; print(''.join(f'\033[31mU+{ord(c):04X}\033[0m ' if c.isspace() or unicodedata.category(c)=='Cf' else f'U+{ord(c):04X} ' for c in '''${{ github.event.inputs.BUILD_TIME }}'''))"
@@ -363,10 +359,9 @@ jobs:
           echo "Selected SUSFS_DEV: ${{ github.event.inputs.SUSFS_DEV }}"
           echo "Selected FAST_BUILD: ${{ github.event.inputs.FAST_BUILD }}"
           echo "Selected SCHED: ${{ github.event.inputs.SCHED }}"
-          echo "Selected ZRAM: ${{ github.event.inputs.ZRAM }}"
           echo "Selected UNICODE_BYPASS: ${{ github.event.inputs.UNICODE_BYPASS }}"
           echo "Selected XUS_FIX: ${{ github.event.inputs.XUS_FIX }}"
-          echo "-----------------------"
+          echo "------------------------------"
 
       - name: Check Disk Space
         run: df -h
@@ -403,7 +398,7 @@ jobs:
         uses: actions/cache@v3
         with:
           path: ${{ env.CCACHE_DIR }}
-          key: ccache-${{ runner.os }}-${{ github.ref_name }}-${{ github.event.inputs.FILE }}-${{ env.BUILD_METHOD }}-${{ github.event.inputs.FAST_BUILD == 'true' && 'alpha' || 'beta' }}-16
+          key: ccache-${{ runner.os }}-${{ github.ref_name }}-${{ github.event.inputs.FILE }}-${{ env.BUILD_METHOD }}-${{ github.event.inputs.FAST_BUILD == 'true' && 'alpha' || 'beta' }}-16.1
 
       - name: Initialize Ccache
         if: ${{ github.event.inputs.BUILD_NOCCACHE == 'false' }}
@@ -497,6 +492,23 @@ jobs:
           echo "KV1=${BRANCH#*-}"       | cut -d. -f1 >> $GITHUB_ENV
           echo "KV2=${BRANCH#*-}"       | tr -d '.' >> $GITHUB_ENV
           echo "KV3=${NEW_VERSION}"     | tr -d '.' >> $GITHUB_ENV
+
+      - name: Rust Version Handling
+        run: |
+          cd kernel_workspace/kernel_platform
+          # 从 build.config.constants 读取 RUSTC_VERSION
+          RUSTC_VERSION=""
+          if [[ -f ./common/build.config.constants ]]; then
+            RUSTC_VERSION=$(grep '^RUSTC_VERSION=' ./common/build.config.constants | cut -d'=' -f2 || true)
+          fi
+          if [[ -n "$RUSTC_VERSION" ]]; then
+            echo "✅ RUSTC_VERSION=$RUSTC_VERSION"
+            echo "RUSTC_VERSION=$RUSTC_VERSION" >> $GITHUB_ENV
+            echo "ENABLE_RUST=true" >> $GITHUB_ENV
+          else
+            echo "✅ RUSTC_VERSION 未找到，Rust 编译已禁用"
+            echo "ENABLE_RUST=false" >> $GITHUB_ENV
+          fi
 
       # 自定义内核后缀
       - name: Custom Kernel Suffix if set
@@ -714,7 +726,15 @@ jobs:
             SUSFS_META="${{ github.event.inputs.SUSFS_META }}"
             git clone https://gitlab.com/simonpunk/susfs4ksu.git -b gki-${{ env.KANDROID_VERSION }}-${{ env.KERNEL_VERSION }}${{ github.inputs.SUSFS_DEV == 'true' && '-dev' || '' }}
             cd susfs4ksu
-            [ -n "$SUSFS_META" ] && git checkout "$SUSFS_META" || echo "SUSFS_META 为空，使用最新上游 SUSFS"
+            if [ -n "$SUSFS_META" ]; then
+              if [[ "$SUSFS_META" =~ ^[0-9]+$ ]]; then
+                git checkout HEAD~$SUSFS_META
+              else
+                git checkout "$SUSFS_META"
+              fi
+            else
+              echo "SUSFS_META 为空，使用最新上游 SUSFS"
+            fi
             cd ..
           fi
           git clone https://github.com/ShirkNeko/SukiSU_patch.git
@@ -727,7 +747,7 @@ jobs:
             cp ../susfs4ksu/kernel_patches/include/linux/* ./common/include/linux/
           fi
 
-          if [ "${{ github.event.inputs.ZRAM }}" = "true" ]; then
+          if [[ "${{ github.event.inputs.ZRAM }}" == 1* ]]; then
             echo "正在拉取zram补丁"
             cp -r ../SukiSU_patch/other/zram/lz4k/include/linux/* ./common/include/linux/
             cp -r ../SukiSU_patch/other/zram/lz4k/lib/* ./common/lib/
@@ -769,7 +789,17 @@ jobs:
                 fake_patched=1
               fi
             fi
-            if [ "$GKI_V" = "android12-5.10" ] || [ "$GKI_V" = "android13-5.15" ] || [ "$GKI_V" = "android14-6.1" ]; then
+            if [ "$GKI_V" = "android14-6.1" ]; then
+              if ! grep -qxF $'\tif (!vma_pages(vma))' ./fs/proc/task_mmu.c; then
+                echo "未找到 vma_pages，正在进行补丁修复"
+                fake_patched=1
+              fi
+              if ! grep -qxF '#include <linux/dma-buf.h>' ./fs/proc/base.c; then
+                echo "未找到 #include <linux/dma-buf.h>，添加缺失的头文件"
+                sed -i '/#include <linux\/cpufreq_times.h>/a #include <linux\/dma-buf.h>' ./fs/proc/base.c
+              fi
+            fi
+            if [ "$GKI_V" = "android12-5.10" ] || [ "$GKI_V" = "android13-5.15" ]; then
               if ! grep -qxF $'\tif (!vma_pages(vma))' ./fs/proc/task_mmu.c; then
                 echo "未找到 vma_pages，正在进行补丁修复"
                 fake_patched=1
@@ -828,8 +858,19 @@ jobs:
           fi
 
       - name: Apply ZRAM
-        if: ${{ github.event.inputs.ZRAM == 'true' }}
+        if: startsWith(github.event.inputs.ZRAM, '1/')
         run: |
+          ZRAM="${{ github.event.inputs.ZRAM }}"
+          if [[ "$(grep -o '/' <<< "$ZRAM" | wc -l)" -lt 2 ]]; then
+            echo "错误: ZRAM 参数缺少必要的分隔符 '/'，格式应为: 总开关0关1开/算法名(前面输入0时无效)/大小(前面输入0时无效)"
+            exit 10
+          fi
+          # 解析字段：开关状态 / 算法名 / 大小
+          IFS='/' read -r ZRAM_SWSTA ZRAM_ALGO ZRAM_SIZE <<< "$ZRAM"
+          echo "ZRAM_ALGO=$ZRAM_ALGO" >> $GITHUB_ENV
+          echo "ZRAM_ALGO_U=${ZRAM_ALGO^^}" >> $GITHUB_ENV
+          echo "ZRAM_SIZE=$ZRAM_SIZE" >> $GITHUB_ENV
+
           PATCH_DIR="${GITHUB_WORKSPACE}/kernel_workspace/SukiSU_patch/other/zram/zram_patch/${{ env.KERNEL_VERSION }}"
           cd kernel_workspace/kernel_platform/common
           echo "正在打lz4kd补丁"
@@ -925,7 +966,7 @@ jobs:
           fi
 
           # ZRAM配置*
-          if [ "${{ github.event.inputs.ZRAM }}" = "true" ]; then
+          if [[ "${{ github.event.inputs.ZRAM }}" == 1* ]]; then
             echo "CONFIG_CRYPTO_LZ4HC=y" >> "$CONFIG_FILE"
             echo "CONFIG_CRYPTO_LZ4K=y" >> "$CONFIG_FILE"
             echo "CONFIG_CRYPTO_LZ4KD=y" >> "$CONFIG_FILE"
@@ -941,7 +982,9 @@ jobs:
 
           # IPSET & IPv6_NAT配置*
           if [[ "${CPU}" == sm* && "${{ github.event.inputs.NETFILTER }}" == "true" ]]; then
-            echo "CONFIG_BPF_STREAM_PARSER=y" >> "$CONFIG_FILE"
+            if [[ "$KERNEL_VERSION" != "6.12" ]]; then
+              echo "CONFIG_BPF_STREAM_PARSER=y" >> "$CONFIG_FILE"
+            fi
             echo "CONFIG_NETFILTER_XT_MATCH_ADDRTYPE=y" >> "$CONFIG_FILE"
             echo "CONFIG_NETFILTER_XT_SET=y" >> "$CONFIG_FILE"
             echo "CONFIG_IP_SET=y" >> "$CONFIG_FILE"
@@ -970,9 +1013,9 @@ jobs:
           if [ "$KERNEL_VERSION" = "6.1" ] && [[ "$CPU" == mt* ]]; then
             echo "CONFIG_DEBUG_INFO_BTF=n" >> "$CONFIG_FILE"
           fi
-          if [[ "${{ github.event.inputs.AOSP }}" == "true" ]]; then
-            echo "CONFIG_ANDROID_BINDER_IPC_RUST=m" >> "$CONFIG_FILE"
+          if [[ "$ENABLE_RUST" == "true" ]]; then
             echo "CONFIG_RUST=y" >> "$CONFIG_FILE"
+            echo "CONFIG_ANDROID_BINDER_IPC_RUST=m" >> "$CONFIG_FILE"
           fi
 
           # 移除构建审查
@@ -1015,17 +1058,6 @@ jobs:
               fi
             fi
           done
-
-      - name: Enable lto=thin For FAST
-        if: ${{ (env.KERNEL_VERSION == '5.10' || env.KERNEL_VERSION == '5.15') && github.event.inputs.FAST_BUILD == 'true' }}
-        run: |
-          cd kernel_workspace/kernel_platform
-          DEFCONFIG=./common/arch/arm64/configs/gki_defconfig
-          echo "Enabling ThinLTO in $DEFCONFIG"
-          sed -i 's/^CONFIG_LTO=n/CONFIG_LTO=y/' "$DEFCONFIG"
-          sed -i 's/^CONFIG_LTO_CLANG_FULL=y/CONFIG_LTO_CLANG_THIN=y/' "$DEFCONFIG"
-          sed -i 's/^CONFIG_LTO_CLANG_NONE=y/CONFIG_LTO_CLANG_THIN=y/' "$DEFCONFIG"
-          grep -q '^CONFIG_LTO_CLANG_THIN=y' "$DEFCONFIG" || echo 'CONFIG_LTO_CLANG_THIN=y' >> "$DEFCONFIG"
 
       - name: Disable GPUEB
         if: ${{ env.KERNEL_VERSION == '5.10' && startsWith(env.CPU, 'mt') }}
@@ -1085,38 +1117,42 @@ jobs:
           # 获取 CLANG_PREBUILT_BIN 的上一级目录名，赋值给 CLANG_PATH
           CLANG_PATH=$(basename "$(dirname "$CLANG_PREBUILT_BIN")")
 
-          # 从 build.config.constants 读取 RUSTC_VERSION
-          RUSTC_VERSION="1.73.0b"
-          if [[ -f ./common/build.config.constants ]]; then
-            RUSTC_NEW_VERSION=$(grep '^RUSTC_VERSION=' ./common/build.config.constants | cut -d'=' -f2 || true)
-            if [[ -n "$RUSTC_NEW_VERSION" ]]; then
-              RUSTC_VERSION="$RUSTC_NEW_VERSION"
-            fi
-          fi
-
-          echo "----------------"
+          echo "-----------------------"
           echo "✅ CLANG_VERSION=$CLANG_VERSION"
           echo "✅ CLANG_DIR=$CLANG_DIR"
           echo "✅ CLANG_PATH=$CLANG_PATH"
           echo "✅ USE_LLVM_IAS=$USE_LLVM_IAS"
-          echo "✅ RUSTC_VERSION=$RUSTC_VERSION"
-          echo "----------------"
+          echo "-----------------------"
+
+          set +u
+          source "$GITHUB_WORKSPACE/kernel_workspace/kernel_platform/build/kernel/_setup_env.sh" 2>/dev/null || true
+          set -u
 
           export PATH="$GITHUB_WORKSPACE/kernel_workspace/kernel_platform/$CLANG_PREBUILT_BIN:$PATH"
           export PATH="/usr/lib/ccache:$PATH"
-          export CC="ccache clang"
-          export BINDGEN="bindgen"
-          sudo apt install -y libelf-dev ccache
+
+          if [[ "$ENABLE_RUST" == "true" ]]; then
+            export BINDGEN="bindgen"
+            export LIBCLANG_PATH="$GITHUB_WORKSPACE/kernel_workspace/kernel_platform/$(dirname "$CLANG_PREBUILT_BIN")/lib"
+          fi
 
           cd ./common
+
+          # 重映射物理路径
+          MAP="-fdebug-prefix-map=${GITHUB_WORKSPACE}=."
+          MPMAP="-fmacro-prefix-map=${GITHUB_WORKSPACE}=."
+          FPMAP="-ffile-prefix-map=${GITHUB_WORKSPACE}=."
+
           MAKE_ARGS=(
             LLVM=1
             ARCH=arm64
             CROSS_COMPILE=aarch64-linux-gnu-
-            RUSTC=../../prebuilts/rust/linux-x86/$RUSTC_VERSION/bin/rustc
-            PAHOLE=../../prebuilts/kernel-build-tools/linux-x86/bin/pahole
+            CC="ccache clang"
+            HOSTCC="ccache clang"
             LD=ld.lld
             HOSTLD=ld.lld
+            PAHOLE=../../prebuilts/kernel-build-tools/linux-x86/bin/pahole
+            KCFLAGS+="$MAP $MPMAP $FPMAP"
             KCFLAGS+=-Wno-error
             KCFLAGS+=-D__ANDROID_COMMON_KERNEL__
           )
@@ -1124,8 +1160,26 @@ jobs:
           if [[ "$USE_LLVM_IAS" == "true" ]]; then
             MAKE_ARGS=(LLVM_IAS=1 "${MAKE_ARGS[@]}")
           fi
+          if [[ "$ENABLE_RUST" == "true" ]]; then
+            MAKE_ARGS=(RUSTC=../../prebuilts/rust/linux-x86/$RUSTC_VERSION/bin/rustc "${MAKE_ARGS[@]}")
+          fi
+          make O=out "${MAKE_ARGS[@]}" gki_defconfig
+          if [[ "$KERNEL_VERSION" == "5.10" || "$KERNEL_VERSION" == "5.15" ]]; then
+            echo ">> 设置 LTO = thin"
+            scripts/config --file out/.config -e LTO_CLANG
+            scripts/config --file out/.config -e LTO_CLANG_THIN
+            scripts/config --file out/.config -d LTO_CLANG_NONE
+            scripts/config --file out/.config -d LTO_CLANG_FULL
+          fi
 
-          make -j"$(nproc --all)" O=out "${MAKE_ARGS[@]}" gki_defconfig
+          if [[ "$KERNEL_VERSION" == "6.12" ]]; then
+            echo ">> 设置 LTO = none"
+            scripts/config --file out/.config -e LTO_CLANG
+            scripts/config --file out/.config -e LTO_CLANG_NONE
+            scripts/config --file out/.config -d LTO_CLANG_THIN
+            scripts/config --file out/.config -d LTO_CLANG_FULL
+          fi
+          make O=out "${MAKE_ARGS[@]}" olddefconfig
           make -j"$(nproc --all)" O=out "${MAKE_ARGS[@]}"
           ccache -s
 
@@ -1146,20 +1200,25 @@ jobs:
           git clone https://github.com/Numbersf/AnyKernel3 --depth=1
           rm -rf ./AnyKernel3/.git
           mkdir -p kernel_workspace/kernel_platform/out/Final-Image-Find/
-          image_path=$(find "./kernel_workspace/kernel_platform/common/out/" -name "Image" | head -n 1)
-          if [ -n "$image_path" ]; then
-            echo "使用 make 编译的统一路径，成功找到 Image 文件"
-          else
-            image_path=$(find "./kernel_workspace/kernel_platform/out/" -name "Image" | head -n 1)
+          image_path=""
+          if [ -d "./kernel_workspace/kernel_platform/common/out/" ]; then
+            image_path=$(find "./kernel_workspace/kernel_platform/common/out/" -name "Image" | head -n 1)
             if [ -n "$image_path" ]; then
-              echo "使用官方脚本编译，成功找到 Image 文件"
-            else
-              echo "未找到 Image 文件，构建失败" >&2
-              exit 1
+              echo "✅ 使用 make 编译的统一路径，成功找到 Image 文件"
             fi
           fi
-          if [ -n "$image_path" ] && [ -f "$image_path" ]; then
-            echo "Image file finally located at: $image_path"
+          if [ -z "$image_path" ] && [ -d "./kernel_workspace/kernel_platform/out/" ]; then
+            image_path=$(find "./kernel_workspace/kernel_platform/out/" -name "Image" | head -n 1)
+            if [ -n "$image_path" ]; then
+              echo "✅ 使用官方脚本编译，成功找到 Image 文件"
+            fi
+          fi
+          if [ -z "$image_path" ]; then
+            echo "❌ 未找到 Image 文件，构建失败" >&2
+            exit 1
+          fi
+          if [ -f "$image_path" ]; then
+            echo "✅ Image file finally located at: $image_path"
             cp "$image_path" ./AnyKernel3/Image
             cp "$image_path" kernel_workspace/kernel_platform/out/Final-Image-Find/Image
           fi
@@ -1234,7 +1293,7 @@ jobs:
       - name: Set zip Suffix
         id: suffix
         run: |
-          echo "value=${{ github.event.inputs.ZRAM == 'true' && '_LZ4KD' || '' }}${{ github.event.inputs.KPM == 'KPM' && '_KPM' || github.event.inputs.KPM == 'KPN' && '_KPN' || '' }}${{ github.event.inputs.LSM == 'true' && '_LSM' || '' }}_ILH${{ github.event.inputs.SCHED== 'true' && '_SCHED' || '' }}" >> $GITHUB_OUTPUT
+          echo "value=${{ env.ZRAM_ALGO_U && format('_{0}', env.ZRAM_ALGO_U) || '' }}${{ github.event.inputs.KPM == 'KPM' && '_KPM' || github.event.inputs.KPM == 'KPN' && '_KPN' || '' }}${{ github.event.inputs.LSM == 'true' && '_LSM' || '' }}_ILH${{ github.event.inputs.SCHED== 'true' && '_SCHED' || '' }}" >> $GITHUB_OUTPUT
 
       - name: Upload AnyKernel3
         uses: actions/upload-artifact@v4
@@ -1242,36 +1301,34 @@ jobs:
           name: AnyKernel3_SukiSUUltra_${{ env.KSUVER }}_${{ steps.extract_info.outputs.value }}(${{ env.TKERNEL_VERSION }})${{ steps.suffix.outputs.value }}
           path: ./AnyKernel3/*
 
-      - name: Download and Unzip ZRAM
-        if: ${{ github.event.inputs.ZRAM == 'true' }}
+      - name: Extract and Process ZRAM Module
+        if: startsWith(github.event.inputs.ZRAM, '1/')
         id: zram_find
         run: |
           set -e
-          sudo apt install -y unzip
-          echo "尝试获取 ZRAM 模块 zip 下载链接..."
-          retries=3
-          success=0
-          for i in $(seq 1 $retries); do
-            echo "第 $i 次尝试下载..."
-            download_url=$(curl -s https://api.github.com/repos/FurLC/ZRAM-Module/releases/latest | \
-              grep "browser_download_url" | grep "ZRAM-Module-.*\.zip" | cut -d '"' -f 4 | head -n 1)
+          ZRAM_ZIP="${GITHUB_WORKSPACE}/kernel_workspace/Action-Build/ZRAM.zip"
 
-            if [ -n "$download_url" ]; then
-              echo "✅ 成功获取下载链接: $download_url"
-              wget -N "$download_url" && success=1 && break
-            else
-              echo "⚠️ 获取下载链接失败，等待 3 秒后重试..."
-              sleep 3
-            fi
-          done
-
-          if [ "$success" -ne 1 ]; then
-            echo "❌ 连续 $retries 次尝试后仍然无法获取 ZRAM 模块下载链接"
+          if [ ! -f "$ZRAM_ZIP" ]; then
+            echo "❌ 未找到 ZRAM.zip: $ZRAM_ZIP"
             echo "upload=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
-          unzip "$(ls -t ZRAM-Module-*.zip | head -1)" -d ZRAM-Module
+          unzip "$ZRAM_ZIP" -d ZRAM-Module
+
+          CONFIG_PROP="ZRAM-Module/config.prop"
+          if [ -f "$CONFIG_PROP" ]; then
+            echo "修改 config.prop"
+            sed -i "s/^ZRAM_ALGO=.*/ZRAM_ALGO=${ZRAM_ALGO}/" "$CONFIG_PROP"
+            sed -i "s/^ZRAM_SIZE=.*/ZRAM_SIZE=${ZRAM_SIZE}/" "$CONFIG_PROP"
+            echo "ZRAM_ALGO=${ZRAM_ALGO}"
+            echo "ZRAM_SIZE=${ZRAM_SIZE}"
+          else
+            echo "❌ 未找到 config.prop"
+            echo "upload=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
           target="./ZRAM-Module/zram/zram.ko"
           echo "查找 zram.ko 模块文件..."
           search_paths=(
@@ -1280,28 +1337,25 @@ jobs:
           )
           zram_path=""
           for path in "${search_paths[@]}"; do
-            zram_path=$(find "$path" -type f -name "zram.ko" | head -n 1)
-            [ -n "$zram_path" ] && break
+            if [ -d "$path" ]; then
+              zram_path=$(find "$path" -type f -name "zram.ko" | head -n 1)
+              [ -n "$zram_path" ] && break
+            fi
           done
           if [ -z "$zram_path" ]; then
             zram_path=$(find "./kernel_workspace" -type f -name "zram.ko" | head -n 1)
           fi
           if [ -n "$zram_path" ] && [ -f "$zram_path" ]; then
-            echo "ZRAM module file finally located at: $zram_path"
-            mkdir -p "$(dirname "$target")"
-            if [ "$(realpath "$zram_path")" != "$(realpath "$target")" ]; then
-              cp "$zram_path" "$target"
-            else
-              echo "源文件与目标路径相同，跳过复制"
-            fi
+            echo "✅ zram.ko file finally located at: $zram_path"
+            install -D "$zram_path" "$target"
           else
-            echo "未找到 zram.ko 文件，可能是未支持的内核版本或者未成功构建"
+            echo "❌ 未找到 zram.ko 文件，可能是未支持的内核版本或构建失败"
             echo "upload=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
       - name: Upload ZRAM Module
-        if: ${{ github.event.inputs.ZRAM == 'true' && steps.zram_find.outputs.upload != 'false' }}
+        if: startsWith(github.event.inputs.ZRAM, '1/') && steps.zram_find.outputs.upload != 'false'
         uses: actions/upload-artifact@v4
         with:
           name: ZRAM-Module_${{ env.KERNEL_VERSION }}_${{ steps.extract_info.outputs.value }}
