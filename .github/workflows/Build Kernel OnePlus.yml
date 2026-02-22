@@ -40,6 +40,7 @@ on:
           - oneplus_nord_ce5_b
           - oneplus_nord_5_b
           - oneplus_ace5_pro_b
+          - oneplus_ace5_pro
           - oneplus_13_b
           - oneplus_13t_b
           - oneplus_13s_b
