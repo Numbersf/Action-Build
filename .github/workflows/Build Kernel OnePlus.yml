@@ -6,7 +6,7 @@ on:
         type: choice
         description: "配置文件"
         required: true
-        default: oneplus_ace2_pro_b
+        default: oneplus_pad_pro
         options:
           - oneplus_10r_v
           - oneplus_nord_3_v
@@ -35,7 +35,7 @@ on:
           - oneplus_13r_b
           - oneplus_ace3_pro_b
           - oneplus_ace5_b
-          - oneplus_pad_pro_b
+          - oneplus_pad_pro
           - oneplus_pad2_b
           - oneplus_nord_ce5_b
           - oneplus_nord_5_b
