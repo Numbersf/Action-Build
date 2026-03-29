@@ -11,15 +11,15 @@
 Prohibit the promotion of forked repositories with **no modifications**; see [LICENSE](LICENSE)
 <details>
 <summary><strong>Click to view how to fork the project</strong></summary>
-<img src="https://github.com/Numbersf/Action-Build/blob/SukiSU-Ultra/pic/make.gif" width="500"/>
+<img src="https://github.com/Numbersf/Action-Build/blob/ReSukiSU/pic/make.gif" width="500"/>
 <summary>Please note, if you want to use other branch manager projects, make sure to disable 'Copy only the SukiSU Ultra branch' when forking.</summary>
 </details>
  
 <details>
 <summary><strong>Click to view how to sync the forked project to the latest</strong></summary>
 <p>
-  <img src="https://github.com/Numbersf/Action-Build/blob/SukiSU-Ultra/pic/syncfork.png" width="150"/>
-  <img src="https://github.com/Numbersf/Action-Build/blob/SukiSU-Ultra/pic/syncfork(2).png" width="150"/>
+  <img src="https://github.com/Numbersf/Action-Build/blob/ReSukiSU/pic/syncfork.png" width="150"/>
+  <img src="https://github.com/Numbersf/Action-Build/blob/ReSukiSU/pic/syncfork(2).png" width="150"/>
 </p>
 <summary>Please sync promptly! Some updates may cause older versions to fail! If it still fails after syncing, delete and fork again! If the issue persists, then submit an issue for feedback.</summary>
 </details>
@@ -68,7 +68,7 @@ Prohibit the promotion of forked repositories with **no modifications**; see [LI
  
 ------
 > [!CAUTION]
-> Do not use volume down to install modules during root-retaining updates, use volume up to skip! Generally, installation is no longer necessary, just use the SukiSU Ultra Add-on Module  
+> Do not use volume down to install modules during root-retaining updates, use volume up to skip! Generally, installation is no longer necessary, just use the ReSukiSU Add-on Module  
 >
 > If you have enabled the ``ZRAM`` algorithm, make sure to install the ``ZRAM`` module **before rebooting** after flashing with ``Anykernel3``. You may need to adjust some parameters manually.The 5.10 kernel is not supported ``ZRAM`` , as the ``zram.ko`` module path could not be found.However, the generated ``Anykernel3`` is still usable  
 >
@@ -100,7 +100,7 @@ Prohibit the promotion of forked repositories with **no modifications**; see [LI
  
 - Support setting branches、custom version identifiers、fallback hash.  
 ```
-Set Branch: Change the original `susfs-main` to another `builtin` branch. Please modify according to the channel name in the SukiSU Ultra repository. Do not modify unless you are a developer. Do not leave it empty or remove it.
+Set Branch: Change the original `susfs-main` to another `builtin` branch. Please modify according to the channel name in the ReSukiSU repository. Do not modify unless you are a developer. Do not leave it empty or remove it.
 Custom Version Tag:
 Replace the original commit hash with your custom content, and move the commit hash to the end. This can be modified freely, but keep it reasonably short.
 v3.1.7-f5541e21@builtin
@@ -152,9 +152,9 @@ When there is a kernel-level update or a significant slowdown caused by changes 
  
 - Removed potential version codes from the suffix of `Anykernel3.zip` config file, replaced with exact `Android` version numbers `XX.X.X`.
 ```
-AnyKernel3_SukiSUUltra_12896_OnePlusAce2Pro_Android15.0.0_KPM_VFS.zip
-AnyKernel3_SukiSUUltra_12896_OnePlus13_Android15.0.2_KPM_VFS.zip
-AnyKernel3_SukiSUUltra_12896_OnePlus11_Android14.1.0_KPM_VFS.zip
+AnyKernel3_ReSukiSU_12896_OnePlusAce2Pro_Android15.0.0_KPM_VFS.zip
+AnyKernel3_ReSukiSU_12896_OnePlus13_Android15.0.2_KPM_VFS.zip
+AnyKernel3_ReSukiSU_12896_OnePlus11_Android14.1.0_KPM_VFS.zip
 ```  
  
 - Added support for the `LZ4K、LZ4KD` compression algorithm in the `zram` module.   [@ShirkNeko](https://github.com/ShirkNeko)  
