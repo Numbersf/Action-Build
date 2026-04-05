@@ -158,6 +158,11 @@ on:
         description: "是否添加Re-Kernel？"
         required: true
         default: false
+      LZ4_UPDATE:
+        type: boolean
+        description: "是否升级LZ4到上游最新？"
+        required: true
+        default: false
       SUSFS_DEV:
         type: boolean
         description: "是否拉取SUSFS-DEV分支？"
@@ -793,6 +798,10 @@ jobs:
           fi
           if [ "${{ github.event.inputs.RE_KERNEL }}" = "true" ]; then
             git clone https://github.com/Sakion-Team/Re-Kernel.git
+
+          fi
+          if [ "${{ github.event.inputs.LZ4_UPDATE }}" = "true" ]; then
+            git clone https://github.com/lz4/lz4.git
           fi
           git clone https://github.com/ShirkNeko/SukiSU_patch.git
           git clone https://github.com/Numbersf/Action-Build.git
@@ -924,6 +933,97 @@ jobs:
           mkdir -p drivers/rekernel
           cp ${RE_DIR}/rekernel.c ${RE_DIR}/rekernel.h ${RE_DIR}/Makefile ${RE_DIR}/Kconfig drivers/rekernel/
           sed -i "s|^\s*//\s*#define KERNEL_${KERNEL_SHORT_PATCH_VERSION}|\#define KERNEL_${KERNEL_SHORT_PATCH_VERSION}|" drivers/rekernel/rekernel.h
+
+      - name: Apply LZ4_DEV
+        if: ${{ github.event.inputs.LZ4_UPDATE == 'true' }}
+        run: |
+          set -euo pipefail
+          LZ4_DIR="${GITHUB_WORKSPACE}/kernel_workspace/lz4/lib"
+          cd kernel_workspace/kernel_platform/common
+          echo "::group::Remove old f2fs bindings"
+          sed -i '/^ifeq ($(CONFIG_F2FS_FS_COMPRESSION_FIXED_OUTPUT),y)$/,/^endif$/d' fs/f2fs/Makefile
+          sed -i '/^#include "lz4armv8\/lz4accel.h"$/d' fs/f2fs/compress.c
+          echo "::endgroup::"
+
+          echo "::group::Delete old LZ4 files"
+          rm -f lib/lz4/lz4_compress.c \
+                lib/lz4/lz4_decompress.c \
+                lib/lz4/lz4hc_compress.c \
+                lib/lz4/lz4defs.h
+          echo "::endgroup::"
+
+          echo "::group::Rename/Copy LZ4 accelerator tree"
+          mkdir -p lib/lz4/lz4armv8
+          if [ -d fs/f2fs/lz4armv8 ]; then
+            mv fs/f2fs/lz4armv8/* lib/lz4/lz4armv8/ 2>/dev/null || true
+            rmdir fs/f2fs/lz4armv8 2>/dev/null || true
+          fi
+          cp -f "${LZ4_DIR}/lz4.c" lib/lz4/
+          cp -f "${LZ4_DIR}/lz4.h" lib/lz4/
+          cp -f "${LZ4_DIR}/lz4hc.c" lib/lz4/
+          cp -f "${LZ4_DIR}/lz4hc.h" lib/lz4/
+          sed -i '1i #ifdef __KERNEL__\n#include <linux/types.h>\n#include <linux/string.h>\n#else' lib/lz4/lz4.h
+          sed -i '$a #endif' lib/lz4/lz4.h
+          sed -i 's/#include <stddef.h>//g' lib/lz4/lz4.h
+          sed -i 's/#include <string.h>//g' lib/lz4/lz4.h
+          sed -i 's/#include <stdlib.h>//g' lib/lz4/lz4.h
+          echo "::endgroup::"
+
+          echo "::group::Rewrite lib/lz4/Makefile"
+          cat > lib/lz4/Makefile <<'EOF'
+          ccflags-y += -O3 \
+            -DLZ4_FREESTANDING=1 \
+            -DLZ4_FAST_DEC_LOOP=1
+
+          obj-y += lz4.o lz4hc.o
+          obj-$(CONFIG_ARM64) += $(addprefix lz4armv8/, lz4accel.o lz4armv8.o)
+          EOF
+          echo "::endgroup::"
+
+          echo "::group::Rewrite include/linux/lz4.h"
+          cat > include/linux/lz4.h <<'EOF'
+          /* SPDX-License-Identifier: BSD-2-Clause */
+          // LZ4 compatibility wrapper for Linux kernel
+          #ifndef __LINUX_LZ4_H__
+          #define __LINUX_LZ4_H__
+
+          #include "../../lib/lz4/lz4.h"
+          #include "../../lib/lz4/lz4hc.h"
+
+          #define LZ4_MEM_COMPRESS LZ4_STREAM_MINSIZE
+          #define LZ4HC_MEM_COMPRESS LZ4_STREAMHC_MINSIZE
+          #define LZ4HC_MIN_CLEVEL LZ4HC_CLEVEL_MIN
+          #define LZ4HC_DEFAULT_CLEVEL LZ4HC_CLEVEL_DEFAULT
+          #define LZ4HC_MAX_CLEVEL LZ4HC_CLEVEL_MAX
+
+          #endif /* __LINUX_LZ4_H__ */
+          EOF
+          echo "::endgroup::"
+
+          echo "::group::Patch arm64 NEON decompress callsites"
+          sed -i '/int out_len = LZ4_decompress_safe(src, dst, slen, \*dlen);/c\
+          int out_len;\
+          #if defined(CONFIG_ARM64) && defined(CONFIG_KERNEL_MODE_NEON)\
+          out_len = LZ4_arm64_decompress_safe(src, dst, slen, *dlen, false);\
+          #else\
+          out_len = LZ4_decompress_safe(src, dst, slen, *dlen);\
+          #endif' crypto/lz4.c
+
+          sed -i '/int out_len = LZ4_decompress_safe(src, dst, slen, \*dlen);/c\
+          int out_len;\
+          #if defined(CONFIG_ARM64) && defined(CONFIG_KERNEL_MODE_NEON)\
+          out_len = LZ4_arm64_decompress_safe(src, dst, slen, *dlen, false);\
+          #else\
+          out_len = LZ4_decompress_safe(src, dst, slen, *dlen);\
+          #endif' crypto/lz4hc.c
+
+          sed -i '/result = LZ4_decompress_safe(src.data, dst.data, src.len, dst.len);/c\
+          #if defined(CONFIG_ARM64) && defined(CONFIG_KERNEL_MODE_NEON)\
+          result = LZ4_arm64_decompress_safe(src.data, dst.data, src.len, dst.len, false);\
+          #else\
+          result = LZ4_decompress_safe(src.data, dst.data, src.len, dst.len);\
+          #endif' fs/incfs/data_mgmt.c
+          echo "::endgroup::"
 
       - name: Apply ZRAM
         if: startsWith(github.event.inputs.ZRAM, '1/')
