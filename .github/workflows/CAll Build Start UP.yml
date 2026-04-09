@@ -119,7 +119,7 @@ jobs:
         uses: benc-uk/workflow-dispatch@v1
         with:
           workflow: Build All OnePlus Kernels
-          token: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ secrets.GH_TOKEN }}
           inputs: |
             {
               "FILE": "${{ matrix.file }}",
