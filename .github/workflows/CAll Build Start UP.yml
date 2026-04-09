@@ -93,7 +93,7 @@ jobs:
             split("\n")[:-1] |
             map({
               file: .,
-              file_short: (sub("_[a-z]$"; ""))
+              file_short: (sub("_[a-z]$"; "")) ,
               enable_sched: (
                 . == "oneplus_pad_2_pro" or
                 . == "oneplus_13" or
