@@ -7,10 +7,6 @@ on:
         description: "9个一组分批并行-选择分支(1-4)"
         required: true
         default: "1"
-      CONFIRMATION:
-        description: "我已看完README.md,了解此工作流的风险和作用,有能力取消卡住的工作流运行和删除缓存,并执意继续运行"
-        required: true
-        default: "请输入完整标题"
 
 permissions:
   actions: read
@@ -22,16 +18,6 @@ jobs:
     outputs:
       matrix: ${{ steps.set-matrix.outputs.matrix }}
     steps:
-      - name: Check User Confirmation
-        run: |
-          CONFIRM="${{ github.event.inputs.CONFIRMATION }}"
-          EXPECT="我已看完README.md,了解此工作流的风险和作用,有能力取消卡住的工作流运行和删除缓存,并执意继续运行"
-
-          if [[ "$CONFIRM" != "$EXPECT" ]]; then
-            echo "❌ 输入无效，您未正确确认工作流风险。请阅读更新日志并正确输入确认内容。如果你仅仅只是想运行单个机型，这不是你该来的地方，请使用本仓库的另外一个工作流文件 Build All OnePlus Kernels"
-            exit 1
-          fi
-
       - name: Set Matrix from FILE List
         id: set-matrix
         run: |
@@ -201,20 +187,20 @@ jobs:
             )
           elif [[ "$BATCH" == "2" ]]; then
             FILE_LIST=(
-              "oneplus_11_v"
+              "oneplus_11_b"
               "oneplus_12r_v"
-              "oneplus_ace2_pro_v"
-              "oneplus_ace3_v"
+              "oneplus_ace2_pro_b"
+              "oneplus_ace3_b"
               "oneplus_open_v"
-              "oneplus_12_v"
+              "oneplus_12_b"
               "oneplus_13r"
-              "oneplus_ace3_pro_v"
+              "oneplus_ace3_pro_b"
               "oneplus_ace5"
             )
           elif [[ "$BATCH" == "3" ]]; then
             FILE_LIST=(
               "oneplus_pad_pro_v"
-              "oneplus_pad2_v"
+              "oneplus_pad2_b"
               "oneplus_nord_5"
               "oneplus_ace5_pro"
               "oneplus_ace5_pro_b"
