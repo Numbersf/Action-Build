@@ -136,7 +136,7 @@ jobs:
 
       - name: Wait for Builds to Finish or Exit Early
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
         run: |
           FILE="${{ matrix.file_short }}"
           echo "等待目标构建 $FILE 上传对应 Artifact..."
@@ -176,12 +176,12 @@ jobs:
       - name: Setup gh CLI
         run: |
           sudo apt update && sudo apt install -y gh zip curl jq
-          echo "${{ secrets.GITHUB_TOKEN }}" | gh auth login --with-token
+          echo "${{ secrets.GH_TOKEN }}" | gh auth login --with-token
 
       - name: List Matching Artifacts for Current Batch
         id: list-artifacts
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
         run: |
           echo "查找当前 Batch 的 Artifacts..."
           mkdir -p all_artifacts
@@ -266,7 +266,7 @@ jobs:
 
       - name: Download All Matched Artifacts as ZIP
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
         run: |
           mkdir -p all_artifacts
           IFS=';' read -ra NAMES <<< "${{ steps.list-artifacts.outputs.ARTIFACT_NAMES }}"
@@ -275,7 +275,7 @@ jobs:
             ARTIFACT_ID=$(gh api repos/${{ github.repository }}/actions/artifacts --jq ".artifacts[] | select(.name==\"$NAME\") | .id")
             if [[ -n "$ARTIFACT_ID" ]]; then
               echo "下载 $NAME (ID: $ARTIFACT_ID)..."
-              curl -L -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+              curl -L -H "Authorization: token ${{ secrets.GH_TOKEN }}" \
                    -o "all_artifacts/${NAME}.zip" \
                    "https://api.github.com/repos/${{ github.repository }}/actions/artifacts/${ARTIFACT_ID}/zip"
             else
