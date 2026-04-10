@@ -21,6 +21,9 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       matrix: ${{ steps.set-matrix.outputs.matrix }}
+    permissions:
+      actions: write
+      contents: read
     steps:
       - name: Check User Confirmation
         run: |
@@ -114,6 +117,9 @@ jobs:
       fail-fast: false
       matrix:
         include: ${{ fromJson(needs.generate-matrix.outputs.matrix) }}
+    permissions:
+      actions: write
+      contents: read
     steps:
       - name: Call Original Workflow
         uses: benc-uk/workflow-dispatch@v1
