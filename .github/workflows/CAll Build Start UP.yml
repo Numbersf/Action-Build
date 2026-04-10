@@ -7,6 +7,10 @@ on:
         description: "9个一组分批并行-选择分支(1-4)"
         required: true
         default: "1"
+      CONFIRMATION:
+        description: "我已看完README.md,了解此工作流的风险和作用,有能力取消卡住的工作流运行和删除缓存,并执意继续运行"
+        required: true
+        default: "请输入完整标题"
 
 permissions:
   actions: read
@@ -18,6 +22,16 @@ jobs:
     outputs:
       matrix: ${{ steps.set-matrix.outputs.matrix }}
     steps:
+      - name: Check User Confirmation
+        run: |
+          CONFIRM="${{ github.event.inputs.CONFIRMATION }}"
+          EXPECT="我已看完README.md,了解此工作流的风险和作用,有能力取消卡住的工作流运行和删除缓存,并执意继续运行"
+
+          if [[ "$CONFIRM" != "$EXPECT" ]]; then
+            echo "❌ 输入无效，您未正确确认工作流风险。请阅读更新日志并正确输入确认内容。如果你仅仅只是想运行单个机型，这不是你该来的地方，请使用本仓库的另外一个工作流文件 Build All OnePlus Kernels"
+            exit 1
+          fi
+
       - name: Set Matrix from FILE List
         id: set-matrix
         run: |
@@ -37,20 +51,20 @@ jobs:
             )
           elif [[ "$BATCH" == "2" ]]; then
             FILE_LIST=(
-              "oneplus_11_b"
+              "oneplus_11_v"
               "oneplus_12r_v"
-              "oneplus_ace2_pro_b"
-              "oneplus_ace3_b"
+              "oneplus_ace2_pro_v"
+              "oneplus_ace3_v"
               "oneplus_open_v"
-              "oneplus_12_b"
+              "oneplus_12_v"
               "oneplus_13r"
-              "oneplus_ace3_pro_b"
+              "oneplus_ace3_pro_v"
               "oneplus_ace5"
             )
           elif [[ "$BATCH" == "3" ]]; then
             FILE_LIST=(
               "oneplus_pad_pro_v"
-              "oneplus_pad2_b"
+              "oneplus_pad2_v"
               "oneplus_nord_5"
               "oneplus_ace5_pro"
               "oneplus_ace5_pro_b"
@@ -79,7 +93,7 @@ jobs:
             split("\n")[:-1] |
             map({
               file: .,
-              file_short: (sub("_[a-z]$"; "")) ,
+              file_short: (sub("_[a-z]$"; ""))
               enable_sched: (
                 . == "oneplus_pad_2_pro" or
                 . == "oneplus_13" or
@@ -105,7 +119,7 @@ jobs:
         uses: benc-uk/workflow-dispatch@v1
         with:
           workflow: Build All OnePlus Kernels
-          token: ${{ secrets.GH_TOKEN }}
+          token: ${{ secrets.GITHUB_TOKEN }}
           inputs: |
             {
               "FILE": "${{ matrix.file }}",
@@ -122,7 +136,7 @@ jobs:
 
       - name: Wait for Builds to Finish or Exit Early
         env:
-          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           FILE="${{ matrix.file_short }}"
           echo "等待目标构建 $FILE 上传对应 Artifact..."
@@ -162,12 +176,12 @@ jobs:
       - name: Setup gh CLI
         run: |
           sudo apt update && sudo apt install -y gh zip curl jq
-          echo "${{ secrets.GH_TOKEN }}" | gh auth login --with-token
+          echo "${{ secrets.GITHUB_TOKEN }}" | gh auth login --with-token
 
       - name: List Matching Artifacts for Current Batch
         id: list-artifacts
         env:
-          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           echo "查找当前 Batch 的 Artifacts..."
           mkdir -p all_artifacts
@@ -187,20 +201,20 @@ jobs:
             )
           elif [[ "$BATCH" == "2" ]]; then
             FILE_LIST=(
-              "oneplus_11_b"
+              "oneplus_11_v"
               "oneplus_12r_v"
-              "oneplus_ace2_pro_b"
-              "oneplus_ace3_b"
+              "oneplus_ace2_pro_v"
+              "oneplus_ace3_v"
               "oneplus_open_v"
-              "oneplus_12_b"
+              "oneplus_12_v"
               "oneplus_13r"
-              "oneplus_ace3_pro_b"
+              "oneplus_ace3_pro_v"
               "oneplus_ace5"
             )
           elif [[ "$BATCH" == "3" ]]; then
             FILE_LIST=(
               "oneplus_pad_pro_v"
-              "oneplus_pad2_b"
+              "oneplus_pad2_v"
               "oneplus_nord_5"
               "oneplus_ace5_pro"
               "oneplus_ace5_pro_b"
@@ -252,7 +266,7 @@ jobs:
 
       - name: Download All Matched Artifacts as ZIP
         env:
-          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           mkdir -p all_artifacts
           IFS=';' read -ra NAMES <<< "${{ steps.list-artifacts.outputs.ARTIFACT_NAMES }}"
@@ -261,7 +275,7 @@ jobs:
             ARTIFACT_ID=$(gh api repos/${{ github.repository }}/actions/artifacts --jq ".artifacts[] | select(.name==\"$NAME\") | .id")
             if [[ -n "$ARTIFACT_ID" ]]; then
               echo "下载 $NAME (ID: $ARTIFACT_ID)..."
-              curl -L -H "Authorization: token ${{ secrets.GH_TOKEN }}" \
+              curl -L -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
                    -o "all_artifacts/${NAME}.zip" \
                    "https://api.github.com/repos/${{ github.repository }}/actions/artifacts/${ARTIFACT_ID}/zip"
             else
