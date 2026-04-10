@@ -6,7 +6,7 @@ on:
         type: choice
         description: "配置文件"
         required: true
-        default: oneplus_ace2_pro_b
+        default: oneplus_11_b
         options:
           - oneplus_nord_n30_se_5g_v
           - oneplus_10r_v
@@ -108,7 +108,7 @@ on:
         type: string
         description: "分支名(必填)/自定义版本标识(留空不修改)/回退分支提交哈希版本(留空不修改)"
         required: false
-        default: "builtin/Numbersf/"
+        default: "builtin/Kdufse/"
       ZRAM:
         type: string
         description: "ZRAM(0关闭1开启)/算法名/大小"
