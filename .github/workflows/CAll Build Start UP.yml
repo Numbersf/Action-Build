@@ -129,7 +129,7 @@ jobs:
           inputs: |
             {
               "FILE": "${{ matrix.file }}",
-              "SUSFS_CI": "NoN",
+              "SUSFS_CI": "N/A",
               "KSU_META": "susfs-main/Numbersf/",
               "BUILD_TIME": "F",
               "SUFFIX": "Build-Kdufse",
