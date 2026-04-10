@@ -13,7 +13,7 @@ on:
         default: "请输入完整标题"
 
 permissions:
-  actions: read
+  actions: write
   contents: read
 
 jobs:
