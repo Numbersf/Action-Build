@@ -200,7 +200,7 @@ jobs:
               "oneplus_ace_3v_v"
               "oneplus_10_pro_v"
               "oneplus_10t_v"
-              "oneplus_11r_b"
+              "oneplus_11r_v"
               "oneplus_ace2_b"
               "oneplus_ace_pro_v"
             )
@@ -211,15 +211,15 @@ jobs:
               "oneplus_ace2_pro_b"
               "oneplus_ace3_b"
               "oneplus_open_b"
-              "oneplus_12_v"
+              "oneplus_12_b"
               "oneplus_13r_b"
-              "oneplus_ace3_pro_v"
+              "oneplus_ace3_pro_b"
               "oneplus_ace5_b"
             )
           elif [[ "$BATCH" == "3" ]]; then
             FILE_LIST=(
-              "oneplus_pad_pro_b"
-              "oneplus_pad2_v"
+              "oneplus_pad_pro_v"
+              "oneplus_pad2_b"
               "oneplus_nord_5"
               "oneplus_ace5_pro"
               "oneplus_ace5_pro_b"
