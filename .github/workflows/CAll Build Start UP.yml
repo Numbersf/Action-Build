@@ -134,9 +134,8 @@ jobs:
               "BUILD_TIME": "F",
               "SUFFIX": "Build-Kdufse",
               "FAST_BUILD": "true",
-              "HOOK": "manual",
-              "LSM": "true",
-              "SCHED": "${{ matrix.enable_sched }}",
+              "LSM_BBG": "true",
+              "SCHED_HMBIRD": "${{ matrix.enable_sched }}",
               "ZRAM": "false"
             }
 
