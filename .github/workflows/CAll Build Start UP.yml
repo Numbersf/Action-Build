@@ -55,14 +55,14 @@ jobs:
           elif [[ "$BATCH" == "2" ]]; then
             FILE_LIST=(
               "oneplus_11_b"
-              "oneplus_12r_v"
+              "oneplus_12r_b"
               "oneplus_ace2_pro_b"
               "oneplus_ace3_b"
-              "oneplus_open_v"
+              "oneplus_open_b"
               "oneplus_12_b"
-              "oneplus_13r"
+              "oneplus_13r_b"
               "oneplus_ace3_pro_b"
-              "oneplus_ace5"
+              "oneplus_ace5_b"
             )
           elif [[ "$BATCH" == "3" ]]; then
             FILE_LIST=(
@@ -207,14 +207,14 @@ jobs:
           elif [[ "$BATCH" == "2" ]]; then
             FILE_LIST=(
               "oneplus_11_b"
-              "oneplus_12r_v"
+              "oneplus_12r_b"
               "oneplus_ace2_pro_b"
               "oneplus_ace3_b"
-              "oneplus_open_v"
+              "oneplus_open_b"
               "oneplus_12_v"
-              "oneplus_13r"
+              "oneplus_13r_b"
               "oneplus_ace3_pro_v"
-              "oneplus_ace5"
+              "oneplus_ace5_b"
             )
           elif [[ "$BATCH" == "3" ]]; then
             FILE_LIST=(
