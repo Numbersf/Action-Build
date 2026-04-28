@@ -1,6 +1,10 @@
 **`Enlish`** | [简体中文](README.md)
  
-[![Build](https://img.shields.io/badge/GitHub%20Actions-Build-181717?logo=github&logoColor=white&style=flat-square)](https://github.com/Numbersf/Action-Build/actions/workflows/Build%20Kernel%20OnePlus.yml) [![Channel](https://img.shields.io/badge/Follow-Telegram-blue.svg?logo=telegram)](https://t.me/AndroidCoreLayer) [![OnePlus Kernel Manifest](https://img.shields.io/badge/OnePlus%20Kernel%20Manifest-EB0029?logo=oneplus&logoColor=white&style=flat-square)](https://github.com/OnePlusOSS/kernel_manifest) [![Coolapk](https://img.shields.io/badge/Follow-Coolapk-3DDC84?style=flat-square&logo=android&logoColor=white)](http://www.coolapk.com/u/28259173)
+[![Workflow Status](https://img.shields.io/github/actions/workflow/status/Numbersf/Action-Build/Build%20Kernel%20OnePlus.yml?branch=SukiSU-Ultra&label=Build&logo=github-actions&style=flat-square)](https://github.com/Numbersf/Action-Build/actions/workflows/Build%20Kernel%20OnePlus.yml?query=branch%3ASukiSU-Ultra)
+ 
+[![Kernel Manifest](https://img.shields.io/badge/Kernel%20Manifest-EB0029?logo=oneplus&logoColor=white&style=flat-square)](https://github.com/OnePlusOSS/kernel_manifest) [![Dynamic Kernel Manifest](https://img.shields.io/badge/Dynamic%20Kernel%20Manifest-EB0029?logo=oneplus&logoColor=white&style=flat-square)](https://github.com/Numbersf/kernel_manifest) [![Kernel Manifest Appendix](https://img.shields.io/badge/Kernel%20Manifest%20Appendix-EB0029?logo=oneplus&logoColor=white&style=flat-square)](https://github.com/Numbersf/Kernel_Manifest_Appendix) [![Fengchi Kernel](https://img.shields.io/badge/Fengchi%20Kernel-EB0029?logo=github&logoColor=white&style=flat-square)](https://github.com/Numbersf/SCHED_PATCH)
+ 
+[![Channel](https://img.shields.io/badge/Follow-Telegram-blue.svg?logo=telegram)](https://t.me/AndroidCoreLayer) [![Coolapk](https://img.shields.io/badge/Follow-Coolapk-3DDC84?style=flat-square&logo=android&logoColor=white)](http://www.coolapk.com/u/28259173)
  
 <img align="right" src="pic/zakozako~.svg" width="100px" alt="zakozako~">
  
@@ -88,6 +92,20 @@ Prohibit the promotion of forked repositories with **no modifications**; see [LI
 # Changelog
 > Minor updates will be ignored. For more details, please refer to the commit.
  
+- Full support for `Re:Kernel`, automatically following upstream changes.  
+ 
+- Multiple external warnings enabled — checks whether the `fork source` is normal, if the kernel suffix build time contains abnormal symbol calls, etc.  
+ 
+- Added multiple variables and automatic search, full adaptation to kernel version `6.12+`'s `Rust` build logic and dependencies.  
+ 
+- Complete `KPN` patch support.  
+ 
+- ZRAM switch, algorithm name, and size can be directly adjusted in settings. Automatically handles `ZRAM additional modules`, with modules provided by [@FURLC](https://github.com/FURLC).  
+ 
+- Full `Unicode Bypass` support, compatible with all kernel versions.  
+ 
+- First release fixes the `MTK-5.10` build errors.  
+ 
 - Initial release with support for a large number of `MTK` devices; manifest list and path issues have been successfully resolved.  
  
 - Supports modifying the `SUSFS` hash for rollback(Entering `-1` in this field will disable `SUSFS`)、Using the `SUSFS-DEV` development branch.  
@@ -132,8 +150,6 @@ When there is a kernel-level update or a significant slowdown caused by changes 
 - First to support for the kernel version `6.6+` new `setlocalversion` format using `echo`, fixing the issue where custom and randomly-generated pseudo-official suffixes were not applied. Now, this feature is fully supported across all device models and build methods.  
  
 - Add `TRUSTY_EXISTS` to automatically detect whether the `6.6` kernel has defects in the kernel source code and determine whether `sed` is needed.  
- 
-- When `ZRAM` is enabled, automatically download and modify the ZRAM additional module.[@FURLC](https://github.com/FURLC)  
  
 - Fix issues where `ZRAM` is unusable or unable to launch non-system apps.  
  

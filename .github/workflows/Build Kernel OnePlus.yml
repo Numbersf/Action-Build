@@ -153,6 +153,11 @@ on:
         description: "是否添加风驰驱动1.0？"
         required: true
         default: false
+      DROID_SPACES:
+        type: boolean
+        description: "是否添加轻量级Linux容器支持(DroidSpaces)？"
+        required: true
+        default: false
       RE_KERNEL:
         type: boolean
         description: "是否添加Re-Kernel？"
@@ -176,7 +181,7 @@ on:
 
 jobs:
   build:
-    name: ${{ github.event.inputs.FAST_BUILD == 'true' && ' [FAST]' || '' }}${{ contains(github.event.inputs.FILE, '_aosp') && ' [AOSP]' || '' }}${{ github.event.inputs.KPM == 'KPM' && ' [KPM]' || github.event.inputs.KPM == 'KPN' && ' [KPN]' || '' }}${{ github.event.inputs.LSM_BBG == 'true' && ' [BBG]' || '' }}${{ github.event.inputs.SCHED_HMBIRD == 'true' && ' [HMBIRD]' || '' }}${{ startsWith(github.event.inputs.ZRAM, '1/') && ' [ZRAM]' || '' }}${{ github.event.inputs.RE_KERNEL == 'true' && ' [REKER]' || '' }}For ${{ github.event.inputs.FILE }} ${{ github.event.inputs.SUFFIX }}
+    name: ${{ github.event.inputs.FAST_BUILD == 'true' && ' [FAST]' || '' }}${{ contains(github.event.inputs.FILE, '_aosp') && ' [AOSP]' || '' }}${{ github.event.inputs.KPM == 'KPM' && ' [KPM]' || github.event.inputs.KPM == 'KPN' && ' [KPN]' || '' }}${{ github.event.inputs.LSM_BBG == 'true' && ' [BBG]' || '' }}${{ github.event.inputs.SCHED_HMBIRD == 'true' && ' [HMBIRD]' || '' }}${{ github.event.inputs.DROID_SPACES == 'true' && ' [DS]' || '' }}${{ startsWith(github.event.inputs.ZRAM, '1/') && ' [ZRAM]' || '' }}${{ github.event.inputs.RE_KERNEL == 'true' && ' [REKER]' || '' }}For ${{ github.event.inputs.FILE }} ${{ github.event.inputs.SUFFIX }}
     runs-on: ubuntu-latest
     env:
       CCACHE_COMPILERCHECK: "%compiler% -dumpmachine; %compiler% -dumpversion"
@@ -333,6 +338,7 @@ jobs:
           echo "Selected FAST_BUILD: ${{ github.event.inputs.FAST_BUILD }}"
           echo "Selected SCHED_HMBIRD: ${{ github.event.inputs.SCHED_HMBIRD }}"
           echo "Selected UNICODE_BYPASS: ${{ github.event.inputs.UNICODE_BYPASS }}"
+          echo "Selected DROID_SPACES: ${{ github.event.inputs.DROID_SPACES }}"
           echo "Selected RE_KERNEL: ${{ github.event.inputs.RE_KERNEL }}"
 
           BUILD_TIME="${{ github.event.inputs.BUILD_TIME }}"
@@ -925,6 +931,31 @@ jobs:
           cp ${RE_DIR}/rekernel.c ${RE_DIR}/rekernel.h ${RE_DIR}/Makefile ${RE_DIR}/Kconfig drivers/rekernel/
           sed -i "s|^\s*//\s*#define KERNEL_${KERNEL_SHORT_PATCH_VERSION}|\#define KERNEL_${KERNEL_SHORT_PATCH_VERSION}|" drivers/rekernel/rekernel.h
 
+      - name: Apply DROID_SPACES
+        if: ${{ github.event.inputs.DROID_SPACES == 'true' }}
+        run: |
+          cd kernel_workspace/kernel_platform/common
+          # 注释掉原始的 sysv 结构体定义
+          sed -i 's/struct sysv_sem\s*sysvsem;/\/\/ struct sysv_sem\t\t\tsysvsem;/g' include/linux/sched.h
+          sed -i 's/struct sysv_shm\s*sysvshm;/\/\/ struct sysv_shm\t\t\tsysvshm;/g' include/linux/sched.h
+          # 检查sched.h并修改 KABI 槽位或指针
+          if grep -q "sched_dl_entity.*\*dl_server" include/linux/sched.h; then
+            echo "✅ 检测到 dl_server 指针，使用 packed union 方案"
+            sed -i 's|\tstruct sched_entity\t\tse;|#ifdef CONFIG_SYSVIPC\n\tunion {\n\t\tchar __kabi_ignored_0;\n\t\tstruct sysv_sem\t\t\tsysvsem;\n\t}__attribute__((packed));\n\tunion {\n\t\tchar __kabi_ignored_1;\n\t\tstruct sysv_shm\t\t\tsysvshm;\n\t}__attribute__((packed));\n#endif\n\n\tstruct sched_entity\t\tse;|' include/linux/sched.h
+          elif grep -q "ANDROID_KABI_USE(1," include/linux/sched.h; then
+            echo "✅ 检测到 USE(1)，使用槽位 6,7,8"
+            sed -i -e '/ANDROID_KABI_RESERVE(6);/{N;N;s|\tANDROID_KABI_RESERVE(6);\n\tANDROID_KABI_RESERVE(7);\n\tANDROID_KABI_RESERVE(8);|#ifdef CONFIG_SYSVIPC\n\tANDROID_KABI_USE(6, struct sysv_sem sysvsem);\n\t_ANDROID_KABI_REPLACE(ANDROID_KABI_RESERVE(7); ANDROID_KABI_RESERVE(8), struct sysv_shm sysvshm);\n#else\n\tANDROID_KABI_RESERVE(6);\n\tANDROID_KABI_RESERVE(7);\n\tANDROID_KABI_RESERVE(8);\n#endif|;}' include/linux/sched.h
+          elif grep -q "ANDROID_KABI_RESERVE(1);" include/linux/sched.h; then
+            echo "✅ 检测到 RESERVE(1)，使用槽位 1,2,3"
+            sed -i -e '/ANDROID_KABI_RESERVE(1);/{N;N;N;N;N;N;N;s|\tANDROID_KABI_RESERVE(1);\n\tANDROID_KABI_RESERVE(2);\n\tANDROID_KABI_RESERVE(3);\n\tANDROID_KABI_RESERVE(4);\n\tANDROID_KABI_RESERVE(5);\n\tANDROID_KABI_RESERVE(6);\n\tANDROID_KABI_RESERVE(7);\n\tANDROID_KABI_RESERVE(8);|#ifdef CONFIG_SYSVIPC\n\tANDROID_KABI_USE(1, struct sysv_sem sysvsem);\n\t_ANDROID_KABI_REPLACE(ANDROID_KABI_RESERVE(2); ANDROID_KABI_RESERVE(3), struct sysv_shm sysvshm);\n#else\n\tANDROID_KABI_RESERVE(1);\n\tANDROID_KABI_RESERVE(2);\n\tANDROID_KABI_RESERVE(3);\n#endif\n\tANDROID_KABI_RESERVE(4);\n\tANDROID_KABI_RESERVE(5);\n\tANDROID_KABI_RESERVE(6);\n\tANDROID_KABI_RESERVE(7);\n\tANDROID_KABI_RESERVE(8);|;}' include/linux/sched.h
+          elif grep -q "ANDROID_KABI_RESERVE(3);" include/linux/sched.h; then
+            echo "✅ fallback，使用槽位 3,4,5"
+            sed -i -e '/ANDROID_KABI_RESERVE(3);/{N;N;N;s|\tANDROID_KABI_RESERVE(3);\n\tANDROID_KABI_RESERVE(4);\n\tANDROID_KABI_RESERVE(5);\n\tANDROID_KABI_RESERVE(6);|#ifdef CONFIG_SYSVIPC\n\tANDROID_KABI_USE(3, struct sysv_sem sysvsem);\n\t_ANDROID_KABI_REPLACE(ANDROID_KABI_RESERVE(4); ANDROID_KABI_RESERVE(5), struct sysv_shm sysvshm);\n#else\n\tANDROID_KABI_RESERVE(3);\n\tANDROID_KABI_RESERVE(4);\n\tANDROID_KABI_RESERVE(5);\n#endif\n\tANDROID_KABI_RESERVE(6);|;}' include/linux/sched.h
+          else
+            echo "❌ 无法通过上下文精准匹配 KABI 槽位或对应指针"
+            exit 1
+          fi
+
       - name: Apply ZRAM
         if: startsWith(github.event.inputs.ZRAM, '1/')
         run: |
@@ -1053,6 +1084,17 @@ jobs:
           # LSM配置*
           if [ "${{ github.event.inputs.LSM_BBG }}" = "true" ]; then
             echo "CONFIG_BBG=y" >> "$CONFIG_FILE"
+          fi
+
+          # DROID_SPACES配置*
+          if [ "${{ github.event.inputs.DROID_SPACES }}" = "true" ]; then
+            echo "CONFIG_SYSVIPC=y" >> "$CONFIG_FILE"
+            echo "CONFIG_DEVTMPFS=y" >> "$CONFIG_FILE"
+            echo "CONFIG_PID_NS=y" >> "$CONFIG_FILE"
+            echo "CONFIG_POSIX_MQUEUE=y" >> "$CONFIG_FILE"
+            echo "CONFIG_NETFILTER_XT_TARGET_REJECT=y" >> "$CONFIG_FILE"
+            echo "CONFIG_NETFILTER_XT_TARGET_LOG=y" >> "$CONFIG_FILE"
+            echo "CONFIG_NETFILTER_XT_MATCH_RECENT=y" >> "$CONFIG_FILE"
           fi
 
           # IPSET & IPv6_NAT配置*
@@ -1306,7 +1348,8 @@ jobs:
         if: ${{ github.event.inputs.KPM != 'N/A' }}
         run: |
           KPM_DIR="${GITHUB_WORKSPACE}/kernel_workspace/SukiSU_patch/kpm"
-          KPN_DIR="${GITHUB_WORKSPACE}/kernel_workspace/Action-Build/patches"
+          # KPM_DIR="${GITHUB_WORKSPACE}/kernel_workspace/Action-Build/patches/kpm"
+          KPN_DIR="${GITHUB_WORKSPACE}/kernel_workspace/Action-Build/patches/kpn"
           OUT_DIR="${GITHUB_WORKSPACE}/kernel_workspace/kernel_platform/out/Final-Image-Find"
           cd "${OUT_DIR}"
           if [ "${{ github.event.inputs.KPM }}" = "KPM" ]; then
@@ -1378,7 +1421,7 @@ jobs:
       - name: Set zip Suffix
         id: suffix
         run: |
-          echo "value=${{ env.ZRAM_ALGO_U && format('_{0}', env.ZRAM_ALGO_U) || '' }}${{ github.event.inputs.KPM == 'KPM' && '_KPM' || github.event.inputs.KPM == 'KPN' && '_KPN' || '' }}${{ github.event.inputs.LSM_BBG == 'true' && '_BBG' || '' }}_ILH${{ github.event.inputs.SCHED_HMBIRD== 'true' && '_HMBIRD' || '' }}${{ github.event.inputs.RE_KERNEL == 'true' && '_REKER' || '' }}" >> $GITHUB_OUTPUT
+          echo "value=${{ env.ZRAM_ALGO_U && format('_{0}', env.ZRAM_ALGO_U) || '' }}${{ github.event.inputs.KPM == 'KPM' && '_KPM' || github.event.inputs.KPM == 'KPN' && '_KPN' || '' }}${{ github.event.inputs.LSM_BBG == 'true' && '_BBG' || '' }}_ILH${{ github.event.inputs.SCHED_HMBIRD== 'true' && '_HMBIRD' || '' }}${{ github.event.inputs.DROID_SPACES== 'true' && '_DS' || '' }}${{ github.event.inputs.RE_KERNEL == 'true' && '_REKER' || '' }}" >> $GITHUB_OUTPUT
 
       - name: Upload AnyKernel3
         uses: actions/upload-artifact@v7
