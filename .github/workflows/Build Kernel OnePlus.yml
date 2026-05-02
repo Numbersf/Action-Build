@@ -815,6 +815,20 @@ jobs:
             cp ../susfs4ksu/kernel_patches/50_add_susfs_in_gki-${{ env.KANDROID_VERSION }}-${{ env.KERNEL_VERSION }}.patch ./common/
             cp ../susfs4ksu/kernel_patches/fs/* ./common/fs/
             cp ../susfs4ksu/kernel_patches/include/linux/* ./common/include/linux/
+
+            echo "正在应用 SukiSU builtin 与 SUSFS 的兼容修复"
+            if [ -f ./common/fs/susfs.c ]; then
+              sed -i 's/^static void susfs_run_sus_path_loop(void)/void susfs_run_sus_path_loop(void)/' ./common/fs/susfs.c
+            fi
+
+            {
+              echo '#include <linux/jump_label.h>'
+              grep -Rqs 'DEFINE_STATIC_KEY_.*ksu_init_rc_hook_key_false' ./KernelSU/kernel || echo 'DEFINE_STATIC_KEY_FALSE(ksu_init_rc_hook_key_false);'
+              grep -Rqs 'DEFINE_STATIC_KEY_.*ksu_input_hook_key_false' ./KernelSU/kernel || echo 'DEFINE_STATIC_KEY_FALSE(ksu_input_hook_key_false);'
+              grep -Rqs 'DEFINE_STATIC_KEY_.*ksu_is_init_rc_hook_enabled' ./KernelSU/kernel || echo 'DEFINE_STATIC_KEY_TRUE(ksu_is_init_rc_hook_enabled);'
+              grep -Rqs 'DEFINE_STATIC_KEY_.*ksu_is_input_hook_enabled' ./KernelSU/kernel || echo 'DEFINE_STATIC_KEY_TRUE(ksu_is_input_hook_enabled);'
+            } > ./KernelSU/kernel/susfs_compat.c
+            grep -q 'susfs_compat.o' ./KernelSU/kernel/Makefile || echo 'obj-$(CONFIG_KSU_SUSFS) += susfs_compat.o' >> ./KernelSU/kernel/Makefile
           fi
 
           if [[ "${{ github.event.inputs.ZRAM }}" == 1* ]]; then
