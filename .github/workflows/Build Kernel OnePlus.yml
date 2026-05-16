@@ -161,6 +161,11 @@ on:
         description: "是否添加轻量级Linux容器支持(DroidSpaces)？"
         required: true
         default: false
+      DOCKERS:
+        type: boolean
+        description: "是否添加Docker容器支持？"
+        required: true
+        default: false
       RE_KERNEL:
         type: boolean
         description: "是否添加Re-Kernel？"
@@ -184,7 +189,7 @@ on:
 
 jobs:
   build:
-    name: ${{ github.event.inputs.FAST_BUILD == 'true' && ' [FAST]' || '' }}${{ contains(github.event.inputs.FILE, '_aosp') && ' [AOSP]' || '' }}${{ github.event.inputs.KPM == 'KPM' && ' [KPM]' || github.event.inputs.KPM == 'KPN' && ' [KPN]' || '' }}${{ github.event.inputs.LSM_BBG == 'true' && ' [BBG]' || '' }}${{ github.event.inputs.SCHED_HMBIRD == 'true' && ' [HMBIRD]' || '' }}${{ github.event.inputs.DROID_SPACES == 'true' && ' [DS]' || '' }}${{ startsWith(github.event.inputs.ZRAM, '1/') && ' [ZRAM]' || '' }}${{ github.event.inputs.RE_KERNEL == 'true' && ' [REKER]' || '' }}${{ github.event.inputs.LZ4_UPDATE == 'true' && ' [LZ4UPD]' || '' }}For ${{ github.event.inputs.FILE }} ${{ github.event.inputs.SUFFIX }}
+    name: ${{ github.event.inputs.FAST_BUILD == 'true' && ' [FAST]' || '' }}${{ contains(github.event.inputs.FILE, '_aosp') && ' [AOSP]' || '' }}${{ github.event.inputs.KPM == 'KPM' && ' [KPM]' || github.event.inputs.KPM == 'KPN' && ' [KPN]' || '' }}${{ github.event.inputs.LSM_BBG == 'true' && ' [BBG]' || '' }}${{ github.event.inputs.SCHED_HMBIRD == 'true' && ' [HMBIRD]' || '' }}${{ github.event.inputs.DROID_SPACES == 'true' && ' [DS]' || '' }}${{ github.event.inputs.DOCKERS == 'true' && ' [DOCKER]' || '' }}${{ startsWith(github.event.inputs.ZRAM, '1/') && ' [ZRAM]' || '' }}${{ github.event.inputs.RE_KERNEL == 'true' && ' [REKER]' || '' }}${{ github.event.inputs.LZ4_UPDATE == 'true' && ' [LZ4UPD]' || '' }}For ${{ github.event.inputs.FILE }} ${{ github.event.inputs.SUFFIX }}
     runs-on: ubuntu-latest
     env:
       CCACHE_COMPILERCHECK: "none"
@@ -343,6 +348,7 @@ jobs:
           echo "Selected SCHED_HMBIRD: ${{ github.event.inputs.SCHED_HMBIRD }}"
           echo "Selected UNICODE_BYPASS: ${{ github.event.inputs.UNICODE_BYPASS }}"
           echo "Selected DROID_SPACES: ${{ github.event.inputs.DROID_SPACES }}"
+          echo "Selected DOCKERS: ${{ github.event.inputs.DOCKERS }}"
           echo "Selected RE_KERNEL: ${{ github.event.inputs.RE_KERNEL }}"
           echo "Selected LZ4_UPDATE: ${{ github.event.inputs.LZ4_UPDATE }}"
 
@@ -930,7 +936,7 @@ jobs:
       - name: Apply DROID_SPACES
         env:
           FILE: ${{ github.event.inputs.FILE }}
-        if: ${{ github.event.inputs.DROID_SPACES == 'true' }}
+        if: ${{ github.event.inputs.DROID_SPACES == 'true' || github.event.inputs.DOCKERS == 'true' }}
         run: |
           PATCH_DIR="${GITHUB_WORKSPACE}/kernel_workspace/Action-Build/patches"
           cd kernel_workspace/kernel_platform/common
@@ -1139,6 +1145,70 @@ jobs:
             echo "CONFIG_NETFILTER_XT_MATCH_RECENT=y" >> "$CONFIG_FILE"
           fi
 
+          # Docker配置*
+          if [ "${{ github.event.inputs.DOCKERS }}" = "true" ]; then
+            echo "CONFIG_NAMESPACES=y" >> "$CONFIG_FILE"
+            echo "CONFIG_UTS_NS=y" >> "$CONFIG_FILE"
+            echo "CONFIG_IPC_NS=y" >> "$CONFIG_FILE"
+            echo "CONFIG_PID_NS=y" >> "$CONFIG_FILE"
+            echo "CONFIG_NET_NS=y" >> "$CONFIG_FILE"
+            echo "CONFIG_USER_NS=y" >> "$CONFIG_FILE"
+            echo "CONFIG_SYSVIPC=y" >> "$CONFIG_FILE"
+            echo "CONFIG_POSIX_MQUEUE=y" >> "$CONFIG_FILE"
+            echo "CONFIG_KEYS=y" >> "$CONFIG_FILE"
+            echo "CONFIG_SECCOMP=y" >> "$CONFIG_FILE"
+            echo "CONFIG_SECCOMP_FILTER=y" >> "$CONFIG_FILE"
+            echo "CONFIG_DEVTMPFS=y" >> "$CONFIG_FILE"
+            echo "CONFIG_CGROUPS=y" >> "$CONFIG_FILE"
+            echo "CONFIG_CGROUP_FREEZER=y" >> "$CONFIG_FILE"
+            echo "CONFIG_CGROUP_PIDS=y" >> "$CONFIG_FILE"
+            echo "CONFIG_CGROUP_DEVICE=y" >> "$CONFIG_FILE"
+            echo "CONFIG_CGROUP_CPUACCT=y" >> "$CONFIG_FILE"
+            echo "CONFIG_CGROUP_SCHED=y" >> "$CONFIG_FILE"
+            echo "CONFIG_CPUSETS=y" >> "$CONFIG_FILE"
+            echo "CONFIG_MEMCG=y" >> "$CONFIG_FILE"
+            echo "CONFIG_BLK_CGROUP=y" >> "$CONFIG_FILE"
+            echo "CONFIG_CGROUP_BPF=y" >> "$CONFIG_FILE"
+            echo "CONFIG_CGROUP_NET_PRIO=y" >> "$CONFIG_FILE"
+            echo "CONFIG_CGROUP_NET_CLASSID=y" >> "$CONFIG_FILE"
+            echo "CONFIG_NET_CLS_CGROUP=y" >> "$CONFIG_FILE"
+            echo "CONFIG_NETFILTER=y" >> "$CONFIG_FILE"
+            echo "CONFIG_NETFILTER_ADVANCED=y" >> "$CONFIG_FILE"
+            echo "CONFIG_BRIDGE=y" >> "$CONFIG_FILE"
+            echo "CONFIG_BRIDGE_NETFILTER=y" >> "$CONFIG_FILE"
+            echo "CONFIG_VETH=y" >> "$CONFIG_FILE"
+            echo "CONFIG_TUN=y" >> "$CONFIG_FILE"
+            echo "CONFIG_OVERLAY_FS=y" >> "$CONFIG_FILE"
+            echo "CONFIG_OVERLAY_FS_REDIRECT_DIR=y" >> "$CONFIG_FILE"
+            echo "CONFIG_OVERLAY_FS_INDEX=y" >> "$CONFIG_FILE"
+            echo "CONFIG_OVERLAY_FS_XINO_AUTO=y" >> "$CONFIG_FILE"
+            echo "CONFIG_EXT4_FS_POSIX_ACL=y" >> "$CONFIG_FILE"
+            echo "CONFIG_EXT4_FS_SECURITY=y" >> "$CONFIG_FILE"
+            echo "CONFIG_NETFILTER_XTABLES=y" >> "$CONFIG_FILE"
+            echo "CONFIG_NETFILTER_XT_MATCH_ADDRTYPE=y" >> "$CONFIG_FILE"
+            echo "CONFIG_NETFILTER_XT_MATCH_CONNTRACK=y" >> "$CONFIG_FILE"
+            echo "CONFIG_NETFILTER_XT_MATCH_IPVS=y" >> "$CONFIG_FILE"
+            echo "CONFIG_NETFILTER_XT_MATCH_MULTIPORT=y" >> "$CONFIG_FILE"
+            echo "CONFIG_NETFILTER_XT_MATCH_RECENT=y" >> "$CONFIG_FILE"
+            echo "CONFIG_NETFILTER_XT_TARGET_CHECKSUM=y" >> "$CONFIG_FILE"
+            echo "CONFIG_NETFILTER_XT_TARGET_MASQUERADE=y" >> "$CONFIG_FILE"
+            echo "CONFIG_NF_CONNTRACK=y" >> "$CONFIG_FILE"
+            echo "CONFIG_NF_NAT=y" >> "$CONFIG_FILE"
+            echo "CONFIG_NF_NAT_MASQUERADE=y" >> "$CONFIG_FILE"
+            echo "CONFIG_IP_NF_IPTABLES=y" >> "$CONFIG_FILE"
+            echo "CONFIG_IP_NF_FILTER=y" >> "$CONFIG_FILE"
+            echo "CONFIG_IP_NF_NAT=y" >> "$CONFIG_FILE"
+            echo "CONFIG_IP_NF_TARGET_MASQUERADE=y" >> "$CONFIG_FILE"
+            echo "CONFIG_IP_NF_MANGLE=y" >> "$CONFIG_FILE"
+            echo "CONFIG_IP_NF_TARGET_REJECT=y" >> "$CONFIG_FILE"
+            echo "CONFIG_IP6_NF_IPTABLES=y" >> "$CONFIG_FILE"
+            echo "CONFIG_IP6_NF_FILTER=y" >> "$CONFIG_FILE"
+            echo "CONFIG_IP6_NF_NAT=y" >> "$CONFIG_FILE"
+            echo "CONFIG_IP6_NF_TARGET_MASQUERADE=y" >> "$CONFIG_FILE"
+            echo "CONFIG_IP6_NF_MANGLE=y" >> "$CONFIG_FILE"
+            echo "CONFIG_IP6_NF_TARGET_REJECT=y" >> "$CONFIG_FILE"
+          fi
+
           # IPSET & IPv6_NAT配置*
           if [ "${{ github.event.inputs.NETFILTER }}" = "true" ]; then
             if [[ "$KERNEL_VERSION" != "6.12" && "${CPU}" != mt* ]]; then
@@ -1181,7 +1251,7 @@ jobs:
           sed -i 's/check_defconfig//' ./build.config.gki
 
       - name: Fix IPv6_NAT Error
-        if: ${{ github.event.inputs.NETFILTER == 'true' }}
+        if: ${{ github.event.inputs.NETFILTER == 'true' || github.event.inputs.DOCKERS == 'true' }}
         run: |
           PATCH_DIR="${GITHUB_WORKSPACE}/kernel_workspace/Action-Build/patches"
           cd kernel_workspace/kernel_platform/common
@@ -1540,7 +1610,7 @@ jobs:
       - name: Set zip Suffix
         id: suffix
         run: |
-          echo "value=${{ env.ZRAM_ALGO_U && format('_{0}', env.ZRAM_ALGO_U) || '' }}${{ github.event.inputs.KPM == 'KPM' && '_KPM' || github.event.inputs.KPM == 'KPN' && '_KPN' || '' }}${{ github.event.inputs.LSM_BBG == 'true' && '_BBG' || '' }}_ILH${{ github.event.inputs.SCHED_HMBIRD== 'true' && '_HMBIRD' || '' }}${{ github.event.inputs.DROID_SPACES== 'true' && '_DS' || '' }}${{ github.event.inputs.RE_KERNEL == 'true' && '_REKER' || '' }}${{ github.event.inputs.LZ4_UPDATE == 'true' && '_LZ4UPD' || '' }}" >> $GITHUB_OUTPUT
+          echo "value=${{ env.ZRAM_ALGO_U && format('_{0}', env.ZRAM_ALGO_U) || '' }}${{ github.event.inputs.KPM == 'KPM' && '_KPM' || github.event.inputs.KPM == 'KPN' && '_KPN' || '' }}${{ github.event.inputs.LSM_BBG == 'true' && '_BBG' || '' }}_ILH${{ github.event.inputs.SCHED_HMBIRD== 'true' && '_HMBIRD' || '' }}${{ github.event.inputs.DROID_SPACES== 'true' && '_DS' || '' }}${{ github.event.inputs.DOCKERS== 'true' && '_DOCKER' || '' }}${{ github.event.inputs.RE_KERNEL == 'true' && '_REKER' || '' }}${{ github.event.inputs.LZ4_UPDATE == 'true' && '_LZ4UPD' || '' }}" >> $GITHUB_OUTPUT
 
       - name: Upload AnyKernel3
         uses: actions/upload-artifact@v7
