@@ -117,6 +117,13 @@ on:
         description: "ZRAM(0关闭1开启)/算法名/大小"
         required: true
         default: "0/lz4kd/8589934592"
+      
+      HYPERVISOR:
+        type: boolean
+        description: "是否编译开启 Hypervisor/KVM/EL2 虚拟化"
+        required: true
+        default: false
+      
       SUFFIX:
         type: string
         description: "自定义内核后缀(不输入使用RAND_STR或-1关闭)"
@@ -1142,7 +1149,20 @@ jobs:
             set_config "CONFIG_CRYPTO_LZ4K_OPLUS=y"
             set_config "CONFIG_ZRAM_WRITEBACK=y"
           fi
-
+        
+          # 自定义：按需开启 Hypervisor KVM 虚拟化配置*
+          if [ "${{ github.event.inputs.HYPERVISOR }}" = "true" ]; then
+            echo "===== 已选择开启 Hypervisor/KVM 虚拟化 ====="
+            echo "CONFIG_VIRTUALIZATION=y" >> "$CONFIG_FILE"
+            echo "CONFIG_HYPERVISOR=y" >> "$CONFIG_FILE"
+            echo "CONFIG_KVM=y" >> "$CONFIG_FILE"
+            echo "CONFIG_KVM_ARM64=y" >> "$CONFIG_FILE"
+            echo "CONFIG_PROTECTED_KVM=y" >> "$CONFIG_FILE"
+            echo "CONFIG_NVHE_EL2=y" >> "$CONFIG_FILE"
+          else
+            echo "===== 未选择开启 Hypervisor，保持内核默认关闭 ====="
+          fi
+          
           # LSM配置*
           if [ "${{ github.event.inputs.LSM_BBG }}" = "true" ]; then
             set_config "CONFIG_BBG=y"
