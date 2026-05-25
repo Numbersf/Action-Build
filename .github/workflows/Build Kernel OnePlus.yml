@@ -120,7 +120,7 @@ on:
       
       HYPERVISOR:
         type: boolean
-        description: "是否编译开启 Hypervisor/KVM/EL2 虚拟化"
+        description: "是否编译开启 Hypervisor/KVM/EL2 虚拟化(优先天玑处理器)"
         required: true
         default: false
       
