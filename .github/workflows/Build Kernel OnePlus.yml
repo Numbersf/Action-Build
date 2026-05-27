@@ -2,7 +2,7 @@ name: Build All OnePlus Kernels
 on:
   workflow_dispatch:
     inputs:
-      FILE:
+      FILE:oneplus_ace5
         type: choice
         description: "配置文件"
         required: true
