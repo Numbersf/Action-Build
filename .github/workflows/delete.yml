@@ -23,15 +23,16 @@ on:
           - all
           - ccache
           - apt-cache
+          - thinlto-cache
       count:
-        description: '最多访问的运行次数'
+        description: '最多删除的运行总条数'
         required: false
         default: '20'
       delete_failed:
         description: '删除指定工作流失败的运行记录？'
         required: false
         type: boolean
-        default: true
+        default: false
       delete_success:
         description: '删除指定工作流成功的运行记录？'
         required: false
@@ -52,131 +53,198 @@ on:
         required: false
         type: boolean
         default: false
+      target_run_numbers:
+        description: '按运行编号删除'
+        required: false
+        default: ''
+      target_run_ids:
+        description: '按Run-ID删除'
+        required: false
+        default: ''
 
 permissions:
   actions: write
 
 jobs:
-  cleanup:
+  cleanup-workflow:
     runs-on: ubuntu-latest
-    if: ${{ inputs.cancel_all
-     || inputs.delete_failed
-     || inputs.delete_success
-     || inputs.delete_cancelled }}
+    if: >-
+      ${{ inputs.cancel_all
+       || inputs.delete_failed
+       || inputs.delete_success
+       || inputs.delete_cancelled
+       || inputs.target_run_numbers != ''
+       || inputs.target_run_ids != '' }}
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      REPO: ${{ github.repository }}
     steps:
-      - name: 安装环境
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y gh jq
-
-      - name: 认证 GitHub CLI
-        run: echo "${{ secrets.GITHUB_TOKEN }}" | gh auth login --with-token
-
-      - name: 清理指定工作流运行记录
+      - name: Delete by Run Number
+        if: ${{ inputs.target_run_numbers != '' }}
         env:
-          REPO: ${{ github.repository }}
+          WORKFLOW_NAME: ${{ inputs.workflow_name }}
+          TARGET_RUN_NUMBERS: ${{ inputs.target_run_numbers }}
+        run: |
+          set -e
+          echo "精准模式 - 按运行编号删除: $TARGET_RUN_NUMBERS"
+
+          IFS=',' read -ra NUM_LIST <<< "$TARGET_RUN_NUMBERS"
+          for RAW_NUM in "${NUM_LIST[@]}"; do
+            NUM=$(echo "$RAW_NUM" | tr -d ' #')
+            [ -z "$NUM" ] && continue
+
+            echo "查找运行编号 #${NUM}..."
+            LINE=$(gh run list \
+              --repo "$REPO" \
+              --workflow "$WORKFLOW_NAME" \
+              --limit 300 \
+              --json databaseId,number,status,conclusion \
+              --jq ".[] | select(.number == $NUM) | [.status, .conclusion, (.databaseId | tostring)] | join(\" \")")
+
+            if [ -z "$LINE" ]; then
+              echo "⚠️ 未找到运行编号 #${NUM}，跳过。"
+              continue
+            fi
+
+            STATE=$(echo "$LINE"      | awk '{print $1}')
+            CONCLUSION=$(echo "$LINE" | awk '{print $2}')
+            RUN_ID=$(echo "$LINE"     | awk '{print $3}')
+
+            if [[ "$STATE" == "in_progress" || "$STATE" == "queued" || "$STATE" == "waiting" ]]; then
+              echo "#${NUM}（ID: $RUN_ID）仍在运行中（$STATE），跳过。"
+            else
+              echo "删除 #${NUM}（ID: $RUN_ID，conclusion: $CONCLUSION）..."
+              gh run delete "$RUN_ID" --repo "$REPO" \
+                && echo "✅ 已删除 #${NUM}" \
+                || echo "❌ 删除失败 #${NUM}"
+            fi
+          done
+
+      - name: Delete by Run ID
+        if: ${{ inputs.target_run_ids != '' }}
+        env:
+          TARGET_RUN_IDS: ${{ inputs.target_run_ids }}
+        run: |
+          set -e
+          echo "精准模式 - 按 Run ID 删除: $TARGET_RUN_IDS"
+
+          IFS=',' read -ra ID_LIST <<< "$TARGET_RUN_IDS"
+          for RAW_ID in "${ID_LIST[@]}"; do
+            RID=$(echo "$RAW_ID" | tr -d ' ')
+            [ -z "$RID" ] && continue
+
+            echo "查询 Run ID $RID..."
+            LINE=$(gh run view "$RID" \
+              --repo "$REPO" \
+              --json status,conclusion,number \
+              --jq '[.status, .conclusion, (.number | tostring)] | join(" ")' \
+              2>/dev/null || true)
+
+            if [ -z "$LINE" ]; then
+              echo "⚠️ Run ID $RID 不存在或无权访问，跳过。"
+              continue
+            fi
+
+            STATE=$(echo "$LINE"      | awk '{print $1}')
+            CONCLUSION=$(echo "$LINE" | awk '{print $2}')
+            RUN_NUMBER=$(echo "$LINE" | awk '{print $3}')
+
+            if [[ "$STATE" == "in_progress" || "$STATE" == "queued" || "$STATE" == "waiting" ]]; then
+              echo "ID $RID（#${RUN_NUMBER}）仍在运行中（$STATE），跳过。"
+            else
+              echo "删除 ID $RID（#${RUN_NUMBER}，conclusion: $CONCLUSION）..."
+              gh run delete "$RID" --repo "$REPO" \
+                && echo "✅ 已删除 ID $RID" \
+                || echo "❌ 删除失败 ID $RID"
+            fi
+          done
+
+      - name: Batch Cancel and Delete
+        if: >-
+          ${{ inputs.target_run_numbers == ''
+           && inputs.target_run_ids == ''
+           && (inputs.cancel_all
+            || inputs.delete_failed
+            || inputs.delete_success
+            || inputs.delete_cancelled) }}
+        env:
+          WORKFLOW_NAME: ${{ inputs.workflow_name }}
           COUNT: ${{ inputs.count }}
           DELETE_FAILED: ${{ inputs.delete_failed }}
           DELETE_SUCCESS: ${{ inputs.delete_success }}
           DELETE_CANCELLED: ${{ inputs.delete_cancelled }}
           REVERSE_ORDER: ${{ inputs.reverse_order }}
           CANCEL_ALL: ${{ inputs.cancel_all }}
-          WORKFLOW_NAME: ${{ inputs.workflow_name }}
           CURRENT_RUN_ID: ${{ github.run_id }}
         run: |
           set -e
-
-          echo "查找工作流 \"$WORKFLOW_NAME\" 的 ID..."
-          WORKFLOWS_JSON=$(gh api repos/$REPO/actions/workflows || true)
-          if ! echo "$WORKFLOWS_JSON" | jq -e '.workflows | type=="array"' >/dev/null 2>&1; then
-            echo "❌ 无法获取 workflows（GitHub API 非 JSON）"
-            exit 1
-          fi
-          WORKFLOW_ID=$(echo "$WORKFLOWS_JSON" | jq -r ".workflows[] | select(.name == \"$WORKFLOW_NAME\") | .id")
-          if [ -z "$WORKFLOW_ID" ]; then
-            echo "未找到工作流 \"$WORKFLOW_NAME\"，退出。"
-            exit 1
-          fi
-
-          echo "开始分页获取所有运行记录..."
-          PER_PAGE=100
-          PAGE=1
-          ALL_RUNS="[]"
-          while true; do
-            RESP=$(gh api "repos/$REPO/actions/workflows/$WORKFLOW_ID/runs?per_page=$PER_PAGE&page=$PAGE" || true)
-            if ! echo "$RESP" | jq -e '.workflow_runs | type=="array"' >/dev/null 2>&1; then
-              echo "⚠️ runs API 返回非 JSON，停止分页"
-              break
-            fi
-
-            RUNS=$(echo "$RESP" | jq '.workflow_runs')
-            COUNT_THIS_PAGE=$(echo "$RUNS" | jq 'length')
-            if [ "$COUNT_THIS_PAGE" -eq 0 ]; then break; fi
-            ALL_RUNS=$(jq -s 'add' <(echo "$ALL_RUNS") <(echo "$RUNS"))
-            PAGE=$((PAGE + 1))
-          done
-
-          echo "共获取到 $(echo "$ALL_RUNS" | jq 'length') 条运行记录。"
-
           if [[ "$CANCEL_ALL" == "true" ]]; then
-            echo "开始取消进行中或排队中的运行..."
+            echo "批量模式 - 取消所有进行中/排队中的运行..."
             CANCEL_COUNT=0
-            echo "$ALL_RUNS" | jq -c '.[] | select((.status == "in_progress") or (.status == "queued"))' | while read run; do
-              ID=$(echo "$run" | jq -r '.id')
-              if [[ "$ID" == "$CURRENT_RUN_ID" ]]; then continue; fi
-              echo "取消运行 ID: $ID"
-              gh api -X POST "repos/$REPO/actions/runs/$ID/cancel" && CANCEL_COUNT=$((CANCEL_COUNT + 1))
+            for STATUS_FILTER in in_progress queued waiting; do
+              while IFS= read -r RUN_ID; do
+                [ -z "$RUN_ID" ] && continue
+                [[ "$RUN_ID" == "$CURRENT_RUN_ID" ]] && continue
+                echo "取消 ID: $RUN_ID"
+                gh run cancel "$RUN_ID" --repo "$REPO" \
+                  && CANCEL_COUNT=$((CANCEL_COUNT + 1)) \
+                  || echo "取消失败: $RUN_ID"
+              done < <(gh run list \
+                --repo "$REPO" \
+                --workflow "$WORKFLOW_NAME" \
+                --status "$STATUS_FILTER" \
+                --limit 200 \
+                --json databaseId \
+                --jq '.[].databaseId | tostring')
             done
             echo "已取消 $CANCEL_COUNT 条运行。"
           fi
+          [[ "$REVERSE_ORDER" == "true" ]] && SORT_CMD="sort -k2" || SORT_CMD="sort -k2 -r"
 
-          echo "开始处理删除逻辑..."
-          if [[ "$REVERSE_ORDER" == "true" ]]; then
-            SORTED_RUNS=$(echo "$ALL_RUNS" | jq 'sort_by(.run_started_at)')
-          else
-            SORTED_RUNS=$(echo "$ALL_RUNS" | jq 'sort_by(.run_started_at) | reverse')
-          fi
+          TOTAL_DELETED=0
+          for CONCLUSION in failure success cancelled; do
+            case "$CONCLUSION" in
+              failure)   [[ "$DELETE_FAILED"    != "true" ]] && continue ;;
+              success)   [[ "$DELETE_SUCCESS"   != "true" ]] && continue ;;
+              cancelled) [[ "$DELETE_CANCELLED" != "true" ]] && continue ;;
+            esac
 
-          TO_DELETE_RUNS=$(echo "$SORTED_RUNS" | jq ".[0:${COUNT}]")
+            [ "$TOTAL_DELETED" -ge "$COUNT" ] && break
+            echo "批量模式 - 处理结论类型: $CONCLUSION（全局剩余配额: $((COUNT - TOTAL_DELETED)) 条）..."
 
-          echo "$TO_DELETE_RUNS" | jq -c '.[]' | while read run; do
-            ID=$(echo "$run" | jq -r '.id')
-            STATUS=$(echo "$run" | jq -r '.conclusion')
-            STATE=$(echo "$run" | jq -r '.status')
+            while IFS=' ' read -r RUN_ID _STARTED; do
+              [ -z "$RUN_ID" ] && continue
+              [[ "$RUN_ID" == "$CURRENT_RUN_ID" ]] && continue
+              [ "$TOTAL_DELETED" -ge "$COUNT" ] && break 2
+              echo "删除 ID: $RUN_ID"
+              gh run delete "$RUN_ID" --repo "$REPO" \
+                && TOTAL_DELETED=$((TOTAL_DELETED + 1)) \
+                || echo "❌ 删除失败: $RUN_ID"
+            done < <(gh run list \
+              --repo "$REPO" \
+              --workflow "$WORKFLOW_NAME" \
+              --limit 200 \
+              --json databaseId,startedAt,conclusion \
+              --jq ".[] | select(.conclusion == \"$CONCLUSION\") | [(.databaseId | tostring), .startedAt] | join(\" \")" \
+              | $SORT_CMD)
 
-            if [[ "$STATE" == "in_progress" || "$STATE" == "queued" ]]; then continue; fi
-            if [[ "$STATUS" == "failure" && "$DELETE_FAILED" != "true" ]]; then continue; fi
-            if [[ "$STATUS" == "success" && "$DELETE_SUCCESS" != "true" ]]; then continue; fi
-            if [[ "$STATUS" == "cancelled" && "$DELETE_CANCELLED" != "true" ]]; then continue; fi
-
-            echo "删除运行记录 ID: $ID"
-            gh api -X DELETE "repos/$REPO/actions/runs/$ID" || echo "删除失败"
+            echo "已处理 $CONCLUSION 类型，当前总删除: $TOTAL_DELETED 条。"
           done
 
-          echo "清理本工作流运行记录（排除当前运行）..."
-          SELF_WORKFLOW_ID=$(gh api repos/$REPO/actions/workflows | jq -r '.workflows[] | select(.name == "Workflow and Cache Cleanup") | .id')
-          if [ -n "$SELF_WORKFLOW_ID" ]; then
-            SELF_RUNS=$(gh api "repos/$REPO/actions/workflows/$SELF_WORKFLOW_ID/runs?per_page=50" | jq -c '.workflow_runs[]')
-            echo "$SELF_RUNS" | while read run; do
-              ID=$(echo "$run" | jq -r '.id')
-              if [[ "$ID" == "$CURRENT_RUN_ID" ]]; then continue; fi
-              echo "删除本工作流运行记录 ID: $ID"
-              gh api -X DELETE "repos/$REPO/actions/runs/$ID" || echo "删除失败"
-            done
-          fi
+          echo "✅ 批量删除完成，共删除 $TOTAL_DELETED 条（上限: $COUNT）。"
 
-  clean-caches:
+  cleanup-caches:
     runs-on: ubuntu-latest
     if: ${{ inputs.cache_mode != 'none' }}
     permissions:
       actions: write
     steps:
-      - name: 根据模式清理缓存
-        uses: actions/github-script@v6
+      - name: Clean caches by mode
+        uses: actions/github-script@v9
         with:
           script: |
             const { owner, repo } = context.repo;
-            const mode = process.env.CACHE_MODE || '${{ inputs.cache_mode }}';
+            const mode = '${{ inputs.cache_mode }}';
             console.log(`🔹 当前缓存清理模式: ${mode}`);
 
             let totalDeleted = 0;
@@ -185,41 +253,27 @@ jobs:
 
             while (true) {
               const res = await github.rest.actions.getActionsCacheList({
-                owner,
-                repo,
-                per_page: 100,
-                page
+                owner, repo, per_page: 100, page
               });
-
               const caches = res.data.actions_caches;
               if (!caches || caches.length === 0) break;
 
               for (const cache of caches) {
                 const key = cache.key;
                 let matched = false;
-
                 switch (mode) {
-                  case 'all':
-                    matched = true;
-                    break;
-                  case 'ccache':
-                    matched = key.startsWith('ccache-');
-                    break;
-                  case 'apt-cache':
-                    matched = key.includes('apt-cache') || key.includes('apt');
-                    break;
-                  default:
-                    matched = false;
+                  case 'all':       matched = true; break;
+                  case 'ccache':    matched = key.startsWith('ccache-'); break;
+                  case 'apt-cache': matched = key.includes('apt-cache') || key.includes('apt'); break;
+                  case 'thinlto-cache': matched = key.startsWith('thinlto-'); break;
+                  default:          matched = false;
                 }
-
                 if (matched) {
                   totalFound++;
                   console.log(`删除缓存: ${key}`);
                   try {
                     await github.rest.actions.deleteActionsCacheById({
-                      owner,
-                      repo,
-                      cache_id: cache.id
+                      owner, repo, cache_id: cache.id
                     });
                     totalDeleted++;
                   } catch (err) {
@@ -227,7 +281,6 @@ jobs:
                   }
                 }
               }
-
               if (caches.length < 100) break;
               page++;
             }
@@ -237,3 +290,34 @@ jobs:
             } else {
               console.log(`共找到 ${totalFound} 个缓存，成功删除 ${totalDeleted} 个。`);
             }
+
+  cleanup-self-workflow:
+    runs-on: ubuntu-latest
+    if: always()
+    env:
+      CURRENT_RUN_ID: ${{ github.run_id }}
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      REPO: ${{ github.repository }}
+    steps:
+      - name: Clean the workflow own Run History
+        run: |
+          set -e
+          echo "清理本工作流（Workflow and Cache Cleanup）历史记录..."
+          DELETED=0
+
+          while IFS=' ' read -r RUN_ID STATE; do
+            [ -z "$RUN_ID" ] && continue
+            [[ "$RUN_ID" == "$CURRENT_RUN_ID" ]] && continue
+            [[ "$STATE" == "in_progress" || "$STATE" == "queued" || "$STATE" == "waiting" ]] && continue
+            echo "删除自身记录 ID: $RUN_ID"
+            gh run delete "$RUN_ID" --repo "$REPO" \
+              && DELETED=$((DELETED + 1)) \
+              || echo "❌ 删除失败: $RUN_ID"
+          done < <(gh run list \
+            --repo "$REPO" \
+            --workflow "Workflow and Cache Cleanup" \
+            --limit 200 \
+            --json databaseId,status \
+            --jq '.[] | [(.databaseId | tostring), .status] | join(" ")')
+
+          echo "✅ 自身记录清理完成，共删除 $DELETED 条。"

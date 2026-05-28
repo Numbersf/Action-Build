@@ -171,7 +171,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Setup gh CLI
         run: |
@@ -289,7 +289,7 @@ jobs:
           zip -r ../All-AnyKernel3-SukiSUUltra-${{ github.event.inputs.BATCH }}.zip ./*
 
       - name: Upload Combined ZIP Artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: All-AnyKernel3-SukiSUUltra-${{ github.event.inputs.BATCH }}
           path: All-AnyKernel3-SukiSUUltra-${{ github.event.inputs.BATCH }}.zip
