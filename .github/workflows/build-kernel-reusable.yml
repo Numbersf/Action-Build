@@ -2,8 +2,6 @@ name: Build Kernel Reusable
 on:
   workflow_call:
     inputs:
-  workflow_dispatch:
-    inputs:
       FILE:
         type: choice
         description: "配置文件"
@@ -190,6 +188,7 @@ on:
         description: "是否停用此次缓存？"
         required: true
         default: false
+  workflow_dispatch:
 
 permissions:
   contents: write
