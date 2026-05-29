@@ -109,187 +109,33 @@ jobs:
 
   build:
     needs: generate-matrix
-    runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
         include: ${{ fromJson(needs.generate-matrix.outputs.matrix) }}
-    steps:
-      - name: Call Original Workflow
-        uses: benc-uk/workflow-dispatch@v1
-        with:
-          workflow: Build All OnePlus Kernels
-          token: ${{ secrets.GITHUB_TOKEN }}
-          inputs: |
-            {
-              "FILE": "${{ matrix.file }}",
-              "SUSFS_CI": "NoN",
-              "KSU_META": "susfs-main/Numbersf/",
-              "BUILD_TIME": "F",
-              "SUFFIX": "",
-              "FAST_BUILD": "true",
-              "HOOK": "manual",
-              "LSM": "true",
-              "SCHED": "${{ matrix.enable_sched }}",
-              "ZRAM": "false"
-            }
-
-      - name: Wait for Builds to Finish or Exit Early
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          FILE="${{ matrix.file_short }}"
-          echo "等待目标构建 $FILE 上传对应 Artifact..."
-
-          SECONDS=0
-          MAX_TIME=$((35 * 60))
-          sleep 600
-
-          while (( SECONDS < MAX_TIME )); do
-            echo "查询已上传的 Artifact（已等待 $SECONDS 秒）..."
-            ALL_ARTIFACTS=$(gh api --paginate repos/${{ github.repository }}/actions/artifacts --jq '.artifacts[].name')
-
-            if echo "$ALL_ARTIFACTS" | grep -E -q "$FILE"; then
-              echo "✅ 找到匹配的 Artifact：$(echo "$ALL_ARTIFACTS" | grep -E "$FILE" | head -n1)"
-              exit 0
-            fi
-
-            echo "未找到匹配的 Artifact，休眠5min继续..."
-            sleep 300
-          done
-
-          echo "❌ 超时未检测到 $FILE 的构建成功 Artifact。"
-          exit 1
-
-      - name: Clean ccache After Build
-        run: |
-          echo "Cleaning ccache for $HOME/.ccache_${{ matrix.file }} ..."
-          rm -rf "$HOME/.ccache_${{ matrix.file }}"
-
-  wait-and-download:
-    needs: build
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout Code
-        uses: actions/checkout@v6
-
-      - name: Setup gh CLI
-        run: |
-          sudo apt update && sudo apt install -y gh zip curl jq
-          echo "${{ secrets.GITHUB_TOKEN }}" | gh auth login --with-token
-
-      - name: List Matching Artifacts for Current Batch
-        id: list-artifacts
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          echo "查找当前 Batch 的 Artifacts..."
-          mkdir -p all_artifacts
-
-          BATCH="${{ github.event.inputs.BATCH }}"
-          if [[ "$BATCH" == "1" ]]; then
-            FILE_LIST=(
-              "oneplus_nord_ce4_lite_5g_v"
-              "oneplus_nord_ce4_v"
-              "oneplus_nord_4_v"
-              "oneplus_ace_3v_v"
-              "oneplus_10_pro_v"
-              "oneplus_10t_v"
-              "oneplus_11r_v"
-              "oneplus_ace2_v"
-              "oneplus_ace_pro_v"
-            )
-          elif [[ "$BATCH" == "2" ]]; then
-            FILE_LIST=(
-              "oneplus_11_v"
-              "oneplus_12r_v"
-              "oneplus_ace2_pro_v"
-              "oneplus_ace3_v"
-              "oneplus_open_v"
-              "oneplus_12_v"
-              "oneplus_13r"
-              "oneplus_ace3_pro_v"
-              "oneplus_ace5"
-            )
-          elif [[ "$BATCH" == "3" ]]; then
-            FILE_LIST=(
-              "oneplus_pad_pro_v"
-              "oneplus_pad2_v"
-              "oneplus_nord_5"
-              "oneplus_ace5_pro"
-              "oneplus_ace5_pro_b"
-              "oneplus_13"
-              "oneplus_13_b"
-              "oneplus_13t"
-              "oneplus_13t_b"
-            )
-          elif [[ "$BATCH" == "4" ]]; then
-            FILE_LIST=(
-              "oneplus_13_global"
-              "oneplus_13s"
-              "oneplus_13s_b"
-              "oneplus_pad_2_pro"
-              "oneplus_pad_3"
-              "oneplus_ace5_ultra"
-              "oneplus_ace_6"
-              "oneplus_15"
-            )
-          else
-            echo "无效的 BATCH 值: $BATCH"
-            exit 1
-          fi
-
-          SHORT_LIST=()
-          for FILE in "${FILE_LIST[@]}"; do
-            SHORT=$(echo "$FILE" | sed -E 's/_[a-z]$//' | sed -E 's/_v$//')
-            SHORT_LIST+=("$SHORT")
-          done
-
-          ALL_ARTIFACTS=$(gh api --paginate repos/${{ github.repository }}/actions/artifacts --jq '.artifacts[].name')
-
-          MATCHED_ARTIFACTS=()
-          for FILE in "${SHORT_LIST[@]}"; do
-            for ART in $ALL_ARTIFACTS; do
-              if [[ "$ART" == *"$FILE"* ]]; then
-                MATCHED_ARTIFACTS+=("$ART")
-              fi
-            done
-          done
-
-          if [[ "${#MATCHED_ARTIFACTS[@]}" -eq 0 ]]; then
-            echo "没有匹配的 Artifact，终止"
-            exit 1
-          fi
-
-          ARTIFACT_NAMES=$(IFS=";"; echo "${MATCHED_ARTIFACTS[*]}")
-          echo "ARTIFACT_NAMES=$ARTIFACT_NAMES" >> "$GITHUB_OUTPUT"
-
-      - name: Download All Matched Artifacts as ZIP
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          mkdir -p all_artifacts
-          IFS=';' read -ra NAMES <<< "${{ steps.list-artifacts.outputs.ARTIFACT_NAMES }}"
-          for NAME in "${NAMES[@]}"; do
-            echo "查找 artifact $NAME 的 ID..."
-            ARTIFACT_ID=$(gh api repos/${{ github.repository }}/actions/artifacts --jq ".artifacts[] | select(.name==\"$NAME\") | .id")
-            if [[ -n "$ARTIFACT_ID" ]]; then
-              echo "下载 $NAME (ID: $ARTIFACT_ID)..."
-              curl -L -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
-                   -o "all_artifacts/${NAME}.zip" \
-                   "https://api.github.com/repos/${{ github.repository }}/actions/artifacts/${ARTIFACT_ID}/zip"
-            else
-              echo "未找到 $NAME 的 ID，跳过"
-            fi
-          done
-
-      - name: Create Final ZIP from Extracted ZIPS
-        run: |
-          cd all_artifacts
-          zip -r ../All-AnyKernel3-SukiSUUltra-${{ github.event.inputs.BATCH }}.zip ./*
-
-      - name: Upload Combined ZIP Artifact
-        uses: actions/upload-artifact@v7
-        with:
-          name: All-AnyKernel3-SukiSUUltra-${{ github.event.inputs.BATCH }}
-          path: All-AnyKernel3-SukiSUUltra-${{ github.event.inputs.BATCH }}.zip
+    uses: ./.github/workflows/build-kernel-reusable.yml
+    with:
+      FILE: ${{ matrix.file }}
+      MANAGER_SOURCE: MIUIX
+      SUSFS_CI: N/A
+      KPM: KPM
+      DYNAMIC_REPO: Numbersf
+      BUILD_TIME: F
+      KSU_META: susfs-main/Numbersf/
+      LZ4_UPDATE: false
+      ZRAM: 0/lz4kd/8589934592
+      SUFFIX: ""
+      SUBLEVEL: ""
+      FAST_BUILD: true
+      LSM_BBG: true
+      NETFILTER: true
+      CCM: true
+      UNICODE_BYPASS: false
+      SCHED_HMBIRD: ${{ matrix.enable_sched }}
+      DROID_SPACES: false
+      RE_KERNEL: false
+      SUSFS_DEV: false
+      SPACE_NOCLEAN: false
+      BUILD_NOCACHE: false
+      SUSFS_META: ""
+    secrets: inherit
