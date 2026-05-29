@@ -822,16 +822,6 @@ jobs:
           grep -nE '^(REPO_OWNER|REPO_NAME|REPO_BRANCH|KSU_VERSION_API|KSU_VERSION_FULL|VERSION_TAG|GIT_BIN|CURL_BIN)' kernel/Makefile
           echo "::endgroup::"
 
-          cd ../common
-          SULOG_EVENT="./drivers/kernelsu/sulog/event.c"
-          [ ! -f "$SULOG_EVENT" ] && { echo "未找到 $SULOG_EVENT，跳过 sulog 参数类型修复"; exit 0; }
-          if grep -q 'struct user_arg_ptr \*argv_user' "$SULOG_EVENT" && grep -q ', USER_ARG_NULL, gfp)' "$SULOG_EVENT"; then
-            sed -i 's|, USER_ARG_NULL, gfp)|, \&USER_ARG_NULL, gfp)|g' "$SULOG_EVENT"
-            echo "已修复 SukiSU SUSFS sulog USER_ARG_NULL 参数类型"
-          else
-            echo "SukiSU SUSFS sulog 参数类型无需修复"
-          fi
-
       - name: Apply Patches SukiSU Ultra
         env:
           FILE: ${{ github.event.inputs.FILE }}
