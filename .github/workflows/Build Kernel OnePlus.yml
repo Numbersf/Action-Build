@@ -513,7 +513,7 @@ jobs:
           set -euo pipefail
           mkdir -p ~/apt-cache-debs
           if [ "${{ steps.apt-cache.outputs.cache-hit }}" != "true" ]; then
-            sudo apt-get update
+            sudo apt-get update && sudo apt-get upgrade -y
           else
             echo "✅ APT 缓存命中，跳过 apt-get update"
           fi
