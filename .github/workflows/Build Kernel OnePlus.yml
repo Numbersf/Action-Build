@@ -201,7 +201,8 @@ jobs:
       CCACHE_NOHASHDIR: "true"
       CCACHE_NOHARDLINK: "true"
       CCACHE_IS_KERNEL_COMPILING: "true"
-      CCACHE_MAXSIZE: 5G
+      CCACHE_COMPRESS: "true"
+      CCACHE_MAXSIZE: 10G
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -468,7 +469,7 @@ jobs:
           git config --global user.name "Numbersf"
           git config --global user.email "263623064@qq.com"
           mkdir kernel_workspace && cd kernel_workspace
-          git clone https://github.com/Numbersf/Action-Build.git -b SukiSU-Ultra
+          git clone --depth=1 --single-branch https://github.com/Numbersf/Action-Build.git -b SukiSU-Ultra
 
       - name: Fork Check
         run: |
@@ -577,7 +578,7 @@ jobs:
           BASE_URL="https://github.com/${MANIFEST_REPO}/${MANIFEST_REPO_NAME}.git"
 
           echo "使用$MANIFEST_REPO/$MANIFEST_REPO_NAME($MANIFEST_BRANCH)初始化仓库..."
-          repo init -u "$BASE_URL" -b "$MANIFEST_BRANCH" -m "${FILE}.xml" --depth=1 --no-clone-bundle --no-tags
+          repo init -u "$BASE_URL" -b "$MANIFEST_BRANCH" -m "${FILE}.xml" --depth=1 --no-clone-bundle --no-tags --no-repo-verify
           repo sync -c -j$(nproc) --no-clone-bundle --no-tags --force-sync
 
           KERNEL_REPOS=""
@@ -840,18 +841,18 @@ jobs:
           echo "Cloning patches in parallel..."
           PIDS=""
           if [ "${{ github.event.inputs.SUSFS_META }}" != "-1" ]; then
-            (git clone https://gitlab.com/simonpunk/susfs4ksu.git -b gki-${{ env.KANDROID_VERSION }}-${{ env.KERNEL_VERSION }}${{ github.event.inputs.SUSFS_DEV == 'true' && '-dev' || '' }} && echo "susfs4ksu done") &
+            (git clone --depth=1 --single-branch https://gitlab.com/simonpunk/susfs4ksu.git -b gki-${{ env.KANDROID_VERSION }}-${{ env.KERNEL_VERSION }}${{ github.event.inputs.SUSFS_DEV == 'true' && '-dev' || '' }} && echo "susfs4ksu done") &
             PIDS="$PIDS $!"
           fi
           if [ "${{ github.event.inputs.RE_KERNEL }}" = "true" ]; then
-            (git clone https://github.com/Sakion-Team/Re-Kernel.git && echo "Re-Kernel done") &
+            (git clone --depth=1 --single-branch https://github.com/Sakion-Team/Re-Kernel.git && echo "Re-Kernel done") &
             PIDS="$PIDS $!"
           fi
           if [ "${{ github.event.inputs.LZ4_UPDATE }}" = "true" ]; then
-            (git clone https://github.com/Numbersf/lz4_oplus.git && echo "lz4_oplus done") &
+            (git clone --depth=1 --single-branch https://github.com/Numbersf/lz4_oplus.git && echo "lz4_oplus done") &
             PIDS="$PIDS $!"
           fi
-          (git clone https://github.com/ShirkNeko/SukiSU_patch.git && echo "SukiSU_patch done") &
+          (git clone --depth=1 --single-branch https://github.com/ShirkNeko/SukiSU_patch.git && echo "SukiSU_patch done") &
           PIDS="$PIDS $!"
 
           # Wait for all clones
@@ -1166,7 +1167,7 @@ jobs:
               exit 0
             }
           done
-          git clone https://github.com/Numbersf/SCHED_PATCH.git -b $CPU || { echo "❌ CPU 分支不存在，风驰内核暂未支持你的机型，请关闭后重试"; exit 11; }
+          git clone --depth=1 --single-branch https://github.com/Numbersf/SCHED_PATCH.git -b $CPU || { echo "❌ CPU 分支不存在，风驰内核暂未支持你的机型，请关闭后重试"; exit 11; }
           echo "正在拉取风驰补丁"
           cp ./SCHED_PATCH/fengchi_${CLEAN_FILE}.patch ./
           if [[ -f "fengchi_${CLEAN_FILE}.patch" ]]; then
