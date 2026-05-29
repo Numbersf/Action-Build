@@ -578,7 +578,7 @@ jobs:
           BASE_URL="https://github.com/${MANIFEST_REPO}/${MANIFEST_REPO_NAME}.git"
 
           echo "使用$MANIFEST_REPO/$MANIFEST_REPO_NAME($MANIFEST_BRANCH)初始化仓库..."
-          repo init -u "$BASE_URL" -b "$MANIFEST_BRANCH" -m "${FILE}.xml" --depth=1 --no-clone-bundle --no-tags --no-repo-verify
+          repo init -u "$BASE_URL" -b "$MANIFEST_BRANCH" -m "${FILE}.xml" --depth=1 --no-clone-bundle --no-tags
           repo sync -c -j$(nproc) --no-clone-bundle --no-tags --force-sync
 
           KERNEL_REPOS=""
