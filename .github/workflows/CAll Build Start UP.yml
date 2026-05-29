@@ -109,33 +109,85 @@ jobs:
 
   build:
     needs: generate-matrix
+    runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
         include: ${{ fromJson(needs.generate-matrix.outputs.matrix) }}
-    uses: ./.github/workflows/build-kernel-reusable.yml
-    with:
-      FILE: ${{ matrix.file }}
-      MANAGER_SOURCE: MIUIX
-      SUSFS_CI: N/A
-      KPM: KPM
-      DYNAMIC_REPO: Numbersf
-      BUILD_TIME: F
-      KSU_META: susfs-main/Numbersf/
-      LZ4_UPDATE: false
-      ZRAM: 0/lz4kd/8589934592
-      SUFFIX: ""
-      SUBLEVEL: ""
-      FAST_BUILD: true
-      LSM_BBG: true
-      NETFILTER: true
-      CCM: true
-      UNICODE_BYPASS: false
-      SCHED_HMBIRD: ${{ matrix.enable_sched }}
-      DROID_SPACES: false
-      RE_KERNEL: false
-      SUSFS_DEV: false
-      SPACE_NOCLEAN: false
-      BUILD_NOCACHE: false
-      SUSFS_META: ""
-    secrets: inherit
+    steps:
+      - name: 触发 ${{ matrix.file }} 构建
+        uses: benc-uk/workflow-dispatch@v1
+        with:
+          workflow: Build All OnePlus Kernels
+          ref: SukiSU-Ultra
+          inputs: '{"FILE":"${{ matrix.file }}","MANAGER_SOURCE":"MIUIX","SUSFS_CI":"N/A","KPM":"KPM","DYNAMIC_REPO":"Numbersf","BUILD_TIME":"F","KSU_META":"susfs-main/Numbersf/","LZ4_UPDATE":"false","ZRAM":"0/lz4kd/8589934592","SUFFIX":"","SUBLEVEL":"","FAST_BUILD":"true","LSM_BBG":"true","NETFILTER":"true","CCM":"true","UNICODE_BYPASS":"false","SCHED_HMBIRD":"${{ matrix.enable_sched }}","DROID_SPACES":"false","RE_KERNEL":"false","SUSFS_DEV":"false","SPACE_NOCLEAN":"false","BUILD_NOCACHE":"false","SUSFS_META":""}'
+          wait_time: 60
+          max_wait: 10800
+          propagate_failure: false
+          display_workflow_run_info: true
+
+      - name: Clean ccache After Build
+        run: |
+          echo "清理ccache中..."
+          sudo rm -rf /root/.cache/ccache 2>/dev/null || true
+          rm -rf ~/.cache/ccache 2>/dev/null || true
+          echo "✅ ccache清理完成"
+
+  wait-and-download:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: 等待并下载所有构建产物
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+          mkdir -p all-artifacts
+          BATCH="${{ github.event.inputs.BATCH }}"
+          echo "Batch: $BATCH"
+
+          echo "⏳ 等待构建产物就绪..."
+          for i in $(seq 1 30); do
+            RUN_IDS=$(gh run list --workflow "Build All OnePlus Kernels" --limit 30 \
+              --json databaseId,status,conclusion,headBranch,createdAt 2>/dev/null | \
+              jq -r --arg ref "${{ github.ref_name }}" '.[] | select(.headBranch == $ref) | select(.status == "completed") | .databaseId' | head -20)
+            if [ -n "$RUN_IDS" ]; then
+              echo "找到已完成运行:"
+              echo "$RUN_IDS"
+              break
+            fi
+            echo "等待中... ($i/30)"
+            sleep 60
+          done
+
+          echo "📥 下载产物..."
+          echo "$RUN_IDS" | while read run_id; do
+            [ -z "$run_id" ] && continue
+            echo "下载 Run #$run_id ..."
+            gh run download "$run_id" --dir "all-artifacts/$run_id" 2>/dev/null || echo "⚠️ Run #$run_id 下载失败，跳过"
+          done
+
+          echo "已下载的产物:"
+          find all-artifacts -maxdepth 2 -type d | head -30
+
+      - name: 重新打包全部产物
+        run: |
+          cd all-artifacts
+          if [ -z "$(ls -A . 2>/dev/null)" ]; then
+            echo "❌ 没有找到任何产物"
+            exit 0
+          fi
+          echo "打包产物..."
+          zip -r "../BuildAll-Batch${{ github.event.inputs.BATCH }}.zip" ./* 2>/dev/null || true
+
+      - name: 上传合并产物
+        uses: actions/upload-artifact@v7
+        with:
+          name: BuildAll-Batch-${{ github.event.inputs.BATCH }}
+          path: ./BuildAll-Batch*.zip
