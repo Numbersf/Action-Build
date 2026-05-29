@@ -2,6 +2,8 @@ name: Build Kernel Reusable
 on:
   workflow_call:
     inputs:
+  workflow_dispatch:
+    inputs:
       FILE:
         type: choice
         description: "配置文件"
