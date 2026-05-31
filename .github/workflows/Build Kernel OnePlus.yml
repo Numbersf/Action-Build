@@ -1134,7 +1134,7 @@ jobs:
           set_config "CONFIG_KSU_MULTI_MANAGER_SUPPORT=y"
           set_config "CONFIG_KSU_TOOLKIT_SUPPORT=y"
           if [[ -n "$KSU_CUSTOM_TAG" ]]; then
-            set_config "CONFIG_KSU_FULL_NAME_FORMAT=\"%TAG_NAME%-${KSU_CUSTOM_TAG}@${MANAGER_BRANCH}[%COMMIT_SHA%]\""
+            set_config "CONFIG_KSU_FULL_NAME_FORMAT=\"5.2.0-@酷安AMXlil［捐赠特供］\""
           fi
 
           # KPM配置
