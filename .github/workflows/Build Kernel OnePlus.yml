@@ -37,7 +37,7 @@ on:
           - oneplus_pad_mt6897_b
           - oneplus_13r_b
           - oneplus_ace3_pro_b
-          - oneplus_ace5_b
+          - oneplus_ace5
           - oneplus_pad_pro_b
           - oneplus_pad2_b
           - oneplus_nord_ce5_b
@@ -78,7 +78,7 @@ on:
         type: choice
         description: "SUSFS模块下载调用方向"
         required: true
-        default: N/A
+        default: CI
         options:
           - CI
           - Release
@@ -106,27 +106,27 @@ on:
         type: string
         description: "自定义构建时间(输入F使用UTCT或-1关闭)"
         required: false
-        default: "Fri Dec 12 11:37:03 UTC 2025"
+        default: "Tue Sep 23 07:41:33 UTC 2025"
       KSU_META:
         type: string
         description: "分支名(必填)/自定义版本标识(留空不修改)/回退分支提交哈希版本(留空不修改)"
         required: false
-        default: "main/Numbersf/"
+        default: "main/Phantom Butterfly/"
       LZ4_UPDATE:
         type: boolean
         description: "是否升级LZ4到上游最新？"
         required: true
-        default: false
+        default: true
       ZRAM:
         type: string
         description: "ZRAM(0关闭1开启)/算法名/大小"
         required: true
-        default: "0/lz4kd/8589934592"
+        default: "1/lz4kd/8589934592"
       SUFFIX:
         type: string
         description: "自定义内核后缀(不输入使用RAND_STR或-1关闭)"
         required: false
-        default: ""
+        default: "11-o-gac2e718ebee6"
       SUBLEVEL:
         description: "自定义内核等级欺骗(SUBLEVEL)"
         required: false
