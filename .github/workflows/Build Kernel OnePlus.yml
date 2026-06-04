@@ -557,6 +557,7 @@ jobs:
             echo "❎ 未找到 build.config.msm.common，可能是天玑清单或纯 Kleaf 构建结构"
           fi
 
+          # 移除 ABI 保护
           for dir in kernel_platform/common kernel_platform/$KERNEL_REPOS; do
             if [ -e "$dir/BUILD.bazel" ]; then
               sed -i '/^[[:space:]]*"protected_exports_list"[[:space:]]*:[[:space:]]*"android\/abi_gki_protected_exports_aarch64",$/d' "$dir/BUILD.bazel"
@@ -564,6 +565,10 @@ jobs:
             rm -f "$dir/android/abi_gki_protected_exports_"* 2>/dev/null || echo "No protected exports in $dir"
           done
 
+          # 移除构建审查
+          if grep -q 'check_defconfig' kernel_platform/common/build.config.gki; then
+            sed -i 's/check_defconfig//' kernel_platform/common/build.config.gki
+          fi
           if grep -q 'check_defconfig = None,' kernel_platform/build/kernel/kleaf/common_kernels.bzl; then
             sed -i 's/check_defconfig = None,/check_defconfig = "disabled",/' kernel_platform/build/kernel/kleaf/common_kernels.bzl
             sed -i 's/if check_defconfig == None:/if False:  # check_defconfig == None:/' kernel_platform/build/kernel/kleaf/common_kernels.bzl
@@ -1244,14 +1249,11 @@ jobs:
             set_config "CONFIG_IP6_NF_TARGET_MASQUERADE=y"
           fi
 
-          # 构建优化
+          # 构建依赖项调整及优化
           if [[ "$ENABLE_RUST" == "true" ]]; then
             set_config "CONFIG_RUST=y"
             set_config "CONFIG_ANDROID_BINDER_IPC_RUST=m"
           fi
-
-          # 移除构建审查
-          sed -i 's/check_defconfig//' ./build.config.gki
 
       - name: Fix IPv6_NAT Error
         if: ${{ github.event.inputs.NETFILTER == 'true' }}
