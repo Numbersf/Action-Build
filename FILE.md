@@ -49,6 +49,7 @@ oneplus_15
 oneplus_15t
 oneplus_pad_3_pro
 oneplus_pad_4
+oneplus_ace6_ultra
 realme_neo_8
 realme_neo6_se_b
 realme_gt_neo6_b
