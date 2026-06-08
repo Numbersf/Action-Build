@@ -478,6 +478,12 @@ jobs:
           path: ~/apt-cache-debs
           key: apt-cache-${{ runner.os }}-${{ github.ref_name }}-v3
 
+      - name: Updateb APT and Fix Missing
+        run: |
+          sudo apt-get clean
+          sudo apt-get update --fix-missing
+          sudo apt-get install --fix-missing -y
+
       - name: Install Dependencies
         run: |
           mkdir -p ~/apt-cache-debs
