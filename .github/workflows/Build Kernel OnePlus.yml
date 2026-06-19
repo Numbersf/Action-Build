@@ -1123,14 +1123,6 @@ jobs:
           curl -LSs https://raw.githubusercontent.com/vc-teahouse/Baseband-guard/main/setup.sh | bash
           sed -i '/^config LSM$/,/^help$/{ /^[[:space:]]*default/ { /baseband_guard/! s/selinux/selinux,baseband_guard/ } }' ./security/Kconfig
 
-      - name: Apply BPF_LSM
-        if: ${{ github.event.inputs.BPF_LSM == 'true' }}
-        run: |
-          cd kernel_workspace/kernel_platform/common
-          echo "正在把 bpf 加入生效的 LSM 列表…"
-          # 将 bpf 追加到 security/Kconfig 中 config LSM 的默认列表(若已存在则跳过)
-          sed -i '/^config LSM$/,/^help$/{ /^[[:space:]]*default/ { /\bbpf\b/! s/"$/,bpf"/ } }' ./security/Kconfig
-
       # 配置信息，带*为附加项目，具有一定危险性和不确定性
       - name: Add Configuration Settings
         run: |
@@ -1267,29 +1259,13 @@ jobs:
           fi
 
           # BPF LSM配置*(用于加载自定义BPF LSM程序)
+          # 注: android13-5.15 默认 CONFIG_LSM 已包含 bpf, 故无需改 LSM 列表;
+          #     BTF/PERF/KPROBES 等 GKI 已默认开启, 此处只开必需项以免破坏 GKI/厂商模块导致开机循环
           if [ "${{ github.event.inputs.BPF_LSM }}" = "true" ]; then
             set_config "CONFIG_BPF_SYSCALL=y"
             set_config "CONFIG_BPF_JIT=y"
             set_config "CONFIG_BPF_EVENTS=y"
             set_config "CONFIG_BPF_LSM=y"
-            # 加载 CO-RE / LSM 类型 BPF 程序需要 vmlinux BTF
-            set_config "CONFIG_DEBUG_INFO=y"
-            set_config "CONFIG_DEBUG_INFO_DWARF_TOOLCHAIN_DEFAULT=y"
-            set_config "CONFIG_DEBUG_INFO_BTF=y"
-            set_config "CONFIG_PAHOLE_HAS_SPLIT_BTF=y"
-            set_config "CONFIG_DEBUG_INFO_BTF_MODULES=y"
-            # BPF_EVENTS 所需依赖
-            set_config "CONFIG_KPROBES=y"
-            set_config "CONFIG_KPROBE_EVENTS=y"
-            set_config "CONFIG_UPROBES=y"
-            set_config "CONFIG_UPROBE_EVENTS=y"
-            set_config "CONFIG_PERF_EVENTS=y"
-            set_config "CONFIG_FTRACE=y"
-            set_config "CONFIG_FTRACE_SYSCALLS=y"
-            # 若 defconfig 显式定义了 CONFIG_LSM，则把 bpf 追加进去
-            if grep -q '^CONFIG_LSM=' "$CONFIG_FILE"; then
-              grep -q '^CONFIG_LSM=.*\bbpf\b' "$CONFIG_FILE" || sed -i 's/^\(CONFIG_LSM="[^"]*\)"/\1,bpf"/' "$CONFIG_FILE"
-            fi
           fi
 
           # 构建依赖项调整及优化
