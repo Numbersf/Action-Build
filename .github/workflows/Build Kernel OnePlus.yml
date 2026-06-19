@@ -1259,13 +1259,20 @@ jobs:
           fi
 
           # BPF LSM配置*(用于加载自定义BPF LSM程序)
-          # 注: android13-5.15 默认 CONFIG_LSM 已包含 bpf, 故无需改 LSM 列表;
-          #     BTF/PERF/KPROBES 等 GKI 已默认开启, 此处只开必需项以免破坏 GKI/厂商模块导致开机循环
+          # 注: BTF/PERF/KPROBES 等 GKI 已默认开启, 此处只开必需项以免破坏 GKI/厂商模块导致开机循环
           if [ "${{ github.event.inputs.BPF_LSM }}" = "true" ]; then
             set_config "CONFIG_BPF_SYSCALL=y"
             set_config "CONFIG_BPF_JIT=y"
             set_config "CONFIG_BPF_EVENTS=y"
             set_config "CONFIG_BPF_LSM=y"
+            # 把 bpf 加入"生效的"LSM 列表: OOS 的 defconfig 通常显式写死 CONFIG_LSM 且不含 bpf,
+            # 会覆盖 Kconfig 默认值, 导致 bpf LSM 编进内核却未激活(attach 报 -ENOTSUPP).
+            if grep -q '^CONFIG_LSM=' "$CONFIG_FILE"; then
+              grep -q '^CONFIG_LSM="[^"]*\bbpf\b' "$CONFIG_FILE" || \
+                sed -i 's/^\(CONFIG_LSM="[^"]*\)"/\1,bpf"/' "$CONFIG_FILE"
+            fi
+            echo "当前 defconfig 中的 CONFIG_LSM:"
+            grep '^CONFIG_LSM=' "$CONFIG_FILE" || echo "(defconfig 未显式指定, 使用 Kconfig 默认值, 已含 bpf)"
           fi
 
           # 构建依赖项调整及优化
