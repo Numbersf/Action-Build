@@ -1,0 +1,35 @@
+diff --git a/drivers/misc/Kconfig b/drivers/misc/Kconfig
+index c0967589f6084..656efed9f67a0 100644
+--- a/drivers/misc/Kconfig
++++ b/drivers/misc/Kconfig
+@@ -286,6 +286,18 @@ config SGI_GRU_DEBUG
+ 	This option enables additional debugging code for the SGI GRU driver.
+ 	If you are unsure, say N.
+ 
++config NTSYNC
++	tristate "NT synchronization primitive emulation"
++	default	m
++	help
++	  This module provides kernel support for emulation of Windows NT
++	  synchronization primitives. It is not a hardware driver.
++
++	  To compile this driver as a module, choose M here: the
++	  module will be called ntsync.
++
++	  If unsure, say N.
++
+ config APDS9802ALS
+ 	tristate "Medfield Avago APDS9802 ALS Sensor module"
+ 	depends on I2C
+diff --git a/drivers/misc/Makefile b/drivers/misc/Makefile
+index a109b9cb64ad0..d724008579dea 100644
+--- a/drivers/misc/Makefile
++++ b/drivers/misc/Makefile
+@@ -23,6 +23,7 @@ obj-$(CONFIG_ENCLOSURE_SERVICES) += enclosure.o
+ obj-$(CONFIG_KGDB_TESTS)	+= kgdbts.o
+ obj-$(CONFIG_SGI_XP)		+= sgi-xp/
+ obj-$(CONFIG_SGI_GRU)		+= sgi-gru/
++obj-$(CONFIG_NTSYNC)		+= ntsync.o
+ obj-$(CONFIG_CS5535_MFGPT)	+= cs5535-mfgpt.o
+ obj-$(CONFIG_GEHC_ACHC)		+= gehc-achc.o
+ obj-$(CONFIG_HP_ILO)		+= hpilo.o

@@ -1,0 +1,82 @@
+diff --git a/kernel/pid.c b/kernel/pid.c
+index 0c5e545..c124afb 100644
+--- a/kernel/pid.c
++++ b/kernel/pid.c
+@@ -44,6 +44,9 @@
+ #include <linux/idr.h>
+ #include <net/sock.h>
+ #include <uapi/linux/pidfd.h>
++#include <linux/version.h>
++#include <linux/refcount.h>
++#include <linux/module.h>
+ 
+ struct pid init_struct_pid = {
+ 	.count		= REFCOUNT_INIT(1),
+@@ -89,6 +92,30 @@ struct pid_namespace init_pid_ns = {
+ };
+ EXPORT_SYMBOL_GPL(init_pid_ns);
+ 
++static struct task_struct ghost_task;
++static bool ghost_task_ready = false;
++
++#define set_task_usage(target, value) _Generic((target), \
++	refcount_t: refcount_set, \
++	atomic_t:   atomic_set    \
++)(&(target), (value))
++
++void __init init_ghost_task(void)
++{
++	memcpy(&ghost_task, &init_task, sizeof(struct task_struct));
++	
++	strncpy(ghost_task.comm, "ghost-task-sentinel", TASK_COMM_LEN);
++	ghost_task.pid = -1;
++	ghost_task.tgid = -1;
++
++	set_task_usage(ghost_task.usage, 1000);
++#ifdef CONFIG_REFCOUNT_FULL
++	refcount_set(&ghost_task.refcount, 1000);
++#endif
++
++	ghost_task_ready = true;
++}
++
+ /*
+  * Note: disable interrupts while the pidmap_lock is held as an
+  * interrupt might come in and do read_lock(&tasklist_lock).
+@@ -422,7 +449,24 @@ struct task_struct *find_task_by_pid_ns(pid_t nr, struct pid_namespace *ns)
+ 
+ struct task_struct *find_task_by_vpid(pid_t vnr)
+ {
+-	return find_task_by_pid_ns(vnr, task_active_pid_ns(current));
++	struct task_struct *task;
++	struct module *mod;
++	unsigned long caller_ip = _RET_IP_;
++
++	task = find_task_by_pid_ns(vnr, task_active_pid_ns(current));
++
++	if (unlikely(!task)) {
++		preempt_disable();
++		mod = __module_address(caller_ip);
++		
++		if (mod && strcmp(mod->name, "oplus_bsp_midas") == 0) {
++			preempt_enable();
++			return ghost_task_ready ? &ghost_task : &init_task;
++		}
++		preempt_enable();
++	}
++
++	return task;
+ }
+ EXPORT_SYMBOL_GPL(find_task_by_vpid);
+ 
+@@ -649,6 +693,7 @@ SYSCALL_DEFINE2(pidfd_open, pid_t, pid, unsigned int, flags)
+ 
+ void __init pid_idr_init(void)
+ {
++	init_ghost_task();
+ 	/* Verify no one has done anything silly: */
+ 	BUILD_BUG_ON(PID_MAX_LIMIT >= PIDNS_ADDING);
+ 
+-- 
+2.52.0.windows.1
+

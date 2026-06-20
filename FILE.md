@@ -1,5 +1,7 @@
 ### 这里是目前支持的所有机型及其对应大安卓版本清单
 ### ``This list shows all currently supported device models and their Android versions.``
+#### 如果有特殊后缀``AOSP``、``bak``、``Canary``，建议优先使用它们；``global``后缀是特殊处理的同机型，请确保适用
+#### ``If there are special suffixes such as AOSP, bak, or Canary, it is recommended to prioritize using them; the global suffix refers to a specially handled variant of the same device model, so please ensure compatibility.``
 
 ```
 # Android16
@@ -18,6 +20,7 @@ oneplus_nord_ce4_b
 oneplus_12_b
 oneplus_pad_go_2_b
 oneplus_nord_ce4_lite_5g_b
+oneplus_nord_ce6_lite_b
 oneplus_turbo_6v
 oneplus_nord_4_b
 oneplus_ace_3v_b
@@ -37,18 +40,18 @@ oneplus_pad_2_pro_b
 oneplus_pad_3_b
 oneplus_ace5_race_b
 oneplus_ace5_ultra_b
-oneplus_ace5_ultra_bak_b
 oneplus_pad2_mt6991_b
 oneplus_ace_6
 oneplus_turbo_6
+oneplus_nord_6
 oneplus_ace_6t
-oneplus_ace_6t_aosp
 oneplus_15r
-oneplus_15r_aosp
 oneplus_15
-oneplus_15_aosp
 oneplus_15t
-oneplus_15t_aosp
+oneplus_pad_3_pro
+oneplus_pad_4
+oneplus_ace6_ultra
+realme_neo_8
 realme_neo6_se_b
 realme_gt_neo6_b
 realme_neo7_b
@@ -57,6 +60,7 @@ realme_gt5pro_b
 realme_gt6_b
 realme_gt7_b
 realme_gt7_pro_b
+oppo_find_x9
 oppo_find_n2_flip_b
 oppo_find_n3_flip_b
 oppo_reno12_pro_mt6985_b
@@ -71,6 +75,8 @@ oppo_find_x6_pro_b
 oppo_find_x7_b
 oppo_find_x7_ultra_b
 oppo_pad_3_pro_b
+oppo_reno11_b
+oppo_reno12_b
 oppo_reno13_b
 oppo_reno14_b
 oppo_reno14_pro_b
@@ -81,7 +87,10 @@ oppo_find_x8s_plus_b
 oppo_find_x8_ultra_b
 oppo_pad_4_pro_b
 oppo_reno_15_b
-oppo_pad_5_b
+oppo_pad_3_b
+oppo_pad_air5_b
+oppo_pad_5_mt6878_b
+oppo_pad_5_mt6991_b
 
 # Android15
 oneplus_nord_n30_se_5g_v
@@ -142,8 +151,11 @@ oppo_reno8_pro_plus_v
 oppo_reno9_pro_v
 oppo_reno9_pro_plus_v
 oppo_reno10_pro_plus_v
+oppo_reno11_v
+oppo_reno11_pro_5g_mt6896_v
 oppo_reno11_pro_5g_v
-oppo_reno12_5g_v
+oppo_reno12_mt6896_v
+oppo_reno12_5g_mt6878_v
 oppo_reno12_pro_5g_mt6878_v
 oppo_a5_pro_5g_v
 oppo_f29_pro_5g_v

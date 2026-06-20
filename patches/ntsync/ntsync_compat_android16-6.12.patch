@@ -1,0 +1,13 @@
+diff --git a/drivers/misc/Kconfig b/drivers/misc/Kconfig
+index 5018db96c8027..704bfff293343 100644
+--- a/drivers/misc/Kconfig
++++ b/drivers/misc/Kconfig
+@@ -525,7 +525,7 @@ config OPEN_DICE
+ 
+ config NTSYNC
+ 	tristate "NT synchronization primitive emulation"
+-	depends on BROKEN
++	default	m
+ 	help
+ 	  This module provides kernel support for emulation of Windows NT
+ 	  synchronization primitives. It is not a hardware driver.

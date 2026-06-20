@@ -9,21 +9,23 @@
 <img align="right" src="pic/zakozako~.svg" width="100px" alt="zakozako~">
  
 # Action-Build
-**```Build Kernels for All OnePlus Devices```**
->更高效 更全面 更快速 更稳定
+ 
+<img src="https://readme-typing-svg.herokuapp.com?font=Meslo+Nerd+Font&size=32&duration=2800&pause=2000&color=A855F7&center=true&vCenter=true&width=940&lines=Welcome+to+Action+Build!;Build+Kernels+For+All+OnePlus+Devices;Your+Device,+Your+Rules!;更高效+更全面+更快速+更稳定+全自动化">
  
 禁止宣传**没有任何修改**的`fork`仓库，详见[LICENSE](LICENSE)
 <details>
 <summary><strong>点击查看如何fork项目</strong></summary>
-<img src="https://github.com/Numbersf/Action-Build/blob/ReSukiSU/pic/make.gif" width="500"/>
-<summary>请注意，如果你想使用其他分支管理器项目，请在fork时关闭“仅复制SukiSU Ultra分支”</summary>
+<p>
+  <img src="https://github.com/Numbersf/Action-Build/blob/ReSukiSU/pic/start.gif" width="500"/>
+  <img src="https://github.com/Numbersf/Action-Build/blob/ReSukiSU/pic/start(2).png" width="500"/>
+</p>
+<summary>请注意，如果你想使用其他分支管理器项目，请在fork时关闭“仅复制SukiSU-Ultra分支”</summary>
 </details>
  
 <details>
 <summary><strong>点击查看如何同步fork后的项目到最新</strong></summary>
 <p>
-  <img src="https://github.com/Numbersf/Action-Build/blob/ReSukiSU/pic/syncfork.png" width="150"/>
-  <img src="https://github.com/Numbersf/Action-Build/blob/ReSukiSU/pic/syncfork(2).png" width="150"/>
+  <img src="https://github.com/Numbersf/Action-Build/blob/ReSukiSU/pic/syncfork.png" width="500"/>
 </p>
 <summary>请及时同步!某些更新可能会导致旧版失效报错!如果同步后依旧运行失败请删除并重新fork!完成以上步骤后仍有问题再反馈提交issue</summary>
 </details>
@@ -60,7 +62,7 @@
 >
 >|| 平均耗时范围|最大耗时|
 >|------------------|----------------------|------------|
->| `极速构建所有机型` | `1st:19min ~ 35min 2nd:9min ~ 19min` | `42min`|
+>| `极速构建所有机型` | `1st:17min ~ 36min 2nd:6min ~ 17min` | `40/29min`|
 >| `内核版本5.10-5.15使用官方脚本构建` | `29min ~ 35min`| `45min`    |
 >| `内核版本6.1-6.12使用官方脚本构建` | `59min ~ 1h12min`| `1h28min` |
 >
@@ -86,22 +88,22 @@
 ------
  
 # 开发中的功能
-- [x] ~ccache支持AB更新模式~ (ccache-ECS和其他代码逻辑已经基本完成此功能实现)
-- [ ] LXC/Docker 功能支持以及部分设备DROIDSPACES异常修复
-- [ ] LZ4跟随上游自动升级，[#178](https://github.com/Numbersf/Action-Build/pull/178)
+- [ ] Kexec内核热切换支持
 - [ ] 全内核版本风驰支持
 - 牙膏要一点一点挤,显卡要一刀一刀切,PPT要一张一张放,代码要一行一行写,更多功能及优化...敬请期待....
  
 # 更新日志
 >小的更新内容将被忽略 更多内容请参看提交
  
-- 初步适配`DROIDSPACES`  
+- 新增路径递推,完整适配内核版本`6.12+`的`Rust`构建逻辑和`bindgen`、`Kleaf`依赖，现在可以正常使用了  
+ 
+- `lz4`自动跟随上游升级以及自动纠错  
+ 
+- 完整适配`DroidSpaces`+`Ntsync`  
  
 - 完整适配`Re:Kernel`,自动跟随上游  
  
 - 多处启用外部警告-检查`fork源`是否正常、内核后缀构建时间是否存在异常符号调用等  
- 
-- 新增多个变量以及自动搜索,完整适配内核版本`6.12+`的`Rust`构建逻辑和依赖  
  
 - 完整的`KPN`修补支持  
  
@@ -115,7 +117,7 @@
  
 - 支持修改`SUSFS`哈希值进行回退(此项输入`-1`则关闭`SUSFS`)、调用`SUSFS-DEV`开发分支  
  
-- 内核版本为``6.6-6.12``支持将设备树中的`type`属性从`HMBIRD_OGKI`替换为`HMBIRD_GKI`;支持开启风驰驱动[@reigadegr](https://github.com/reigadegr) [@cctv18](https://github.com/cctv18) [@Numbersf](https://github.com/Numbersf) [@HanKuCha](https://github.com/HanKuCha)  
+- 内核版本为`6.6-6.12`支持将设备树中的`type`属性从`HMBIRD_OGKI`替换为`HMBIRD_GKI`;支持开启风驰驱动[@reigadegr](https://github.com/reigadegr) [@cctv18](https://github.com/cctv18) [@Numbersf](https://github.com/Numbersf) [@HanKuCha](https://github.com/HanKuCha)  
  
 - 允许调用第三方动态源码清单仓库,以支持原本不兼容的机型。必须确保源码清单与频道分支的命名符合规范。在第三方清单仓库的`README.md`中,如未定义`CPUD`,可填写任意占位值。此外,极速构建必须保持启用,不可关闭  
  
@@ -143,7 +145,7 @@ v3.1.7-自定义内容@builtin[f5541e21]
  
 - 首发支持全机型、全编译方式自定义内核构建时间`UTS_VERSION`  
  
-- 使用`ccache`加速工作流,仅开启极速构建`fast build`有效,第一次使用、重大更新需要换`key`要重新生成`cache`,可能会降低速度  
+- 使用`ccache-ECS`、`ltothin-cache`、`apt-cache`共同加速工作流,仅开启极速构建`fast build`有效,第一次使用、重大更新需要换`key`要重新生成`cache`,可能会降低速度  
 ```
 你可以通过使用delete.yml(name: Workflow and Cache Cleanup)工作流开启“是否删除所有缓存”的选项来删除所有的key
 也可以去
@@ -171,11 +173,11 @@ https://github.com/你的用户名(username)/你的仓库名/actions/caches
  
 - 支持显示自己填入的内容在`Debug Show Selected Inputs`这一步,同时工作流名称也可以看到一些东西  
  
-- 从写入 `Anykernel3.zip` 的配置文件后缀中删除潜在的版本代码,替换成精确的 `Android` 版本号`XX.X.X`
+- 从写入 `Anykernel3.zip` 的配置文件后缀中删除潜在的版本代码,替换成精确的 `Android` 版本号`XX.X.(X)`
 ```
-AnyKernel3_ReSukiSU_12896_OnePlusAce2Pro_Android15.0.0_KPM_VFS.zip
-AnyKernel3_ReSukiSU_12896_OnePlus13_Android15.0.2_KPM_VFS.zip
-AnyKernel3_ReSukiSU_12896_OnePlus11_Android14.1.0_KPM_VFS.zip
+AnyKernel3_ReSukiSU_34895_OnePlusAce2Pro_Android16.0.0(5.15.180)_KPM_BBG_ILH_DS_REKER.zip
+AnyKernel3_ReSukiSU_34895_OnePlus11_Android14.1.0(5.15.123)_KPM_BBG_ILH_DS_REKER.zip
+AnyKernel3_ReSukiSU_34895_OnePlus15(AOSP)_Android16.0.0(6.12.23)_KPM_BBG_ILH_DS_REKER.zip
 ```  
  
 - 添加 `zram` 模块的 `LZ4K、LZ4KD` 压缩算法支持[@ShirkNeko](https://github.com/ShirkNeko)  

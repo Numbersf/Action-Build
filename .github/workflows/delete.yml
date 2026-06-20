@@ -23,8 +23,9 @@ on:
           - all
           - ccache
           - apt-cache
+          - thinlto-cache
       count:
-        description: '最多访问的运行次数'
+        description: '最多删除的运行总条数'
         required: false
         default: '20'
       delete_failed:
@@ -198,8 +199,9 @@ jobs:
             done
             echo "已取消 $CANCEL_COUNT 条运行。"
           fi
-          [[ "$REVERSE_ORDER" == "true" ]] && SORT_OPT="" || SORT_OPT="-r"
+          [[ "$REVERSE_ORDER" == "true" ]] && SORT_CMD="sort -k2" || SORT_CMD="sort -k2 -r"
 
+          TOTAL_DELETED=0
           for CONCLUSION in failure success cancelled; do
             case "$CONCLUSION" in
               failure)   [[ "$DELETE_FAILED"    != "true" ]] && continue ;;
@@ -207,28 +209,29 @@ jobs:
               cancelled) [[ "$DELETE_CANCELLED" != "true" ]] && continue ;;
             esac
 
-            echo "批量模式 - 处理结论类型: $CONCLUSION（最多 $COUNT 条）..."
-            DELETED=0
+            [ "$TOTAL_DELETED" -ge "$COUNT" ] && break
+            echo "批量模式 - 处理结论类型: $CONCLUSION（全局剩余配额: $((COUNT - TOTAL_DELETED)) 条）..."
 
             while IFS=' ' read -r RUN_ID _STARTED; do
               [ -z "$RUN_ID" ] && continue
               [[ "$RUN_ID" == "$CURRENT_RUN_ID" ]] && continue
-              [ "$DELETED" -ge "$COUNT" ] && break
+              [ "$TOTAL_DELETED" -ge "$COUNT" ] && break 2
               echo "删除 ID: $RUN_ID"
               gh run delete "$RUN_ID" --repo "$REPO" \
-                && DELETED=$((DELETED + 1)) \
+                && TOTAL_DELETED=$((TOTAL_DELETED + 1)) \
                 || echo "❌ 删除失败: $RUN_ID"
             done < <(gh run list \
               --repo "$REPO" \
               --workflow "$WORKFLOW_NAME" \
-              --status "$CONCLUSION" \
-              --limit "$COUNT" \
-              --json databaseId,startedAt \
-              --jq '.[] | [(.databaseId | tostring), .startedAt] | join(" ")' \
-              | sort $SORT_OPT -k2)
+              --limit 200 \
+              --json databaseId,startedAt,conclusion \
+              --jq ".[] | select(.conclusion == \"$CONCLUSION\") | [(.databaseId | tostring), .startedAt] | join(\" \")" \
+              | $SORT_CMD)
 
-            echo "已删除 $DELETED 条 $CONCLUSION 记录。"
+            echo "已处理 $CONCLUSION 类型，当前总删除: $TOTAL_DELETED 条。"
           done
+
+          echo "✅ 批量删除完成，共删除 $TOTAL_DELETED 条（上限: $COUNT）。"
 
   cleanup-caches:
     runs-on: ubuntu-latest
@@ -237,7 +240,7 @@ jobs:
       actions: write
     steps:
       - name: Clean caches by mode
-        uses: actions/github-script@v6
+        uses: actions/github-script@v9
         with:
           script: |
             const { owner, repo } = context.repo;
@@ -262,6 +265,7 @@ jobs:
                   case 'all':       matched = true; break;
                   case 'ccache':    matched = key.startsWith('ccache-'); break;
                   case 'apt-cache': matched = key.includes('apt-cache') || key.includes('apt'); break;
+                  case 'thinlto-cache': matched = key.startsWith('thinlto-'); break;
                   default:          matched = false;
                 }
                 if (matched) {
