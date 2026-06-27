@@ -4,7 +4,7 @@ on:
     inputs:
       FILE:
         type: choice
-        description: "配置文件"
+        description: "配置文件//Configuration file"
         required: true
         default: oneplus_ace2_pro_b
         options:
