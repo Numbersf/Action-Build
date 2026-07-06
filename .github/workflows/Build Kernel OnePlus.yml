@@ -724,14 +724,16 @@ jobs:
         id: manager
         run: |
           MANAGER_SOURCE="${{ github.event.inputs.MANAGER_SOURCE }}"
-
+          KSU_META="${{ github.event.inputs.KSU_META }}"
+          
+          BRANCH="${KSU_META%%/*}"
+          BRANCH="${BRANCH:-main}"
+          
           case "$MANAGER_SOURCE" in
             MD3_SPOOF)
-              BRANCH="main"
               ARTIFACT="Spoofed-Manager-release"
               ;;
             MD3|*)
-              BRANCH="main"
               ARTIFACT="Manager-release"
               ;;
           esac
