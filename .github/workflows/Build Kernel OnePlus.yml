@@ -141,6 +141,11 @@ on:
         description: "是否启用网络功能拓展(NETFILTER)？//Enable network feature extensions (NETFILTER)?"
         required: true
         default: true
+      TTL:
+        type: boolean
+        description: "启用网络数据包操控功能以绕过运营商移动热点/网络共享的数据限制(TTL)？//Enable network packet manipulation feature to bypass carrier mobile hotspot/tethering data caps (TTL)?"
+        required: true
+        default: true
       CCM:
         type: boolean
         description: "是否启用网络拥塞控制与管理机制(BBR+ECN)？//Enable network congestion control and management mechanism (BBR+ECN)?"
@@ -184,7 +189,7 @@ on:
 
 jobs:
   build:
-    name: ${{ github.event.inputs.FAST_BUILD == 'true' && ' [FAST]' || '' }}${{ contains(github.event.inputs.FILE, '_aosp') && ' [AOSP]' || '' }}${{ github.event.inputs.KPM == 'KPM' && ' [KPM]' || github.event.inputs.KPM == 'KPN' && ' [KPN]' || '' }}${{ github.event.inputs.LSM_BBG == 'true' && ' [BBG]' || '' }}${{ github.event.inputs.SCHED_HMBIRD == 'true' && ' [HMBIRD]' || '' }}${{ github.event.inputs.DROID_SPACES == 'true' && ' [DS]' || '' }}${{ startsWith(github.event.inputs.ZRAM, '1/') && ' [ZRAM]' || '' }}${{ github.event.inputs.RE_KERNEL == 'true' && ' [REKER]' || '' }}${{ github.event.inputs.LZ4_UPDATE == 'true' && ' [LZ4UPD]' || '' }}For ${{ github.event.inputs.FILE }} ${{ github.event.inputs.SUFFIX }}
+    name: ${{ github.event.inputs.FAST_BUILD == 'true' && ' [FAST]' || '' }}${{ contains(github.event.inputs.FILE, '_aosp') && ' [AOSP]' || '' }}${{ github.event.inputs.KPM == 'KPM' && ' [KPM]' || github.event.inputs.KPM == 'KPN' && ' [KPN]' || '' }}${{ github.event.inputs.LSM_BBG == 'true' && ' [BBG]' || '' }}${{ github.event.inputs.SCHED_HMBIRD == 'true' && ' [HMBIRD]' || '' }}${{ github.event.inputs.DROID_SPACES == 'true' && ' [DS]' || '' }}${{ startsWith(github.event.inputs.ZRAM, '1/') && ' [ZRAM]' || '' }}${{ github.event.inputs.RE_KERNEL == 'true' && ' [REKER]' || '' }}${{ github.event.inputs.LZ4_UPDATE == 'true' && ' [LZ4UPD]' || '' }}${{ github.event.inputs.TTL == 'true' && ' [TTL]' || '' }}For ${{ github.event.inputs.FILE }} ${{ github.event.inputs.SUFFIX }}
     runs-on: ubuntu-latest
     env:
       CCACHE_COMPILERCHECK: "none"
@@ -337,6 +342,7 @@ jobs:
           echo "Selected ZRAM: ${{ github.event.inputs.ZRAM }}"
           echo "Selected LSM_BBG: ${{ github.event.inputs.LSM_BBG }}"
           echo "Selected NETFILTER: ${{ github.event.inputs.NETFILTER }}"
+          echo "Selected TTL: ${{ github.event.inputs.TTL }}"
           echo "Selected CCM: ${{ github.event.inputs.CCM }}"
           echo "Selected SUSFS_DEV: ${{ github.event.inputs.SUSFS_DEV }}"
           echo "Selected FAST_BUILD: ${{ github.event.inputs.FAST_BUILD }}"
@@ -1294,6 +1300,27 @@ jobs:
             set_config "CONFIG_IP6_NF_TARGET_MASQUERADE=y"
           fi
 
+          # TTL Support
+          if [ "${{ github.event.inputs.TTL }}" = "true" ]; then
+            # Target flags implementation
+            set_config "CONFIG_NETFILTER_XT_TARGET_HL=y"
+
+            # Target flags implementation (legacy fallback)
+            set_config "CONFIG_IP_NF_TARGET_TTL=y"
+            set_config "CONFIG_IP6_NF_TARGET_HL=y"
+
+            # Match flag implementation (optional)
+            set_config "CONFIG_NETFILTER_XT_MATCH_HL=y"
+
+            # Match flag implementation (optional) (legacy fallbacks)
+            set_config "CONFIG_IP_NF_MATCH_TTL=y"
+            set_config "CONFIG_IP6_NF_MATCH_HL=y"
+
+            # Mangle table flags implementation (prerequisites)
+            set_config "CONFIG_IP_NF_MANGLE=y"
+            set_config "CONFIG_IP6_NF_MANGLE=y"
+          fi
+          
           # 构建依赖项调整及优化
           if [[ "$ENABLE_RUST" == "true" ]]; then
             set_config "CONFIG_RUST=y"
@@ -1668,7 +1695,7 @@ jobs:
       - name: Set zip Suffix
         id: suffix
         run: |
-          echo "value=${{ env.ZRAM_ALGO_U && format('_{0}', env.ZRAM_ALGO_U) || '' }}${{ github.event.inputs.KPM == 'KPM' && '_KPM' || github.event.inputs.KPM == 'KPN' && '_KPN' || '' }}${{ github.event.inputs.LSM_BBG == 'true' && '_BBG' || '' }}_ILH${{ github.event.inputs.SCHED_HMBIRD== 'true' && '_HMBIRD' || '' }}${{ github.event.inputs.DROID_SPACES== 'true' && '_DS' || '' }}${{ github.event.inputs.RE_KERNEL == 'true' && '_REKER' || '' }}${{ github.event.inputs.LZ4_UPDATE == 'true' && '_LZ4UPD' || '' }}" >> $GITHUB_OUTPUT
+          echo "value=${{ env.ZRAM_ALGO_U && format('_{0}', env.ZRAM_ALGO_U) || '' }}${{ github.event.inputs.KPM == 'KPM' && '_KPM' || github.event.inputs.KPM == 'KPN' && '_KPN' || '' }}${{ github.event.inputs.LSM_BBG == 'true' && '_BBG' || '' }}_ILH${{ github.event.inputs.SCHED_HMBIRD== 'true' && '_HMBIRD' || '' }}${{ github.event.inputs.DROID_SPACES== 'true' && '_DS' || '' }}${{ github.event.inputs.RE_KERNEL == 'true' && '_REKER' || '' }}${{ github.event.inputs.LZ4_UPDATE == 'true' && '_LZ4UPD' || '' }}${{ github.event.inputs.TTL == 'true' && '_TTL' || '' }}" >> $GITHUB_OUTPUT
 
       - name: Upload AnyKernel3
         uses: actions/upload-artifact@v7
