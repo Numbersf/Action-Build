@@ -27,6 +27,7 @@ on:
           - oneplus_ace3_b
           - oneplus_open_b
           - oneplus_nord_ce4_b
+          - oneplus_n6_b
           - oneplus_12_b
           - oneplus_pad_go_2_b
           - oneplus_turbo_6x_b
@@ -778,7 +779,7 @@ jobs:
           mkdir -p drivers/rekernel
           cp -r "${RE_DIR}"/* drivers/rekernel/
           if [ -f BUILD.bazel ]; then
-            sed -i '/"kernel_aarch64": {/,/"kernel_aarch64_16k": {/ s|"module_implicit_outs": get_gki_modules_list("arm64")|"module_implicit_outs": get_gki_modules_list("arm64") + ["drivers/rekernel/rekernel.ko"]|' BUILD.bazel
+            sed -i '0,/name = "kernel_aarch64",/{/module_implicit_outs/s|,$| + ["drivers/rekernel/rekernel.ko"],|}' BUILD.bazel
           fi
 
       - name: Apply DROID_SPACES
@@ -1029,6 +1030,7 @@ jobs:
             set_config "CONFIG_DEVTMPFS=y"
             set_config "CONFIG_PID_NS=y"
             set_config "CONFIG_IPC_NS=y"
+            set_config "CONFIG_USER_NS=y"
             set_config "CONFIG_NAMESPACES=y"
             set_config "CONFIG_POSIX_MQUEUE=y"
             set_config "CONFIG_NETFILTER_XT_TARGET_REJECT=y"
@@ -1074,6 +1076,13 @@ jobs:
           fi
 
           # 构建依赖项调整及优化
+          if [ "$KERNEL_VERSION" = "5.15" ] && [[ "$CPU" == mt* ]]; then
+            set_config "CONFIG_OPLUS_SYSTEM_KERNEL=y"
+            set_config "CONFIG_OPLUS_FEATURE_CMDLINE=m"
+            set_config "CONFIG_OPLUS_FEATURE_OPLUSBOOT=m"
+            set_config "CONFIG_OPLUS_FEATURE_BUILDVARIANT=m"
+            set_config "CONFIG_OPLUS_FEATURE_OPROJECT=m"
+          fi
           if [[ "$ENABLE_RUST" == "true" ]]; then
             set_config "CONFIG_RUST=y"
             set_config "CONFIG_ANDROID_BINDER_IPC_RUST=m"
