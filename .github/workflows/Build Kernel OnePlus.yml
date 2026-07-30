@@ -810,24 +810,51 @@ jobs:
       - name: Apply NOMOUNT
         if: ${{ github.event.inputs.NOMOUNT == 'true' }}
         run: |
-          PATCH_DIR="${GITHUB_WORKSPACE}/patches/nomount"
           KERNEL_COMMON="${GITHUB_WORKSPACE}/kernel_workspace/kernel_platform/common"
+          NOMOUNT_DIR="${GITHUB_WORKSPACE}/nomount_repo"
+
+          # 1. Клонируем официальный репозиторий NoMount
+          echo "Cloning official NoMount repository..."
+          git clone --depth=1 https://github.com/maxsteeel/nomount.git "$NOMOUNT_DIR"
 
           cd "$KERNEL_COMMON"
 
-          echo "Applying NoMount patch..."
-          patch -p1 --forward < "${PATCH_DIR}/nomount_6.1_kernel_integration.patch" || true
+          # 2. Определяем версию ядра из top-level Makefile (например, 6.1 или 5.15)
+          KV_MAJOR=$(grep -m1 '^VERSION =' Makefile | awk '{print $3}')
+          KV_MINOR=$(grep -m1 '^PATCHLEVEL =' Makefile | awk '{print $3}')
+          KERNEL_VER="${KV_MAJOR}.${KV_MINOR}"
+          echo "Detected kernel version: ${KERNEL_VER}"
 
-          if [ -d "${PATCH_DIR}/src" ]; then
-            echo "Copying NoMount source files to fs/..."
-            cp -rf "${PATCH_DIR}/src/"* ./fs/
+          # 3. Ищем подходящий патч в папке kernel/patches репозитория NoMount
+          PATCH_FILE=$(find "${NOMOUNT_DIR}/kernel/patches" -type f -name "*${KERNEL_VER}*.patch" | head -n 1)
+
+          if [ -n "$PATCH_FILE" ] && [ -f "$PATCH_FILE" ]; then
+            echo "Applying official patch for kernel ${KERNEL_VER}: $(basename "$PATCH_FILE")"
+            patch -p1 --forward < "$PATCH_FILE" || true
+          elif [ -f "${GITHUB_WORKSPACE}/patches/nomount/nomount_${KERNEL_VER}_kernel_integration.patch" ]; then
+            echo "Official patch for ${KERNEL_VER} not found. Applying local fallback patch..."
+            patch -p1 --forward < "${GITHUB_WORKSPACE}/patches/nomount/nomount_${KERNEL_VER}_kernel_integration.patch" || true
           else
-            echo "::warning title=NoMount Warning::Исходники NoMount в ${PATCH_DIR}/src не найдены!"
+            echo "::error title=NoMount Patch Error::Не найден патч для версии ядра ${KERNEL_VER} в NoMount repo или локальной папке!"
+            exit 1
           fi
 
-          source $REJ_CHECKER
-          check_rejects .
+          # 4. Копируем исходные файлы (nomount.c, nomount.h и т.д.) в fs/
+          if [ -d "${NOMOUNT_DIR}/kernel/src" ]; then
+            echo "Copying NoMount kernel sources to fs/..."
+            cp -rf "${NOMOUNT_DIR}/kernel/src/"* ./fs/
+          else
+            echo "::error title=NoMount Source Error::Каталог kernel/src не найден в клонированном репозитории!"
+            exit 1
+          fi
 
+          # 5. Проверка на конфликты патча (.rej файлы)
+          if [ -n "$REJ_CHECKER" ] && [ -f "$REJ_CHECKER" ]; then
+            source $REJ_CHECKER
+            check_rejects .
+          fi
+
+    
       - name: Apply DROID_SPACES
         env:
           FILE: ${{ github.event.inputs.FILE }}
