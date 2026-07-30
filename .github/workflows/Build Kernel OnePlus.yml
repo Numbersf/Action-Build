@@ -73,10 +73,14 @@ on:
           - Release
           - N/A
       NOMOUNT:
-        type: boolean
-        description: "是否启用 NoMount 路径重定向子系统？// Enable NoMount subsystem?"
+        type: choice
+        description: "NoMount (None: не добавлять, master: стабильный, dev: экспериментальный)"
         required: true
-        default: true
+        default: "None"
+        options:
+          - "None"
+          - "master"
+          - "dev"
       KPM:
         type: choice
         description: "内核模块实现方式//Kernel module implementation method"
@@ -341,7 +345,7 @@ jobs:
           fi
           echo "Selected KPM: ${{ github.event.inputs.KPM }}"
           echo "Custom SUSFS_META: ${{ github.event.inputs.SUSFS_META }}"
-          echo "Selected NOMOUNT: ${{ github.event.inputs.NOMOUNT }}"
+          echo "Selected NOMOUNT branch: ${{ github.event.inputs.NOMOUNT }}"
           echo "Custom KSU_META: ${{ github.event.inputs.KSU_META }}"
           echo "Selected ZRAM: ${{ github.event.inputs.ZRAM }}"
           echo "Selected LSM_BBG: ${{ github.event.inputs.LSM_BBG }}"
@@ -808,14 +812,15 @@ jobs:
           fi
 
       - name: Apply NOMOUNT
-        if: ${{ github.event.inputs.NOMOUNT == 'true' }}
+        if: ${{ github.event.inputs.NOMOUNT != 'None' }}
         run: |
           KERNEL_COMMON="${GITHUB_WORKSPACE}/kernel_workspace/kernel_platform/common"
           NOMOUNT_DIR="${GITHUB_WORKSPACE}/nomount_repo"
+          NOMOUNT_BRANCH="${{ github.event.inputs.NOMOUNT }}"
 
-          # 1. Клонируем официальный репозиторий NoMount
-          echo "Cloning official NoMount repository..."
-          git clone --depth=1 https://github.com/maxsteeel/nomount.git "$NOMOUNT_DIR"
+          # 1. Клонируем выбранную ветку репозитория NoMount (master или dev)
+          echo "Cloning official NoMount repository (branch: ${NOMOUNT_BRANCH})..."
+          git clone -b "$NOMOUNT_BRANCH" --depth=1 https://github.com/maxsteeel/nomount.git "$NOMOUNT_DIR"
 
           cd "$KERNEL_COMMON"
 
@@ -825,26 +830,26 @@ jobs:
           KERNEL_VER="${KV_MAJOR}.${KV_MINOR}"
           echo "Detected kernel version: ${KERNEL_VER}"
 
-          # 3. Точный поиск патча только для 6.1 (игнорируя 6.18, 6.10 и т.д.)
+          # 3. Ищем патч с ТОЧНЫМ совпадением версии
           PATCH_FILE=$(find "${NOMOUNT_DIR}/kernel/patches" -type f | grep -E "([^0-9]|^)${KERNEL_VER}([^0-9]|$)" | head -n 1)
 
           if [ -n "$PATCH_FILE" ] && [ -f "$PATCH_FILE" ]; then
-            echo "Applying official patch for kernel ${KERNEL_VER}: $(basename "$PATCH_FILE")"
+            echo "Applying official patch (${NOMOUNT_BRANCH}): $(basename "$PATCH_FILE")"
             patch -p1 --forward < "$PATCH_FILE" || true
           elif [ -f "${GITHUB_WORKSPACE}/patches/nomount/nomount_${KERNEL_VER}_kernel_integration.patch" ]; then
-            echo "Official patch for ${KERNEL_VER} not found. Applying local fallback patch..."
+            echo "Official patch for ${KERNEL_VER} not found in ${NOMOUNT_BRANCH}. Applying local fallback patch..."
             patch -p1 --forward < "${GITHUB_WORKSPACE}/patches/nomount/nomount_${KERNEL_VER}_kernel_integration.patch" || true
           else
-            echo "::error title=NoMount Patch Error::Не найден патч для версии ядра ${KERNEL_VER}!"
+            echo "::error title=NoMount Patch Error::Не найден патч для версии ядра ${KERNEL_VER} в ветке ${NOMOUNT_BRANCH}!"
             exit 1
           fi
 
-          # 4. Копируем исходные файлы в fs/
+          # 4. Копируем исходные файлы (nomount.c, nomount.h и т.д.) в fs/
           if [ -d "${NOMOUNT_DIR}/kernel/src" ]; then
             echo "Copying NoMount kernel sources to fs/..."
             cp -rf "${NOMOUNT_DIR}/kernel/src/"* ./fs/
           else
-            echo "::error title=NoMount Source Error::Каталог kernel/src не найден в клонированном репозитории!"
+            echo "::error title=NoMount Source Error::Каталог kernel/src не найден в ветке ${NOMOUNT_BRANCH}!"
             exit 1
           fi
 
