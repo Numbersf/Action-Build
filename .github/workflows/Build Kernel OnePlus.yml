@@ -1471,6 +1471,85 @@ jobs:
           mv -f oImage Image
           cp Image "${GITHUB_WORKSPACE}/AnyKernel3/Image"
 
+      - name: Build NoMount Userspace and Pack Meta-Module
+        if: ${{ github.event.inputs.NOMOUNT != 'None' }}
+        run: |
+          NOMOUNT_DIR="${GITHUB_WORKSPACE}/nomount_repo"
+          MODULE_DIR="${NOMOUNT_DIR}/module"
+          USERSPACE_DIR="${NOMOUNT_DIR}/userspace"
+          AK3_DIR="${GITHUB_WORKSPACE}/AnyKernel3"
+
+          if [ ! -d "$NOMOUNT_DIR" ]; then
+            echo "::error title=NoMount Repo Missing::Каталог $NOMOUNT_DIR не найден!"
+            exit 1
+          fi
+
+          # 1. Сборка бинарников Userspace (aarch64)
+          echo "🛠️ Сборка NoMount Userspace..."
+          mkdir -p "${MODULE_DIR}/bin"
+
+          if [ -d "$USERSPACE_DIR" ]; then
+            cd "$USERSPACE_DIR"
+            
+            # Автоопределение сборщика (Makefile / Cargo / прямая компиляция через gcc)
+            if [ -f "Makefile" ] || [ -f "makefile" ]; then
+              make CC=aarch64-linux-gnu-gcc CROSS_COMPILE=aarch64-linux-gnu- || true
+            elif [ -f "Cargo.toml" ]; then
+              cargo build --release --target aarch64-unknown-linux-musl || cargo build --release || true
+            elif [ -d "src" ]; then
+              aarch64-linux-gnu-gcc -O3 -static -Wall $(find src -name "*.c") -o nomount || true
+            fi
+
+            # Копирование скомпилированных исполняемых файлов в module/bin/
+            find . -type f -executable ! -name "*.sh" ! -name "*.py" -exec cp -v {} "${MODULE_DIR}/bin/" \;
+          fi
+
+          # Проверка наличия бинарников в bin/
+          if [ -z "$(ls -A ${MODULE_DIR}/bin 2>/dev/null)" ]; then
+            echo "::warning title=NoMount Binaries Warning::Папка bin/ пуста. Проверьте исходники юзерспейса."
+          fi
+
+          # 2. Упаковка мета-модуля в nomount_module.zip
+          echo "📦 Упаковка мета-модуля NoMount..."
+          cd "$MODULE_DIR"
+          zip -r9 "${AK3_DIR}/nomount_module.zip" ./*
+
+          # 3. Инжект интерактивного диалога установки в anykernel.sh
+          AK3_SCRIPT="${AK3_DIR}/anykernel.sh"
+          if [ -f "$AK3_SCRIPT" ]; then
+            echo "✍️ Инжект запроса установки NoMount в anykernel.sh..."
+            cat << 'EOF' >> "$AK3_SCRIPT"
+
+    # --- NoMount Meta-Module Prompt & Install ---
+    NOMOUNT_ZIP=""
+    for zip_path in "$RAMDISK/../nomount_module.zip" "nomount_module.zip" "$ZIPFILE_DIR/nomount_module.zip"; do
+      if [ -f "$zip_path" ]; then
+        NOMOUNT_ZIP="$zip_path"
+        break
+      fi
+    done
+
+    if [ -n "$NOMOUNT_ZIP" ]; then
+      ui_print " "
+      ui_print "----------------------------------------"
+      ui_print " Установить мета-модуль NoMount?"
+      ui_print " [Громкость +] : Да (Yes)"
+      ui_print " [Громкость -] : Нет (No)"
+      ui_print "----------------------------------------"
+      if chooseport 5; then
+        ui_print "-> Установка мета-модуля NoMount..."
+        mkdir -p /data/adb/modules/nomount
+        unzip -o "$NOMOUNT_ZIP" -d /data/adb/modules/nomount/
+        ui_print "-> Мета-модуль NoMount успешно установлен в /data/adb/modules/nomount!"
+      else
+        ui_print "-> Пропуск установки NoMount."
+      fi
+    fi
+    EOF
+          fi
+
+          echo "✅ Модуль NoMount успешно собран и упакован в AnyKernel3!"
+
       - name: Download Latest SUSFS Module from CI
         if: ${{ github.event.inputs.SUSFS_CI == 'CI' && github.event.inputs.SUSFS_META != '-1' }}
         continue-on-error: true
