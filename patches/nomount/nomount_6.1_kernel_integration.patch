@@ -1,0 +1,230 @@
+diff --git a/fs/Kconfig b/fs/Kconfig
+index 410a8f553..c4928e7a7 100644
+--- a/fs/Kconfig
++++ b/fs/Kconfig
+@@ -387,4 +387,11 @@ source "fs/unicode/Kconfig"
+ config IO_WQ
+ 	bool
+ 
++config NOMOUNT
++	bool "NoMount Path Redirection Subsystem"
++	default y
++	help
++	  NoMount allows path redirection and virtual file injection
++	  without mounting filesystems. Useful for systemless modifications.
++
+ endmenu
+diff --git a/fs/Makefile b/fs/Makefile
+index 102e4cd2b..d143362c7 100644
+--- a/fs/Makefile
++++ b/fs/Makefile
+@@ -23,6 +23,8 @@ else
+ obj-y +=	no-block.o
+ endif
+ 
++obj-$(CONFIG_NOMOUNT) += nomount.o
++
+ obj-$(CONFIG_PROC_FS) += proc_namespace.o
+ 
+ obj-y				+= notify/
+diff --git a/fs/d_path.c b/fs/d_path.c
+index 56a6ee4c6..14d6d5610 100644
+--- a/fs/d_path.c
++++ b/fs/d_path.c
+@@ -245,6 +245,10 @@ static void get_fs_root_rcu(struct fs_struct *fs, struct path *root)
+ 	} while (read_seqcount_retry(&fs->seq, seq));
+ }
+ 
++#ifdef CONFIG_NOMOUNT
++extern char *nomount_handle_dpath(const struct path *path, char *buf, int buflen);
++#endif
++
+ /**
+  * d_path - return the path of a dentry
+  * @path: path to report
+@@ -266,6 +270,13 @@ char *d_path(const struct path *path, char *buf, int buflen)
+ 	DECLARE_BUFFER(b, buf, buflen);
+ 	struct path root;
+ 
++#ifdef CONFIG_NOMOUNT
++	char *nm_path = nomount_handle_dpath(path, buf, buflen);
++	if (unlikely(nm_path)) {
++		return nm_path;
++	}
++#endif
++
+ 	/*
+ 	 * We have various synthetic filesystems that never get mounted.  On
+ 	 * these filesystems dentries are never used for lookup purposes, and
+diff --git a/fs/namei.c b/fs/namei.c
+index 8e9c0b567..9ed629315 100644
+--- a/fs/namei.c
++++ b/fs/namei.c
+@@ -125,6 +125,11 @@
+ 
+ #define EMBEDDED_NAME_MAX	(PATH_MAX - offsetof(struct filename, iname))
+ 
++#ifdef CONFIG_NOMOUNT
++extern struct filename *nomount_handle_getname(struct filename *name);
++extern int nomount_handle_permission(struct inode *inode, int mask);
++#endif
++
+ struct filename *
+ getname_flags(const char __user *filename, int flags, int *empty)
+ {
+@@ -200,6 +205,11 @@ getname_flags(const char __user *filename, int flags, int *empty)
+ 
+ 	result->uptr = filename;
+ 	result->aname = NULL;
++#ifdef CONFIG_NOMOUNT
++	if (!IS_ERR(result)) {
++		result = nomount_handle_getname(result);
++	}
++#endif
+ 	audit_getname(result);
+ 	return result;
+ }
+@@ -249,6 +259,11 @@ getname_kernel(const char * filename)
+ 	result->uptr = NULL;
+ 	result->aname = NULL;
+ 	result->refcnt = 1;
++#ifdef CONFIG_NOMOUNT
++	if (!IS_ERR(result)) {
++		result = nomount_handle_getname(result);
++	}
++#endif
+ 	audit_getname(result);
+ 
+ 	return result;
+@@ -400,6 +415,12 @@ int generic_permission(struct user_namespace *mnt_userns, struct inode *inode,
+ {
+ 	int ret;
+ 
++#ifdef CONFIG_NOMOUNT
++	int nm_perm = nomount_handle_permission(inode, mask);
++	if (unlikely(nm_perm < 0)) return nm_perm;
++	if (unlikely(nm_perm > 0)) return 0;
++#endif
++
+ 	/*
+ 	 * Do the basic permission checks.
+ 	 */
+@@ -504,6 +525,12 @@ int inode_permission(struct user_namespace *mnt_userns,
+ {
+ 	int retval;
+ 
++#ifdef CONFIG_NOMOUNT
++	int nm_perm = nomount_handle_permission(inode, mask);
++	if (unlikely(nm_perm < 0)) return nm_perm;
++	if (unlikely(nm_perm > 0)) return 0;
++#endif
++
+ 	retval = sb_permission(inode->i_sb, inode, mask);
+ 	if (retval)
+ 		return retval;
+diff --git a/fs/proc/task_mmu.c b/fs/proc/task_mmu.c
+index 37f6cefe0..78cf28a8d 100644
+--- a/fs/proc/task_mmu.c
++++ b/fs/proc/task_mmu.c
+@@ -274,6 +274,10 @@ static void show_vma_header_prefix(struct seq_file *m,
+ 	seq_putc(m, ' ');
+ }
+ 
++#ifdef CONFIG_NOMOUNT
++extern bool nomount_spoof_mmap_metadata(struct inode *inode, dev_t *dev, unsigned long *ino);
++#endif
++
+ static void
+ show_map_vma(struct seq_file *m, struct vm_area_struct *vma)
+ {
+@@ -290,6 +294,9 @@ show_map_vma(struct seq_file *m, struct vm_area_struct *vma)
+ 		struct inode *inode = file_inode(vma->vm_file);
+ 		dev = inode->i_sb->s_dev;
+ 		ino = inode->i_ino;
++#ifdef CONFIG_NOMOUNT
++		nomount_spoof_mmap_metadata(inode, &dev, &ino);
++#endif
+ 		pgoff = ((loff_t)vma->vm_pgoff) << PAGE_SHIFT;
+ 	}
+ 
+diff --git a/fs/readdir.c b/fs/readdir.c
+index 9c53edb60..6ea67abee 100644
+--- a/fs/readdir.c
++++ b/fs/readdir.c
+@@ -36,6 +36,9 @@
+ 	unsafe_copy_to_user(dst, src, len, label);		\
+ } while (0)
+ 
++#ifdef CONFIG_NOMOUNT
++extern int nomount_handle_iterate_dir(struct file *file, struct dir_context *ctx);
++#endif
+ 
+ int iterate_dir(struct file *file, struct dir_context *ctx)
+ {
+@@ -61,10 +64,14 @@ int iterate_dir(struct file *file, struct dir_context *ctx)
+ 	res = -ENOENT;
+ 	if (!IS_DEADDIR(inode)) {
+ 		ctx->pos = file->f_pos;
++#ifdef CONFIG_NOMOUNT
++		res = nomount_handle_iterate_dir(file, ctx);
++#else
+ 		if (shared)
+ 			res = file->f_op->iterate_shared(file, ctx);
+ 		else
+ 			res = file->f_op->iterate(file, ctx);
++#endif
+ 		file->f_pos = ctx->pos;
+ 		fsnotify_access(file);
+ 		file_accessed(file);
+diff --git a/fs/stat.c b/fs/stat.c
+index ef50573c7..c2368bf15 100644
+--- a/fs/stat.c
++++ b/fs/stat.c
+@@ -129,6 +129,10 @@ int vfs_getattr_nosec(const struct path *path, struct kstat *stat,
+ }
+ EXPORT_SYMBOL(vfs_getattr_nosec);
+ 
++#ifdef CONFIG_NOMOUNT
++extern int nomount_handle_getattr(int ret, const struct path *path, struct kstat *stat);
++#endif
++
+ /*
+  * vfs_getattr - Get the enhanced basic attributes of a file
+  * @path: The file of interest
+@@ -158,7 +162,11 @@ int vfs_getattr(const struct path *path, struct kstat *stat,
+ 	retval = security_inode_getattr(path);
+ 	if (retval)
+ 		return retval;
++#ifdef CONFIG_NOMOUNT
++    return nomount_handle_getattr(vfs_getattr_nosec(path, stat, request_mask, query_flags), path, stat);
++#else
+ 	return vfs_getattr_nosec(path, stat, request_mask, query_flags);
++#endif
+ }
+ EXPORT_SYMBOL(vfs_getattr);
+ 
+diff --git a/fs/statfs.c b/fs/statfs.c
+index 96d1c3edf..ee18b4ed3 100644
+--- a/fs/statfs.c
++++ b/fs/statfs.c
+@@ -11,6 +11,10 @@
+ #include <linux/compat.h>
+ #include "internal.h"
+ 
++#ifdef CONFIG_NOMOUNT
++extern void nomount_spoof_statfs(const struct path *path, struct kstatfs *buf);
++#endif
++
+ static int flags_by_mnt(int mnt_flags)
+ {
+ 	int flags = 0;
+@@ -90,6 +94,9 @@ int vfs_statfs(const struct path *path, struct kstatfs *buf)
+ 	error = statfs_by_dentry(path->dentry, buf);
+ 	if (!error)
+ 		buf->f_flags = calculate_f_flags(path->mnt);
++#ifdef CONFIG_NOMOUNT
++	nomount_spoof_statfs(path, buf);
++#endif
+ 	return error;
+ }
+ EXPORT_SYMBOL(vfs_statfs);
