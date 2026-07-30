@@ -819,14 +819,14 @@ jobs:
 
           cd "$KERNEL_COMMON"
 
-          # 2. Определяем версию ядра из top-level Makefile (например, 6.1 или 5.15)
+          # 2. Определяем версию ядра из top-level Makefile
           KV_MAJOR=$(grep -m1 '^VERSION =' Makefile | awk '{print $3}')
           KV_MINOR=$(grep -m1 '^PATCHLEVEL =' Makefile | awk '{print $3}')
           KERNEL_VER="${KV_MAJOR}.${KV_MINOR}"
           echo "Detected kernel version: ${KERNEL_VER}"
 
-          # 3. Ищем подходящий патч в папке kernel/patches репозитория NoMount
-          PATCH_FILE=$(find "${NOMOUNT_DIR}/kernel/patches" -type f -name "*${KERNEL_VER}*.patch" | head -n 1)
+          # 3. Точный поиск патча только для 6.1 (игнорируя 6.18, 6.10 и т.д.)
+          PATCH_FILE=$(find "${NOMOUNT_DIR}/kernel/patches" -type f | grep -E "([^0-9]|^)${KERNEL_VER}([^0-9]|$)" | head -n 1)
 
           if [ -n "$PATCH_FILE" ] && [ -f "$PATCH_FILE" ]; then
             echo "Applying official patch for kernel ${KERNEL_VER}: $(basename "$PATCH_FILE")"
@@ -835,11 +835,11 @@ jobs:
             echo "Official patch for ${KERNEL_VER} not found. Applying local fallback patch..."
             patch -p1 --forward < "${GITHUB_WORKSPACE}/patches/nomount/nomount_${KERNEL_VER}_kernel_integration.patch" || true
           else
-            echo "::error title=NoMount Patch Error::Не найден патч для версии ядра ${KERNEL_VER} в NoMount repo или локальной папке!"
+            echo "::error title=NoMount Patch Error::Не найден патч для версии ядра ${KERNEL_VER}!"
             exit 1
           fi
 
-          # 4. Копируем исходные файлы (nomount.c, nomount.h и т.д.) в fs/
+          # 4. Копируем исходные файлы в fs/
           if [ -d "${NOMOUNT_DIR}/kernel/src" ]; then
             echo "Copying NoMount kernel sources to fs/..."
             cp -rf "${NOMOUNT_DIR}/kernel/src/"* ./fs/
@@ -853,7 +853,6 @@ jobs:
             source $REJ_CHECKER
             check_rejects .
           fi
-
     
       - name: Apply DROID_SPACES
         env:
