@@ -72,6 +72,11 @@ on:
           - CI
           - Release
           - N/A
+      NOMOUNT:
+        type: boolean
+        description: "是否启用 NoMount 路径重定向子系统？// Enable NoMount subsystem?"
+        required: true
+        default: true
       KPM:
         type: choice
         description: "内核模块实现方式//Kernel module implementation method"
@@ -336,6 +341,7 @@ jobs:
           fi
           echo "Selected KPM: ${{ github.event.inputs.KPM }}"
           echo "Custom SUSFS_META: ${{ github.event.inputs.SUSFS_META }}"
+          echo "Selected NOMOUNT: ${{ github.event.inputs.NOMOUNT }}"
           echo "Custom KSU_META: ${{ github.event.inputs.KSU_META }}"
           echo "Selected ZRAM: ${{ github.event.inputs.ZRAM }}"
           echo "Selected LSM_BBG: ${{ github.event.inputs.LSM_BBG }}"
@@ -801,6 +807,27 @@ jobs:
             sed -i '0,/name = "kernel_aarch64",/{/module_implicit_outs/s|,$| + ["drivers/rekernel/rekernel.ko"],|}' BUILD.bazel
           fi
 
+      - name: Apply NOMOUNT
+        if: ${{ github.event.inputs.NOMOUNT == 'true' }}
+        run: |
+          PATCH_DIR="${GITHUB_WORKSPACE}/patches/nomount"
+          KERNEL_COMMON="${GITHUB_WORKSPACE}/kernel_workspace/kernel_platform/common"
+
+          cd "$KERNEL_COMMON"
+
+          echo "Applying NoMount patch..."
+          patch -p1 --forward < "${PATCH_DIR}/nomount_6.1_kernel_integration.patch" || true
+
+          if [ -d "${PATCH_DIR}/src" ]; then
+            echo "Copying NoMount source files to fs/..."
+            cp -rf "${PATCH_DIR}/src/"* ./fs/
+          else
+            echo "::warning title=NoMount Warning::Исходники NoMount в ${PATCH_DIR}/src не найдены!"
+          fi
+
+          source $REJ_CHECKER
+          check_rejects .
+
       - name: Apply DROID_SPACES
         env:
           FILE: ${{ github.event.inputs.FILE }}
@@ -1006,6 +1033,11 @@ jobs:
             set_config "CONFIG_KSU_SUSFS_OPEN_REDIRECT=y"
           else
             set_config "CONFIG_KSU_SUSFS=n"
+          fi
+
+          # NoMount 配置
+          if [ "${{ github.event.inputs.NOMOUNT }}" = "true" ]; then
+            set_config "CONFIG_NOMOUNT=y"
           fi
 
           # TMPFS配置*
