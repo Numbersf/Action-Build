@@ -76,7 +76,7 @@ on:
         type: choice
         description: "内核模块实现方式//Kernel module implementation method"
         required: true
-        default: N/A
+        default: KPM
         options:
           - KPM
           - KPN
