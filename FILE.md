@@ -19,10 +19,12 @@ oneplus_ace3_b
 oneplus_open_b
 oneplus_nord_ce4_b
 oneplus_n6_b
+oneplus_n6x_b
 oneplus_12_b
 oneplus_pad_go_2_b
 oneplus_turbo_6x_b
 oneplus_nord_ce4_lite_5g_b
+oneplus_nord_ce6
 oneplus_nord_ce6_lite_b
 oneplus_turbo_6v
 oneplus_nord_4_b
@@ -193,18 +195,18 @@ oneplus_11_u
 oneplus_ace_u
 oneplus_ace_race_u
 oneplus_10r_u
+realme_gt_neo3_u
 oppo_find_n3_flip_u
 oppo_find_x6_u
 oppo_reno12_pro_mt6985_u
-realme_gt_neo3_u
 
 # Android13
 oneplus_11_t
 oneplus_10r_t
 oneplus_ace_t
+realme_gt_neo3_t
 oppo_find_n3_flip
 oppo_find_x6
-realme_gt_neo3_t
 
 # Android12
 oneplus_10_pro_s
