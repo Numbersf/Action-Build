@@ -81,8 +81,6 @@ Prohibit the promotion of forked repositories with **no modifications**; see [LI
 >
 >``OnePlus Ace5`` does not support enabling Fengchi. Older models cannot use it even if the kernel includes it — do not force it  
 >
->``CAll Build Start UP`` is an **extremely dangerous** new workflow.**It has no new features and everything remains default and non-customizable**.This workflow is **strictly prohibited** for regular users and should use ``Build All OnePlus Kernels`` instead!  
->
  
 ------
  
@@ -142,8 +140,6 @@ Here must be separated by two /(U+002F) and cannot be removed.
 - Fully automated retrieval of kernel information and build information.  
  
 - Allow modifying `SUBLEVEL`,Used to fix the issue where the device fails to boot after a system update changes the `SUBLEVEL` but the kernel source has not been updated.  
- 
-- Allows running multiple workflows in batches of `9` each time.Ordinary users are prohibited from using.  
  
 - Remove file-map and build method selection; let the main workflow decide automatically [@Bouteillepleine](https://github.com/Bouteillepleine)  
  
