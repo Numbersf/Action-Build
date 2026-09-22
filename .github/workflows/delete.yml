@@ -249,32 +249,26 @@ jobs:
             SORT_CMD="sort -k2 -r"
           fi
 
-          for CONCLUSION in failure success cancelled; do
-            case "$CONCLUSION" in
-              failure)
-                if [[ "$DELETE_FAILED" != "true" ]]; then
-                  continue
-                fi
-                ;;
-              success)
-                if [[ "$DELETE_SUCCESS" != "true" ]]; then
-                  continue
-                fi
-                ;;
-              cancelled)
-                if [[ "$DELETE_CANCELLED" != "true" ]]; then
-                  continue
-                fi
-                ;;
-            esac
+          ALLOWED_CONCLUSIONS=()
+          if [[ "$DELETE_FAILED" == "true" ]]; then
+            ALLOWED_CONCLUSIONS+=("failure")
+          fi
+          if [[ "$DELETE_SUCCESS" == "true" ]]; then
+            ALLOWED_CONCLUSIONS+=("success")
+          fi
+          if [[ "$DELETE_CANCELLED" == "true" ]]; then
+            ALLOWED_CONCLUSIONS+=("cancelled")
+          fi
 
-            if [ "$TOTAL_DELETED" -ge "$COUNT" ]; then
-              break
-            fi
-            echo "批量模式 - 处理结论类型: $CONCLUSION（全局剩余配额: $((COUNT - TOTAL_DELETED)) 条）..."
+          if [ ${#ALLOWED_CONCLUSIONS[@]} -eq 0 ]; then
+            echo "未选择任何删除类型，跳过批量删除。"
+          else
+            CONCLUSIONS_JSON=$(printf '"%s",' "${ALLOWED_CONCLUSIONS[@]}")
+            CONCLUSIONS_JSON="[${CONCLUSIONS_JSON%,}]"
+            echo "批量模式 - 按时间统一顺序处理结论类型: ${ALLOWED_CONCLUSIONS[*]}（配额: $COUNT 条）..."
 
-            JQ_FILTER=".[] | select(.conclusion == \"$CONCLUSION\") | [(.databaseId | tostring), .startedAt] | join(\" \")"
-            while IFS=' ' read -r RUN_ID _STARTED; do
+            JQ_FILTER=".[] | select(.conclusion as \$c | $CONCLUSIONS_JSON | index(\$c) != null) | [(.databaseId | tostring), .startedAt, .conclusion] | join(\" \")"
+            while IFS=' ' read -r RUN_ID _STARTED RUN_CONCLUSION; do
               if [ -z "$RUN_ID" ]; then
                 continue
               fi
@@ -284,7 +278,7 @@ jobs:
               if [ "$TOTAL_DELETED" -ge "$COUNT" ]; then
                 break
               fi
-              echo "删除 ID: $RUN_ID"
+              echo "删除 ID: $RUN_ID（结论: $RUN_CONCLUSION）"
               if gh run delete "$RUN_ID" --repo "$REPO"; then
                 TOTAL_DELETED=$((TOTAL_DELETED + 1))
               else
@@ -294,8 +288,8 @@ jobs:
               sleep 0.2
             done < <(gh run list --repo "$REPO" --workflow "$WORKFLOW_NAME" --limit 200 --json databaseId,startedAt,conclusion --jq "$JQ_FILTER" | $SORT_CMD)
 
-            echo "已处理 $CONCLUSION 类型，当前总删除: $TOTAL_DELETED 条。"
-          done
+            echo "批量删除处理完成，当前总删除: $TOTAL_DELETED 条。"
+          fi
 
           echo "✅ 批量删除完成，共删除 $TOTAL_DELETED 条（上限: $COUNT），失败 $TOTAL_FAILED 条，取消 $CANCEL_COUNT 条。"
           echo "CANCEL_COUNT=$CANCEL_COUNT" >> "$GITHUB_ENV"
@@ -400,11 +394,12 @@ jobs:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       REPO: ${{ github.repository }}
       COUNT: ${{ inputs.count }}
+      WORKFLOW_NAME: ${{ github.workflow }}
     steps:
       - name: Clean this workflow's own run history
         run: |
           set -e
-          echo "清理本工作流（${{ github.workflow }}）历史记录（上限: $COUNT 条）..."
+          echo "清理本工作流（$WORKFLOW_NAME）历史记录（上限: $COUNT 条）..."
           DELETED=0
           FAILED=0
 
@@ -430,7 +425,7 @@ jobs:
               FAILED=$((FAILED + 1))
             fi
             sleep 0.2
-          done < <(gh run list --repo "$REPO" --workflow "${{ github.workflow }}" --limit 200 --json databaseId,status --jq '.[] | [(.databaseId | tostring), .status] | join(" ")')
+          done < <(gh run list --repo "$REPO" --workflow "$WORKFLOW_NAME" --limit 200 --json databaseId,status --jq '.[] | [(.databaseId | tostring), .status] | join(" ")')
 
           echo "✅ 自身记录清理完成，共删除 $DELETED 条，失败 $FAILED 条。"
           {
