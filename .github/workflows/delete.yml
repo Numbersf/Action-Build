@@ -53,31 +53,59 @@ on:
         type: boolean
         default: false
       target_run_numbers:
-        description: '按运行编号删除'
+        description: '按运行编号删除（逗号分隔，纯数字）'
         required: false
         default: ''
       target_run_ids:
-        description: '按Run-ID删除'
+        description: '按 Run-ID 删除（逗号分隔，纯数字）'
         required: false
         default: ''
+      self_cleanup:
+        description: '是否同时清理本工作流（Cleanup 自身）的历史记录？'
+        required: false
+        type: boolean
+        default: true
 
 permissions:
   actions: write
 
+concurrency:
+  group: cleanup-${{ github.workflow }}
+  cancel-in-progress: false
+
 jobs:
   cleanup-workflow:
     runs-on: ubuntu-latest
-    if: >-
-      ${{ inputs.cancel_all
-       || inputs.delete_failed
-       || inputs.delete_success
-       || inputs.delete_cancelled
-       || inputs.target_run_numbers != ''
-       || inputs.target_run_ids != '' }}
+    if: ${{ inputs.cancel_all || inputs.delete_failed || inputs.delete_success || inputs.delete_cancelled || inputs.target_run_numbers != '' || inputs.target_run_ids != '' }}
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       REPO: ${{ github.repository }}
+    outputs:
+      deleted_count: ${{ steps.summary.outputs.deleted_count }}
+      failed_count: ${{ steps.summary.outputs.failed_count }}
     steps:
+      - name: Validate numeric inputs
+        env:
+          TARGET_RUN_NUMBERS: ${{ inputs.target_run_numbers }}
+          TARGET_RUN_IDS: ${{ inputs.target_run_ids }}
+        run: |
+          validate_csv_numeric() {
+            local label="$1"
+            local value="$2"
+            [ -z "$value" ] && return 0
+            IFS=',' read -ra ITEMS <<< "$value"
+            for item in "${ITEMS[@]}"; do
+              trimmed=$(echo "$item" | tr -d ' #')
+              if [ -n "$trimmed" ] && ! [[ "$trimmed" =~ ^[0-9]+$ ]]; then
+                echo "❌ $label 包含非法值: '$item'（必须为纯数字，逗号分隔）"
+                exit 1
+              fi
+            done
+          }
+          validate_csv_numeric "target_run_numbers" "$TARGET_RUN_NUMBERS"
+          validate_csv_numeric "target_run_ids" "$TARGET_RUN_IDS"
+          echo "✅ 输入校验通过"
+
       - name: Delete by Run Number
         if: ${{ inputs.target_run_numbers != '' }}
         env:
@@ -86,19 +114,19 @@ jobs:
         run: |
           set -e
           echo "精准模式 - 按运行编号删除: $TARGET_RUN_NUMBERS"
+          DELETED=0
+          FAILED=0
 
           IFS=',' read -ra NUM_LIST <<< "$TARGET_RUN_NUMBERS"
           for RAW_NUM in "${NUM_LIST[@]}"; do
             NUM=$(echo "$RAW_NUM" | tr -d ' #')
-            [ -z "$NUM" ] && continue
+            if [ -z "$NUM" ]; then
+              continue
+            fi
 
             echo "查找运行编号 #${NUM}..."
-            LINE=$(gh run list \
-              --repo "$REPO" \
-              --workflow "$WORKFLOW_NAME" \
-              --limit 300 \
-              --json databaseId,number,status,conclusion \
-              --jq ".[] | select(.number == $NUM) | [.status, .conclusion, (.databaseId | tostring)] | join(\" \")")
+            JQ_FILTER=".[] | select(.number == $NUM) | [.status, .conclusion, (.databaseId | tostring)] | join(\" \")"
+            LINE=$(gh run list --repo "$REPO" --workflow "$WORKFLOW_NAME" --limit 300 --json databaseId,number,status,conclusion --jq "$JQ_FILTER")
 
             if [ -z "$LINE" ]; then
               echo "⚠️ 未找到运行编号 #${NUM}，跳过。"
@@ -111,13 +139,22 @@ jobs:
 
             if [[ "$STATE" == "in_progress" || "$STATE" == "queued" || "$STATE" == "waiting" ]]; then
               echo "#${NUM}（ID: $RUN_ID）仍在运行中（$STATE），跳过。"
-            else
-              echo "删除 #${NUM}（ID: $RUN_ID，conclusion: $CONCLUSION）..."
-              gh run delete "$RUN_ID" --repo "$REPO" \
-                && echo "✅ 已删除 #${NUM}" \
-                || echo "❌ 删除失败 #${NUM}"
+              continue
             fi
+
+            echo "删除 #${NUM}（ID: $RUN_ID，conclusion: $CONCLUSION）..."
+            if gh run delete "$RUN_ID" --repo "$REPO"; then
+              echo "✅ 已删除 #${NUM}"
+              DELETED=$((DELETED + 1))
+            else
+              echo "❌ 删除失败 #${NUM}"
+              FAILED=$((FAILED + 1))
+            fi
+            sleep 0.2
           done
+
+          echo "DELETED_BY_NUMBER=$DELETED" >> "$GITHUB_ENV"
+          echo "FAILED_BY_NUMBER=$FAILED" >> "$GITHUB_ENV"
 
       - name: Delete by Run ID
         if: ${{ inputs.target_run_ids != '' }}
@@ -126,18 +163,18 @@ jobs:
         run: |
           set -e
           echo "精准模式 - 按 Run ID 删除: $TARGET_RUN_IDS"
+          DELETED=0
+          FAILED=0
 
           IFS=',' read -ra ID_LIST <<< "$TARGET_RUN_IDS"
           for RAW_ID in "${ID_LIST[@]}"; do
             RID=$(echo "$RAW_ID" | tr -d ' ')
-            [ -z "$RID" ] && continue
+            if [ -z "$RID" ]; then
+              continue
+            fi
 
             echo "查询 Run ID $RID..."
-            LINE=$(gh run view "$RID" \
-              --repo "$REPO" \
-              --json status,conclusion,number \
-              --jq '[.status, .conclusion, (.number | tostring)] | join(" ")' \
-              2>/dev/null || true)
+            LINE=$(gh run view "$RID" --repo "$REPO" --json status,conclusion,number --jq '[.status, .conclusion, (.number | tostring)] | join(" ")' 2>/dev/null || true)
 
             if [ -z "$LINE" ]; then
               echo "⚠️ Run ID $RID 不存在或无权访问，跳过。"
@@ -150,22 +187,25 @@ jobs:
 
             if [[ "$STATE" == "in_progress" || "$STATE" == "queued" || "$STATE" == "waiting" ]]; then
               echo "ID $RID（#${RUN_NUMBER}）仍在运行中（$STATE），跳过。"
-            else
-              echo "删除 ID $RID（#${RUN_NUMBER}，conclusion: $CONCLUSION）..."
-              gh run delete "$RID" --repo "$REPO" \
-                && echo "✅ 已删除 ID $RID" \
-                || echo "❌ 删除失败 ID $RID"
+              continue
             fi
+
+            echo "删除 ID $RID（#${RUN_NUMBER}，conclusion: $CONCLUSION）..."
+            if gh run delete "$RID" --repo "$REPO"; then
+              echo "✅ 已删除 ID $RID"
+              DELETED=$((DELETED + 1))
+            else
+              echo "❌ 删除失败 ID $RID"
+              FAILED=$((FAILED + 1))
+            fi
+            sleep 0.2
           done
 
+          echo "DELETED_BY_ID=$DELETED" >> "$GITHUB_ENV"
+          echo "FAILED_BY_ID=$FAILED" >> "$GITHUB_ENV"
+
       - name: Batch Cancel and Delete
-        if: >-
-          ${{ inputs.target_run_numbers == ''
-           && inputs.target_run_ids == ''
-           && (inputs.cancel_all
-            || inputs.delete_failed
-            || inputs.delete_success
-            || inputs.delete_cancelled) }}
+        if: ${{ inputs.target_run_numbers == '' && inputs.target_run_ids == '' && (inputs.cancel_all || inputs.delete_failed || inputs.delete_success || inputs.delete_cancelled) }}
         env:
           WORKFLOW_NAME: ${{ inputs.workflow_name }}
           COUNT: ${{ inputs.count }}
@@ -177,66 +217,114 @@ jobs:
           CURRENT_RUN_ID: ${{ github.run_id }}
         run: |
           set -e
+          CANCEL_COUNT=0
+          TOTAL_DELETED=0
+          TOTAL_FAILED=0
+
           if [[ "$CANCEL_ALL" == "true" ]]; then
             echo "批量模式 - 取消所有进行中/排队中的运行..."
-            CANCEL_COUNT=0
             for STATUS_FILTER in in_progress queued waiting; do
               while IFS= read -r RUN_ID; do
-                [ -z "$RUN_ID" ] && continue
-                [[ "$RUN_ID" == "$CURRENT_RUN_ID" ]] && continue
+                if [ -z "$RUN_ID" ]; then
+                  continue
+                fi
+                if [[ "$RUN_ID" == "$CURRENT_RUN_ID" ]]; then
+                  continue
+                fi
                 echo "取消 ID: $RUN_ID"
-                gh run cancel "$RUN_ID" --repo "$REPO" \
-                  && CANCEL_COUNT=$((CANCEL_COUNT + 1)) \
-                  || echo "取消失败: $RUN_ID"
-              done < <(gh run list \
-                --repo "$REPO" \
-                --workflow "$WORKFLOW_NAME" \
-                --status "$STATUS_FILTER" \
-                --limit 200 \
-                --json databaseId \
-                --jq '.[].databaseId | tostring')
+                if gh run cancel "$RUN_ID" --repo "$REPO"; then
+                  CANCEL_COUNT=$((CANCEL_COUNT + 1))
+                else
+                  echo "取消失败: $RUN_ID"
+                fi
+                sleep 0.2
+              done < <(gh run list --repo "$REPO" --workflow "$WORKFLOW_NAME" --status "$STATUS_FILTER" --limit 200 --json databaseId --jq '.[].databaseId | tostring')
             done
             echo "已取消 $CANCEL_COUNT 条运行。"
           fi
-          [[ "$REVERSE_ORDER" == "true" ]] && SORT_CMD="sort -k2" || SORT_CMD="sort -k2 -r"
 
-          TOTAL_DELETED=0
+          if [[ "$REVERSE_ORDER" == "true" ]]; then
+            SORT_CMD="sort -k2"
+          else
+            SORT_CMD="sort -k2 -r"
+          fi
+
           for CONCLUSION in failure success cancelled; do
             case "$CONCLUSION" in
-              failure)   [[ "$DELETE_FAILED"    != "true" ]] && continue ;;
-              success)   [[ "$DELETE_SUCCESS"   != "true" ]] && continue ;;
-              cancelled) [[ "$DELETE_CANCELLED" != "true" ]] && continue ;;
+              failure)
+                if [[ "$DELETE_FAILED" != "true" ]]; then
+                  continue
+                fi
+                ;;
+              success)
+                if [[ "$DELETE_SUCCESS" != "true" ]]; then
+                  continue
+                fi
+                ;;
+              cancelled)
+                if [[ "$DELETE_CANCELLED" != "true" ]]; then
+                  continue
+                fi
+                ;;
             esac
 
-            [ "$TOTAL_DELETED" -ge "$COUNT" ] && break
+            if [ "$TOTAL_DELETED" -ge "$COUNT" ]; then
+              break
+            fi
             echo "批量模式 - 处理结论类型: $CONCLUSION（全局剩余配额: $((COUNT - TOTAL_DELETED)) 条）..."
 
+            JQ_FILTER=".[] | select(.conclusion == \"$CONCLUSION\") | [(.databaseId | tostring), .startedAt] | join(\" \")"
             while IFS=' ' read -r RUN_ID _STARTED; do
-              [ -z "$RUN_ID" ] && continue
-              [[ "$RUN_ID" == "$CURRENT_RUN_ID" ]] && continue
-              [ "$TOTAL_DELETED" -ge "$COUNT" ] && break 2
+              if [ -z "$RUN_ID" ]; then
+                continue
+              fi
+              if [[ "$RUN_ID" == "$CURRENT_RUN_ID" ]]; then
+                continue
+              fi
+              if [ "$TOTAL_DELETED" -ge "$COUNT" ]; then
+                break
+              fi
               echo "删除 ID: $RUN_ID"
-              gh run delete "$RUN_ID" --repo "$REPO" \
-                && TOTAL_DELETED=$((TOTAL_DELETED + 1)) \
-                || echo "❌ 删除失败: $RUN_ID"
-            done < <(gh run list \
-              --repo "$REPO" \
-              --workflow "$WORKFLOW_NAME" \
-              --limit 200 \
-              --json databaseId,startedAt,conclusion \
-              --jq ".[] | select(.conclusion == \"$CONCLUSION\") | [(.databaseId | tostring), .startedAt] | join(\" \")" \
-              | $SORT_CMD)
+              if gh run delete "$RUN_ID" --repo "$REPO"; then
+                TOTAL_DELETED=$((TOTAL_DELETED + 1))
+              else
+                echo "❌ 删除失败: $RUN_ID"
+                TOTAL_FAILED=$((TOTAL_FAILED + 1))
+              fi
+              sleep 0.2
+            done < <(gh run list --repo "$REPO" --workflow "$WORKFLOW_NAME" --limit 200 --json databaseId,startedAt,conclusion --jq "$JQ_FILTER" | $SORT_CMD)
 
             echo "已处理 $CONCLUSION 类型，当前总删除: $TOTAL_DELETED 条。"
           done
 
-          echo "✅ 批量删除完成，共删除 $TOTAL_DELETED 条（上限: $COUNT）。"
+          echo "✅ 批量删除完成，共删除 $TOTAL_DELETED 条（上限: $COUNT），失败 $TOTAL_FAILED 条，取消 $CANCEL_COUNT 条。"
+          echo "CANCEL_COUNT=$CANCEL_COUNT" >> "$GITHUB_ENV"
+          echo "BATCH_DELETED=$TOTAL_DELETED" >> "$GITHUB_ENV"
+          echo "BATCH_FAILED=$TOTAL_FAILED" >> "$GITHUB_ENV"
+
+      - name: Job summary
+        id: summary
+        run: |
+          DELETED=$(( ${DELETED_BY_NUMBER:-0} + ${DELETED_BY_ID:-0} + ${BATCH_DELETED:-0} ))
+          FAILED=$(( ${FAILED_BY_NUMBER:-0} + ${FAILED_BY_ID:-0} + ${BATCH_FAILED:-0} ))
+          CANCELLED=${CANCEL_COUNT:-0}
+
+          {
+            echo "### 🧹 清理结果汇总"
+            echo ""
+            echo "| 项目 | 数量 |"
+            echo "|---|---|"
+            echo "| 已删除运行 | $DELETED |"
+            echo "| 删除失败 | $FAILED |"
+            echo "| 已取消运行 | $CANCELLED |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          echo "deleted_count=$DELETED" >> "$GITHUB_OUTPUT"
+          echo "failed_count=$FAILED" >> "$GITHUB_OUTPUT"
 
   cleanup-caches:
     runs-on: ubuntu-latest
     if: ${{ inputs.cache_mode != 'none' }}
-    permissions:
-      actions: write
     steps:
       - name: Clean caches by mode
         uses: actions/github-script@v9
@@ -247,6 +335,7 @@ jobs:
             console.log(`🔹 当前缓存清理模式: ${mode}`);
 
             let totalDeleted = 0;
+            let totalFailed = 0;
             let totalFound = 0;
             let page = 1;
 
@@ -261,11 +350,11 @@ jobs:
                 const key = cache.key;
                 let matched = false;
                 switch (mode) {
-                  case 'all':       matched = true; break;
-                  case 'ccache':    matched = key.startsWith('ccache-'); break;
+                  case 'all': matched = true; break;
+                  case 'ccache': matched = key.startsWith('ccache-'); break;
                   case 'apt-cache': matched = key.includes('apt-cache') || key.includes('apt'); break;
                   case 'thinlto-cache': matched = key.startsWith('thinlto-'); break;
-                  default:          matched = false;
+                  default: matched = false;
                 }
                 if (matched) {
                   totalFound++;
@@ -276,7 +365,8 @@ jobs:
                     });
                     totalDeleted++;
                   } catch (err) {
-                    console.log(`删除缓存失败: ${key}`);
+                    console.log(`删除缓存失败: ${key} (${err.message})`);
+                    totalFailed++;
                   }
                 }
               }
@@ -284,39 +374,70 @@ jobs:
               page++;
             }
 
+            const summaryLines = [
+              '### 🧹 缓存清理结果',
+              '',
+              '| 项目 | 数量 |',
+              '|---|---|',
+              `| 找到匹配缓存 | ${totalFound} |`,
+              `| 成功删除 | ${totalDeleted} |`,
+              `| 删除失败 | ${totalFailed} |`,
+            ];
+            await core.summary.addRaw(summaryLines.join('\n')).write();
+
             if (totalFound === 0) {
-              console.log("没有找到符合条件的缓存。");
+              console.log('没有找到符合条件的缓存。');
             } else {
-              console.log(`共找到 ${totalFound} 个缓存，成功删除 ${totalDeleted} 个。`);
+              console.log(`共找到 ${totalFound} 个缓存，成功删除 ${totalDeleted} 个，失败 ${totalFailed} 个。`);
             }
 
   cleanup-self-workflow:
+    needs: [cleanup-workflow, cleanup-caches]
     runs-on: ubuntu-latest
-    if: always()
+    if: ${{ always() && inputs.self_cleanup }}
     env:
       CURRENT_RUN_ID: ${{ github.run_id }}
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       REPO: ${{ github.repository }}
+      COUNT: ${{ inputs.count }}
     steps:
-      - name: Clean the workflow own Run History
+      - name: Clean this workflow's own run history
         run: |
           set -e
-          echo "清理本工作流（Workflow and Cache Cleanup）历史记录..."
+          echo "清理本工作流（${{ github.workflow }}）历史记录（上限: $COUNT 条）..."
           DELETED=0
+          FAILED=0
 
           while IFS=' ' read -r RUN_ID STATE; do
-            [ -z "$RUN_ID" ] && continue
-            [[ "$RUN_ID" == "$CURRENT_RUN_ID" ]] && continue
-            [[ "$STATE" == "in_progress" || "$STATE" == "queued" || "$STATE" == "waiting" ]] && continue
-            echo "删除自身记录 ID: $RUN_ID"
-            gh run delete "$RUN_ID" --repo "$REPO" \
-              && DELETED=$((DELETED + 1)) \
-              || echo "❌ 删除失败: $RUN_ID"
-          done < <(gh run list \
-            --repo "$REPO" \
-            --workflow "Workflow and Cache Cleanup" \
-            --limit 200 \
-            --json databaseId,status \
-            --jq '.[] | [(.databaseId | tostring), .status] | join(" ")')
+            if [ -z "$RUN_ID" ]; then
+              continue
+            fi
+            if [[ "$RUN_ID" == "$CURRENT_RUN_ID" ]]; then
+              continue
+            fi
+            if [[ "$STATE" == "in_progress" || "$STATE" == "queued" || "$STATE" == "waiting" ]]; then
+              continue
+            fi
+            if [ "$DELETED" -ge "$COUNT" ]; then
+              break
+            fi
 
-          echo "✅ 自身记录清理完成，共删除 $DELETED 条。"
+            echo "删除自身记录 ID: $RUN_ID"
+            if gh run delete "$RUN_ID" --repo "$REPO"; then
+              DELETED=$((DELETED + 1))
+            else
+              echo "❌ 删除失败: $RUN_ID"
+              FAILED=$((FAILED + 1))
+            fi
+            sleep 0.2
+          done < <(gh run list --repo "$REPO" --workflow "${{ github.workflow }}" --limit 200 --json databaseId,status --jq '.[] | [(.databaseId | tostring), .status] | join(" ")')
+
+          echo "✅ 自身记录清理完成，共删除 $DELETED 条，失败 $FAILED 条。"
+          {
+            echo "### 🧹 自身工作流清理结果"
+            echo ""
+            echo "| 项目 | 数量 |"
+            echo "|---|---|"
+            echo "| 已删除 | $DELETED |"
+            echo "| 删除失败 | $FAILED |"
+          } >> "$GITHUB_STEP_SUMMARY"
