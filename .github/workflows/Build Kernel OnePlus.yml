@@ -194,14 +194,14 @@ jobs:
 
       - name: Maximize Build Space
         if: ${{ github.event.inputs.SPACE_NOCLEAN == 'false' }}
-        uses: easimon/maximize-build-space@master
-        with:
-          root-reserve-mb: 8192
-          temp-reserve-mb: 2048
-          remove-dotnet: 'true'
-          remove-android: 'true'
-          remove-haskell: 'true'
-          remove-codeql: 'true'
+        env:
+          ROOT_RESERVE_MB: '8192'
+          TEMP_RESERVE_MB: '2048'
+          REMOVE_DOTNET: 'true'
+          REMOVE_ANDROID: 'true'
+          REMOVE_HASKELL: 'true'
+          REMOVE_CODEQL: 'true'
+        run: bash scripts/maximize-build-space.sh
 
       - name: Configure Git
         run: |
