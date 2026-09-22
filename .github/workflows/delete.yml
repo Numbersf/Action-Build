@@ -10,7 +10,6 @@ on:
         default: 'Build All OnePlus Kernels'
         options:
           - Build All OnePlus Kernels
-          - CAll Build Start UP
           - Build TEST
           - Build TEST2
       cache_mode:
