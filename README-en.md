@@ -103,7 +103,7 @@ set_hide_config "CONFIG_IP6_NF_NAT=y"
 - Added `FakePatch` to improve compatibility between multiple kernel sublevel and `susfs`.  
 - Fixed `FakePatch` restoration for `android14-6.1` with `SUBLEVEL >= 157`: persist original include presence across steps, restore only headers actually removed, preserve adjacent code and SUSFS changes, and do not invent `trace/hooks/blk.h` includes on MTK baselines.
 
-- Workflow assets now come from the current fork commit. The KernelSU-Next setup script is selected by the builtin branch; silent branch fallback and SUSFS-enabled builds with an incompatible builtin layer fail explicitly.
+- Workflow assets now come from the current fork commit, are preserved in `RUNNER_TEMP` before workspace mounting, and are restored afterward with the temporary copy removed. The KernelSU-Next setup script is selected by the builtin branch; silent branch fallback and SUSFS-enabled builds with an incompatible builtin layer fail explicitly.
 
 - `FakePatch` regressions: install `Kotlin 2.4.10` on `PATH` (or set `KOTLIN` to its executable path), then run `uv run --no-project python -m unittest discover -s tests -v`.
 

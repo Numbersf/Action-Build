@@ -192,6 +192,11 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
 
+      - name: Preserve Build Assets
+        run: |
+          mkdir -p "$RUNNER_TEMP/action-build-assets"
+          cp -a "$GITHUB_WORKSPACE/scripts" "$GITHUB_WORKSPACE/patches" "$GITHUB_WORKSPACE/lib" "$GITHUB_WORKSPACE/ZRAM.zip" "$RUNNER_TEMP/action-build-assets/"
+
       - name: Maximize Build Space
         if: ${{ github.event.inputs.SPACE_NOCLEAN == 'false' }}
         env:
@@ -208,7 +213,8 @@ jobs:
           git config --global user.name "Numbersf"
           git config --global user.email "263623064@qq.com"
           mkdir -p "$GITHUB_WORKSPACE/kernel_workspace/Action-Build"
-          cp -a "$GITHUB_WORKSPACE/scripts" "$GITHUB_WORKSPACE/patches" "$GITHUB_WORKSPACE/lib" "$GITHUB_WORKSPACE/ZRAM.zip" "$GITHUB_WORKSPACE/kernel_workspace/Action-Build/"
+          cp -a "$RUNNER_TEMP/action-build-assets/." "$GITHUB_WORKSPACE/kernel_workspace/Action-Build/"
+          rm -rf "$RUNNER_TEMP/action-build-assets"
 
       - name: Extract Manifest Info
         id: extract_info
