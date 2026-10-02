@@ -101,6 +101,12 @@ set_hide_config "CONFIG_IP6_NF_NAT=y"
 ```  
  
 - Added `FakePatch` to improve compatibility between multiple kernel sublevel and `susfs`.  
+- Fixed `FakePatch` restoration for `android14-6.1` with `SUBLEVEL >= 157`: persist original include presence across steps, restore only headers actually removed, preserve adjacent code and SUSFS changes, and do not invent `trace/hooks/blk.h` includes on MTK baselines.
+
+- Workflow assets now come from the current fork commit. The KernelSU-Next setup script is selected by the builtin branch; silent branch fallback and SUSFS-enabled builds with an incompatible builtin layer fail explicitly.
+
+- `FakePatch` regressions: install `Kotlin 2.4.10` on `PATH` (or set `KOTLIN` to its executable path), then run `uv run --no-project python -m unittest discover -s tests -v`.
+
  
 - Added path recursion, providing full support for `Rust` build logic and `bindgen`/`Kleaf` dependency resolution on kernel version `6.12+`.  
  
@@ -136,6 +142,8 @@ Set Branch: Divided into manager-layer and built-in-layer. Please modify accordi
 The commit hash referred to here is the built-in-layer.
 Here must be separated by two /(U+002F) and cannot be removed.
 ```  
+The current SUSFS configuration is `dev/dev-susfs/`: manager branch `dev`, builtin branch `dev-susfs`, and an empty third field for its latest commit. Leave `SUSFS_META` empty for the latest upstream patch or supply a commit hash to pin it; only `-1` disables SUSFS and its FakePatch steps.
+
  
 - Fully automated retrieval of kernel information and build information.  
  

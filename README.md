@@ -101,6 +101,12 @@ set_hide_config "CONFIG_IP6_NF_NAT=y"
 ```  
  
 - 新增`FakePatch`完善多内核等级与`susfs`的兼容问题  
+- 修复`android14-6.1`、`SUBLEVEL >= 157`的`FakePatch`还原逻辑：跨步骤记录原始引用，只恢复实际移除的头文件，不再为`MTK`源码凭空添加`trace/hooks/blk.h`或删除相邻代码，保留`SUSFS`补丁内容。
+
+- 工作流素材改为使用本次提交的`fork`版本；`KernelSU-Next`安装脚本按内置分支选择，并拒绝分支静默回退或启用`SUSFS`时使用不支持它的内置层。
+
+- `FakePatch`回归验证：安装`Kotlin 2.4.10`并加入`PATH`（或设置`KOTLIN`为可执行文件路径），运行`uv run --no-project python -m unittest discover -s tests -v`。
+
  
 - 新增路径递推,完整适配内核版本`6.12+`的`Rust`构建逻辑和`bindgen`、`Kleaf`依赖搜索  
  
@@ -136,6 +142,8 @@ set_hide_config "CONFIG_IP6_NF_NAT=y"
 这里指的提交hash是内置层
 必须用两个/(U+002F)隔开,不可删除
 ```  
+当前`SUSFS`配置使用`dev/dev-susfs/`：管理器分支为`dev`，内置分支为`dev-susfs`，第三段留空使用该分支最新提交。`SUSFS_META`留空启用上游最新补丁，填写提交哈希可固定版本；只有`-1`才关闭`SUSFS`及相关`FakePatch`步骤。
+
  
 - 全自动化获取内核信息及构建信息  
  

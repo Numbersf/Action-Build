@@ -207,8 +207,8 @@ jobs:
         run: |
           git config --global user.name "Numbersf"
           git config --global user.email "263623064@qq.com"
-          mkdir kernel_workspace && cd kernel_workspace
-          git clone https://github.com/Numbersf/Action-Build.git -b KernelSU-Next
+          mkdir -p "$GITHUB_WORKSPACE/kernel_workspace/Action-Build"
+          cp -a "$GITHUB_WORKSPACE/scripts" "$GITHUB_WORKSPACE/patches" "$GITHUB_WORKSPACE/lib" "$GITHUB_WORKSPACE/ZRAM.zip" "$GITHUB_WORKSPACE/kernel_workspace/Action-Build/"
 
       - name: Extract Manifest Info
         id: extract_info
@@ -668,12 +668,24 @@ jobs:
           echo "KSU_BUILTIN_BRANCH=$KSU_BUILTIN_BRANCH" >> $GITHUB_ENV
           [[ -n "$MANUAL_HASH" ]] && echo "手动指定 hash: $MANUAL_HASH" || echo "手动指定 hash: 未启用"
 
-          curl -LSs "https://raw.githubusercontent.com/pershoot/KernelSU-Next/refs/heads/${KSU_MANAGER_BRANCH}/kernel/setup.sh" | bash -s "$KSU_BUILTIN_BRANCH"
+          set -e -o pipefail
+          curl -fLSs "https://raw.githubusercontent.com/pershoot/KernelSU-Next/refs/heads/${KSU_BUILTIN_BRANCH}/kernel/setup.sh" | bash -s "$KSU_BUILTIN_BRANCH"
           cd ./KernelSU-Next
+          ACTUAL_KSU_BRANCH=$(git branch --show-current)
+          if [[ "$ACTUAL_KSU_BRANCH" != "$KSU_BUILTIN_BRANCH" ]]; then
+            echo "::error::KernelSU setup checked out '$ACTUAL_KSU_BRANCH' instead of requested builtin branch '$KSU_BUILTIN_BRANCH'. Verify that this branch exists in pershoot/KernelSU-Next."
+            exit 1
+          fi
 
           if [[ -n "$MANUAL_HASH" ]]; then
             git fetch origin "$KSU_BUILTIN_BRANCH" --depth=50
             git checkout "$MANUAL_HASH"
+          fi
+          if [[ "${{ github.event.inputs.SUSFS_META }}" != "-1" ]]; then
+            if [[ ! -f kernel/Kconfig ]] || ! grep -Eq '^[[:space:]]*config[[:space:]]+KSU_SUSFS([[:space:]]|$)' kernel/Kconfig; then
+              echo "::error::SUSFS is enabled, but KernelSU-Next/kernel/Kconfig does not declare config KSU_SUSFS. Choose a SUSFS-capable builtin branch or set SUSFS_META=-1."
+              exit 1
+            fi
           fi
 
           KSU_VERSION=$(expr $(curl -sI "https://api.github.com/repos/pershoot/KernelSU-Next/commits?sha=${KSU_MANAGER_BRANCH}&per_page=1" | grep -i "link:" | sed -n 's/.*page=\([0-9]*\)>; rel="last".*/\1/p') "+" 30000)

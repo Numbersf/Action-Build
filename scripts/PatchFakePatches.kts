@@ -1,5 +1,8 @@
 #!/usr/bin/env kotlin
 import java.io.File
+import java.nio.file.FileAlreadyExistsException
+import java.nio.file.Files
+import java.util.Properties
 import kotlin.system.exitProcess
 
 /** sed '/pattern/a text' —— 在匹配到的每一行之后插入若干新行 */
@@ -54,23 +57,6 @@ fun File.deleteLine(pattern: Regex) {
     writeText(out.joinToString("\n") + "\n")
 }
 
-/** sed '/pattern/,+N d' —— 删除匹配行及其后 N 行 */
-fun File.deleteLineAndFollowing(pattern: Regex, extraLines: Int) {
-    val out = mutableListOf<String>()
-    var skip = 0
-    for (line in readLines()) {
-        if (skip > 0) {
-            skip--
-            continue
-        }
-        if (pattern.containsMatchIn(line)) {
-            skip = extraLines
-            continue
-        }
-        out.add(line)
-    }
-    writeText(out.joinToString("\n") + "\n")
-}
 
 /** sed '/start/,/end/d' —— 删除从 start 到 end(含首尾)的整段,支持多段 */
 fun File.deleteBlock(start: Regex, end: Regex) {
@@ -112,6 +98,163 @@ fun File.rel(): String = this.path.removePrefix("$workDir/").removePrefix("$work
 fun logApply(file: File, detail: String) = println("[apply]-${file.rel()}: $detail")
 fun logPostfix(file: File, detail: String) = println("[postfix]-${file.rel()}: $detail")
 fun logRevert(file: File, detail: String) = println("[revert]-${file.rel()}: $detail")
+
+data class FakePatchIncludeState(
+    val namespaceHeaderPresent: Boolean,
+    val superHeaderPresent: Boolean
+)
+
+data class IncludeRestorePlan(
+    val file: File,
+    val headerLine: String,
+    val wasPresent: Boolean,
+    val sourceLines: MutableList<String>,
+    val insertAfterIndex: Int?
+)
+
+val fakePatchIncludeJournal = f(".fakepatch-includes.properties")
+val namespaceTraceHookInclude = "#include <trace/hooks/blk.h>"
+val superTraceHookInclude = "#include <trace/hooks/fs.h>"
+val internalHeaderInclude = "#include \"internal.h\""
+
+fun persistFakePatchIncludeState(state: FakePatchIncludeState) {
+    if (fakePatchIncludeJournal.exists()) {
+        error("Pending fake-patch include journal already exists: ${fakePatchIncludeJournal.path}")
+    }
+    val workRoot = File(workDir)
+    if (!workRoot.isDirectory) {
+        error("Cannot persist fake-patch include journal: work directory does not exist: ${workRoot.path}")
+    }
+
+    val properties = Properties().apply {
+        setProperty("version", "1")
+        setProperty("namespaceHeaderPresent", state.namespaceHeaderPresent.toString())
+        setProperty("superHeaderPresent", state.superHeaderPresent.toString())
+    }
+    val temporaryJournal = Files.createTempFile(workRoot.toPath(), ".fakepatch-includes-", ".tmp")
+    try {
+        Files.newOutputStream(temporaryJournal).use { properties.store(it, "Fake patch include state") }
+        try {
+            Files.move(temporaryJournal, fakePatchIncludeJournal.toPath())
+        } catch (e: FileAlreadyExistsException) {
+            error("Pending fake-patch include journal already exists: ${fakePatchIncludeJournal.path}")
+        }
+    } finally {
+        Files.deleteIfExists(temporaryJournal)
+    }
+}
+
+fun readFakePatchIncludeState(): FakePatchIncludeState {
+    if (!fakePatchIncludeJournal.isFile) {
+        error("Cannot safely revert: fake-patch include journal is missing or not a file: ${fakePatchIncludeJournal.path}")
+    }
+    val properties = Properties()
+    fakePatchIncludeJournal.inputStream().use { properties.load(it) }
+    val expectedKeys = setOf("version", "namespaceHeaderPresent", "superHeaderPresent")
+    if (properties.stringPropertyNames() != expectedKeys || properties.getProperty("version") != "1") {
+        error("Cannot safely revert: fake-patch include journal is invalid or overwritten: ${fakePatchIncludeJournal.path}")
+    }
+    fun readBoolean(key: String): Boolean = when (properties.getProperty(key)) {
+        "true" -> true
+        "false" -> false
+        else -> error("Cannot safely revert: invalid '$key' in fake-patch include journal: ${fakePatchIncludeJournal.path}")
+    }
+    return FakePatchIncludeState(
+        namespaceHeaderPresent = readBoolean("namespaceHeaderPresent"),
+        superHeaderPresent = readBoolean("superHeaderPresent")
+    )
+}
+
+fun File.writeSourceLines(lines: List<String>) {
+    writeText(lines.joinToString("\n") + "\n")
+}
+
+fun prepareIncludeRestore(
+    file: File,
+    headerLine: String,
+    wasPresent: Boolean,
+    requiredHeaderPath: String
+): IncludeRestorePlan {
+    if (!file.isFile) error("Cannot safely revert: source file is missing: ${file.path}")
+    val sourceLines = file.readLines().toMutableList()
+    if (!wasPresent) return IncludeRestorePlan(file, headerLine, false, sourceLines, null)
+    val requiredHeader = f(requiredHeaderPath)
+    if (!requiredHeader.isFile) {
+        error("Cannot safely revert original $headerLine: required header file is missing: ${requiredHeader.path}")
+    }
+    if (sourceLines.any { it == headerLine }) {
+        return IncludeRestorePlan(file, headerLine, true, sourceLines, null)
+    }
+    val anchorIndexes = sourceLines.indices.filter { sourceLines[it] == internalHeaderInclude }
+    if (anchorIndexes.size != 1) {
+        error("Cannot safely restore $headerLine in ${file.path}: expected exactly one $internalHeaderInclude anchor")
+    }
+    return IncludeRestorePlan(file, headerLine, true, sourceLines, anchorIndexes.single())
+}
+
+fun applyAndroid14IncludeWorkaround() {
+    if (fakePatchIncludeJournal.exists()) {
+        error("Pending fake-patch include journal already exists: ${fakePatchIncludeJournal.path}")
+    }
+    val namespace = f("fs/namespace.c")
+    val superC = f("fs/super.c")
+    if (!namespace.isFile) error("Cannot apply fake-patch include workaround: source file is missing: ${namespace.path}")
+    if (!superC.isFile) error("Cannot apply fake-patch include workaround: source file is missing: ${superC.path}")
+    val namespaceLines = namespace.readLines()
+    val superLines = superC.readLines()
+    val state = FakePatchIncludeState(
+        namespaceHeaderPresent = namespaceLines.any { it == namespaceTraceHookInclude },
+        superHeaderPresent = superLines.any { it == superTraceHookInclude }
+    )
+
+    persistFakePatchIncludeState(state)
+    if (state.namespaceHeaderPresent) {
+        namespace.writeSourceLines(namespaceLines.filterNot { it == namespaceTraceHookInclude })
+        logApply(namespace, "removed original $namespaceTraceHookInclude")
+    } else {
+        logApply(namespace, "left $namespaceTraceHookInclude absent because it was not present on the original baseline")
+    }
+    if (state.superHeaderPresent) {
+        superC.writeSourceLines(superLines.filterNot { it == superTraceHookInclude })
+        logApply(superC, "removed original $superTraceHookInclude")
+    } else {
+        logApply(superC, "left $superTraceHookInclude absent because it was not present on the original baseline")
+    }
+}
+
+fun revertAndroid14Includes() {
+    val state = readFakePatchIncludeState()
+    val plans = listOf(
+        prepareIncludeRestore(
+            f("fs/namespace.c"),
+            namespaceTraceHookInclude,
+            state.namespaceHeaderPresent,
+            "include/trace/hooks/blk.h"
+        ),
+        prepareIncludeRestore(
+            f("fs/super.c"),
+            superTraceHookInclude,
+            state.superHeaderPresent,
+            "include/trace/hooks/fs.h"
+        )
+    )
+
+    for (plan in plans) {
+        val insertionIndex = plan.insertAfterIndex
+        when {
+            !plan.wasPresent ->
+                logRevert(plan.file, "did not add ${plan.headerLine} because it was absent on the original baseline")
+            insertionIndex == null ->
+                logRevert(plan.file, "kept ${plan.headerLine} already present; did not add a duplicate")
+            else -> {
+                plan.sourceLines.add(insertionIndex + 1, plan.headerLine)
+                plan.file.writeSourceLines(plan.sourceLines)
+                logRevert(plan.file, "restored original ${plan.headerLine} after $internalHeaderInclude")
+            }
+        }
+    }
+    Files.delete(fakePatchIncludeJournal.toPath())
+}
 
 val fdinfoCommentStart = Regex("""^[ \t]*/\*$""")
 val fdinfoCommentEnd = Regex("""^[ \t]*u32 mask = mark->mask & IN_ALL_EVENTS;$""")
@@ -346,13 +489,7 @@ fun apply() {
             logApply(base, "added #include <linux/dma-buf.h> directly after #include <linux/cpufreq_times.h>")
         }
         if (sublevel >= 157) {
-            val namespace = f("fs/namespace.c")
-            namespace.deleteLine(Regex("""^#include <trace/hooks/blk\.h>$"""))
-            logApply(namespace, "removed #include <trace/hooks/blk.h>")
-
-            val superC = f("fs/super.c")
-            superC.deleteLineAndFollowing(Regex("""^#include <trace/hooks/fs\.h>$"""), 1)
-            logApply(superC, "removed #include <trace/hooks/fs.h>")
+            applyAndroid14IncludeWorkaround()
         }
     }
 
@@ -469,19 +606,7 @@ fun revert() {
             logRevert(base, "removed #include <linux/dma-buf.h>")
         }
         if (sublevel >= 157) {
-            val namespace = f("fs/namespace.c")
-            namespace.insertAfter(
-                Regex("""^#include "internal\.h"$"""),
-                "#include <trace/hooks/blk.h>"
-            )
-            logRevert(namespace, "restored #include <trace/hooks/blk.h> directly after #include \"internal.h\"")
-
-            val superC = f("fs/super.c")
-            superC.insertAfter(
-                Regex("""^#include "internal\.h"$"""),
-                "#include <trace/hooks/fs.h>"
-            )
-            logRevert(superC, "restored #include <trace/hooks/fs.h> directly after #include \"internal.h\"")
+            revertAndroid14Includes()
         }
     }
 
