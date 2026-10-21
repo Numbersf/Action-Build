@@ -1060,6 +1060,7 @@ jobs:
           # DROID_SPACES配置*
           if [ "${{ github.event.inputs.DROID_SPACES }}" = "true" ]; then
             set_config "CONFIG_NTSYNC=y"
+            set_config "CONFIG_MACVLAN=y"
             set_config "CONFIG_SYSVIPC=y"
             set_config "CONFIG_DEVTMPFS=y"
             set_config "CONFIG_PID_NS=y"
