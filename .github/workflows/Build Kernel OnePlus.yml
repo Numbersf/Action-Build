@@ -1172,7 +1172,126 @@ jobs:
         run: |
           echo "Disabling GPUEB for MTK kernel 5.10"
           sed -i '/obj-y.*gpueb/d' kernel_workspace/kernel-5.10/drivers/gpu/mediatek/Makefile
+          
+      - name: Auto-fix SUSFS patch conflicts
+        if: ${{ github.event.inputs.SUSFS_META != '-1' }}
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
 
+          root = Path("kernel_workspace/kernel_platform/common")
+          rejects = {p.relative_to(root).as_posix(): p for p in root.rglob("*.rej")}
+          known = {"fs/exec.c.rej", "fs/proc/task_mmu.c.rej"}
+
+          if set(rejects) - known:
+              raise SystemExit(f"Unknown patch rejections: {sorted(set(rejects) - known)}")
+
+          for name, count, marker in (
+              ("fs/exec.c.rej", 1, "+#include <linux/susfs_def.h>"),
+              ("fs/proc/task_mmu.c.rej", 3, "+bypass_orig_flow:"),
+          ):
+              if name in rejects:
+                  content = rejects[name].read_text()
+                  if len(re.findall(r"(?m)^@@ ", content)) != count or marker not in content:
+                      raise SystemExit(f"Unrecognized rejected hunks in {name}")
+
+          if not (root / "include/linux/susfs_def.h").is_file():
+              raise SystemExit("SUSFS header missing")
+
+          exec_file = root / "fs/exec.c"
+          exec_src = exec_file.read_text()
+
+          if "susfs_is_current_proc_no_su(" in exec_src and "#include <linux/susfs_def.h>" not in exec_src:
+              needle = "#include <linux/uaccess.h>"
+              if exec_src.count(needle) != 1:
+                  raise SystemExit("Unknown fs/exec.c include layout")
+              exec_src = exec_src.replace(
+                  needle,
+                  "#ifdef CONFIG_KSU_SUSFS\n#include <linux/susfs_def.h>\n#endif\n\n" + needle,
+                  1
+              )
+
+          mmu_file = root / "fs/proc/task_mmu.c"
+          mmu_src = mmu_file.read_text()
+
+          if "fs/proc/task_mmu.c.rej" in rejects:
+              show = "static int show_smap(struct seq_file *m, void *v)\n"
+              roll = "static int show_smaps_rollup(struct seq_file *m, void *v)\n"
+
+              if mmu_src.count(show) != 1 or mmu_src.count(roll) != 1:
+                  raise SystemExit("Unknown task_mmu.c function layout")
+
+              if "static inline bool susfs_hide_smap_vma(" not in mmu_src:
+                  helper = (
+                      "static inline bool susfs_hide_smap_vma(struct vm_area_struct *vma)\n"
+                      "{\n#ifdef CONFIG_KSU_SUSFS_SUS_MAP\n"
+                      "\treturn vma->vm_file &&\n"
+                      "\t\tSUSFS_IS_INODE_SUS_MAP(file_inode(vma->vm_file));\n"
+                      "#else\n\treturn false;\n#endif\n}\n\n"
+                  )
+                  mmu_src = mmu_src.replace(show, helper + show, 1)
+
+              a, b = mmu_src.index(show), mmu_src.index(roll)
+              smap = mmu_src[a:b]
+
+              if "if (susfs_hide_smap_vma(vma))" not in smap:
+                  anchors = [
+                      x for x in (
+                          "\tif (!vma_pages(vma))\n",
+                          "\tif (!vma_data_pages(vma))\n"
+                      ) if smap.count(x) == 1
+                  ]
+
+                  if len(anchors) != 1:
+                      raise SystemExit("Unknown show_smap layout")
+
+                  smap = smap.replace(
+                      anchors[0],
+                      "\tif (susfs_hide_smap_vma(vma))\n\t\treturn 0;\n\n" + anchors[0],
+                      1
+                  )
+                  mmu_src = mmu_src[:a] + smap + mmu_src[b:]
+
+              b = mmu_src.index(roll)
+              end = mmu_src.index("\nempty_set:", b)
+              section = mmu_src[b:end]
+
+              if "if (!susfs_hide_smap_vma(vma))" not in section:
+                  pattern = re.compile(
+                      r"(?m)^(\t+)(smap_gather_stats\(vma, &mss, (?:0|last_vma_end)\);)$"
+                  )
+
+                  if len(pattern.findall(section)) != 3:
+                      raise SystemExit("Unknown smaps_rollup VMA iterator layout")
+
+                  section = pattern.sub(
+                      lambda m: (
+                          f"{m[1]}if (!susfs_hide_smap_vma(vma))\n"
+                          f"{m[1]}\t{m[2]}"
+                      ),
+                      section
+                  )
+                  mmu_src = mmu_src[:b] + section + mmu_src[end:]
+
+              if mmu_src[
+                  mmu_src.index(roll):
+                  mmu_src.index("\nempty_set:", mmu_src.index(roll))
+              ].count("if (!susfs_hide_smap_vma(vma))") != 3:
+                  raise SystemExit("smaps_rollup repair did not validate")
+
+          if exec_src != exec_file.read_text():
+              exec_file.write_text(exec_src)
+
+          if mmu_src != mmu_file.read_text():
+              mmu_file.write_text(mmu_src)
+
+          for rej in rejects.values():
+              rej.rename(rej.with_name(rej.name + ".resolved"))
+
+          print(f"SUSFS repair complete; {len(rejects)} known reject file(s) resolved")
+          PY
+          
       - name: Fix libbpf Clang compilation errors
         if: ${{ github.event.inputs.FAST_BUILD == 'true' }}
         run: |
