@@ -1173,6 +1173,17 @@ jobs:
           echo "Disabling GPUEB for MTK kernel 5.10"
           sed -i '/obj-y.*gpueb/d' kernel_workspace/kernel-5.10/drivers/gpu/mediatek/Makefile
 
+      - name: Fix libbpf Clang compilation errors
+        if: ${{ github.event.inputs.FAST_BUILD == 'true' }}
+        run: |
+          src=kernel_workspace/kernel_platform/common/tools/lib/bpf/libbpf.c
+          if [[ -f "$src" ]]; then
+            sed -i \
+              -e '/^static int kallsyms_cb(/,/^}/s/^\([[:space:]]*\)char \*res;$/\1const char *res;/' \
+              -e '/for (s = search_paths\[i\]/,+5 s/^\([[:space:]]*\)char \*next_path;$/\1const char *next_path;/' \
+              "$src"
+          fi
+
       - name: Build Kernel FAST
         if: ${{ github.event.inputs.FAST_BUILD == 'true' }}
         id: fast_build
