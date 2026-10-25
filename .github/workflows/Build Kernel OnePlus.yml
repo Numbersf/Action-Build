@@ -1156,6 +1156,16 @@ jobs:
           echo "Disabling GPUEB for MTK kernel 5.10"
           sed -i '/obj-y.*gpueb/d' kernel_workspace/kernel-5.10/drivers/gpu/mediatek/Makefile
 
+      - name: Fix libbpf for new glibc
+        run: |
+          cd kernel_workspace/kernel_platform/common
+          f="./tools/lib/bpf/libbpf.c"
+          if [ -f "$f" ]; then
+            sed -i -E 's/(\bres = )strstr\(sym_name, "\.llvm\."\)/\1(char *)strstr(sym_name, ".llvm.")/' "$f"
+            sed -i -E 's/(\bnext_path = )strchr\(s, '"'"':'"'"'\)/\1(char *)strchr(s, '"'"':'"'"')/' "$f"
+            grep -nE '\(char \*\)(strstr|strchr)' "$f" || echo "✅ 匹配失败，当前云控ubuntu版本无需此操作"
+          fi
+
       - name: Build Kernel FAST
         if: ${{ github.event.inputs.FAST_BUILD == 'true' }}
         id: fast_build
