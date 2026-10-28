@@ -104,7 +104,7 @@ fun File.replaceWholeLine(oldLine: String, newLine: String) {
 
 val kmi = System.getenv("KMI") ?: ""
 val sublevel = (System.getenv("SUBLEVEL") ?: "0").toIntOrNull() ?: 0
-val mode = args.getOrNull(0) ?: "apply" // apply | postfix | revert
+val mode = args.getOrNull(0) ?: "apply" // apply | context | postfix | revert
 val workDir = args.getOrNull(1) ?: "kernel_workspace/kernel_platform/common"
 
 fun f(relPath: String) = File(workDir, relPath)
@@ -112,9 +112,8 @@ fun File.rel(): String = this.path.removePrefix("$workDir/").removePrefix("$work
 fun logApply(file: File, detail: String) = println("[apply]-${file.rel()}: $detail")
 fun logPostfix(file: File, detail: String) = println("[postfix]-${file.rel()}: $detail")
 fun logRevert(file: File, detail: String) = println("[revert]-${file.rel()}: $detail")
+fun logContext(file: File, detail: String) = println("[context]-${file.rel()}: $detail")
 
-val namespaceBlkMarker: File =
-    (File(workDir).absoluteFile.parentFile ?: File(workDir).absoluteFile).resolve(".fake_namespace_blk")
 val fdinfoCommentStart = Regex("""^[ \t]*/\*$""")
 val fdinfoCommentEnd = Regex("""^[ \t]*u32 mask = mark->mask & IN_ALL_EVENTS;$""")
 
@@ -195,6 +194,108 @@ fun revertAndroid15VmaBlock(taskMmu: File, namespace: File) {
     logRevert(taskMmu, "removed 'unsigned int nr_subpages = __PAGE_SIZE / PAGE_SIZE;' declaration")
     taskMmu.deleteLine(Regex("""pagemap_entry_t \*res = NULL;"""))
     logRevert(taskMmu, "removed 'pagemap_entry_t *res = NULL;' declaration")
+}
+
+// context 模式:自动补回 SUSFS 补丁 hunk #1 期望、但 GKI 源码里已被 Google 删掉的行
+val traceHookInclude = Regex("""^#include\s+(<trace/hooks/[^>]+>)""")
+val anyInclude = Regex("""^#include\s+([<"][^>"]+[>"])""")
+
+fun firstHunkContextIncludes(hunk: List<String>): List<String> =
+    hunk.filter { it.firstOrNull() == ' ' }
+        .mapNotNull { anyInclude.find(it.substring(1).trim())?.groupValues?.get(1) }
+fun parsePatchContext(patchLines: List<String>): Map<String, List<String>> {
+    val files = LinkedHashMap<String, List<String>>()
+    var cur: String? = null
+    var hunk = mutableListOf<String>()
+    var inFirst = false
+
+    fun flush() {
+        val c = cur
+        if (c != null && inFirst) {
+            val incs = firstHunkContextIncludes(hunk)
+            if (incs.isNotEmpty()) files[c] = incs
+        }
+        hunk = mutableListOf()
+        inFirst = false
+    }
+
+    for (line in patchLines) {
+        if (line.startsWith("diff --git ")) {
+            flush()
+            cur = Regex("""^diff --git a/(\S+) b/""").find(line)?.groupValues?.get(1)
+            continue
+        }
+        if (line.startsWith("@@")) {
+            if (inFirst) {
+                flush()
+                cur = null
+                continue
+            }
+            inFirst = true
+            continue
+        }
+        if (inFirst) hunk.add(line)
+    }
+    flush()
+    return files
+}
+
+// 树里已不存在的 trace hook 头文件:建一个空桩
+fun ensureContextStub(inc: String): File? {
+    val rel = inc.trim('<', '>')
+    val header = File(workDir, "include/$rel")
+    if (header.exists()) return null
+    header.parentFile.mkdirs()
+    val guard = "_SUSFS_CONTEXT_STUB_" + rel.replace(Regex("""\W"""), "_").uppercase()
+    header.writeText(
+        "/* Stub created by PatchFakePatches.\n" +
+        " * The SUSFS patch lists #include <$rel> as hunk context only; this\n" +
+        " * GKI sublevel no longer ships the header. No symbols are used. */\n" +
+        "#ifndef $guard\n#define $guard\n#endif\n"
+    )
+    return header
+}
+
+fun restoreContext(patch: File) {
+    if (!patch.exists()) {
+        println("[context] patch not found: ${patch.path}")
+        exitProcess(2)
+    }
+    val plan = parsePatchContext(patch.readLines())
+    var touched = false
+
+    for ((rel, includes) in plan) {
+        if (includes.none { traceHookInclude.containsMatchIn("#include $it") }) continue
+        val target = f(rel)
+        if (!target.exists()) continue
+
+        val lines = target.readLines().toMutableList()
+        val present = lines.map { it.trim() }.toMutableList()
+        var changed = false
+        var cursor = 0
+
+        for (inc in includes) {
+            val want = "#include $inc"
+            val found = present.subList(cursor, present.size).indexOf(want)
+            if (found >= 0) {
+                cursor += found + 1
+                continue
+            }
+            if (!traceHookInclude.containsMatchIn(want)) continue // 只补 trace/hooks 这一类
+
+            lines.add(cursor, want)
+            present.add(cursor, want)
+            logContext(target, "restored missing patch context: $want")
+            ensureContextStub(inc)?.let { logContext(it, "created empty stub header for context-only include $inc") }
+            cursor++
+            changed = true
+        }
+        if (changed) {
+            target.writeText(lines.joinToString("\n") + "\n")
+            touched = true
+        }
+    }
+    if (!touched) println("[context] already complete, nothing to restore")
 }
 
 /** 兜底修复 */
@@ -311,6 +412,12 @@ fun apply() {
             )
             logApply(openC, "added #include <linux/mnt_idmapping.h> directly after #include <linux/compat.h>")
 
+            val idmap = f("include/linux/mnt_idmapping.h")
+            if (!idmap.exists()) {
+                idmap.writeText("/* Stub: mnt idmap helpers live in linux/fs.h on this sublevel. */\n")
+                logApply(idmap, "stubbed missing include/linux/mnt_idmapping.h")
+            }
+
             applyFdinfo(f("fs/notify/fdinfo.c"))
         }
         if (sublevel >= 123) {
@@ -318,30 +425,9 @@ fun apply() {
             memory.deleteLine(Regex("""#include <linux/swap_slots\.h>"""))
             logApply(memory, "removed #include <linux/swap_slots.h> (now provided elsewhere on this baseline)")
         }
-        if (sublevel >= 197) {
-            val namespace = f("fs/namespace.c")
-            namespace.deleteLine(Regex("""^#include <trace/hooks/blk\.h>$"""))
-            logApply(namespace, "removed #include <trace/hooks/blk.h>")
-        }
-        if (sublevel >= 206) {
-            val taskMmu = f("fs/proc/task_mmu.c")
-            taskMmu.deleteLine(Regex("""^#include <trace/hooks/mm\.h>$"""))
-            logApply(taskMmu, "removed #include <trace/hooks/mm.h>")
-        }
     }
 
     if (kmi == "android14-6.1") {
-        if (sublevel < 157) {
-            val namespace = f("fs/namespace.c")
-            if (namespace.exists() && !namespace.readText().contains("#include <trace/hooks/blk.h>")) {
-                namespace.insertAfterFirst(
-                    Regex("""^#include "internal\.h"$"""),
-                    "#include <trace/hooks/blk.h>"
-                )
-                namespaceBlkMarker.createNewFile()
-                logApply(namespace, "added #include <trace/hooks/blk.h> directly after #include \"internal.h\"")
-            }
-        }
         if (sublevel <= 25) {
             val base = f("fs/proc/base.c")
             base.insertAfter(
@@ -357,15 +443,6 @@ fun apply() {
                 "#include <linux/dma-buf.h>"
             )
             logApply(base, "added #include <linux/dma-buf.h> directly after #include <linux/cpufreq_times.h>")
-        }
-        if (sublevel >= 157) {
-            val namespace = f("fs/namespace.c")
-            namespace.deleteLine(Regex("""^#include <trace/hooks/blk\.h>$"""))
-            logApply(namespace, "removed #include <trace/hooks/blk.h>")
-
-            val superC = f("fs/super.c")
-            superC.deleteLineAndFollowing(Regex("""^#include <trace/hooks/fs\.h>$"""), 1)
-            logApply(superC, "removed #include <trace/hooks/fs.h>")
         }
     }
 
@@ -452,22 +529,6 @@ fun revert() {
             )
             logRevert(memory, "restored #include <linux/swap_slots.h> directly before #ifdef CONFIG_KSU_SUSFS_SUS_MAP")
         }
-        if (sublevel >= 197) {
-            val namespace = f("fs/namespace.c")
-            namespace.insertAfter(
-                Regex("""^#include "internal\.h"$"""),
-                "#include <trace/hooks/blk.h>"
-            )
-            logRevert(namespace, "restored #include <trace/hooks/blk.h> directly after #include \"internal.h\"")
-        }
-        if (sublevel >= 206) {
-            val taskMmu = f("fs/proc/task_mmu.c")
-            taskMmu.insertAfter(
-                Regex("""^#include <linux/pkeys\.h>$"""),
-                "#include <trace/hooks/mm.h>"
-            )
-            logRevert(taskMmu, "restored #include <trace/hooks/mm.h> directly after #include <linux/pkeys.h>")
-        }
     }
 
     if (kmi == "android14-6.1") {
@@ -480,27 +541,6 @@ fun revert() {
             val base = f("fs/proc/base.c")
             base.deleteLine(Regex("""^#include <linux/dma-buf\.h>$"""))
             logRevert(base, "removed #include <linux/dma-buf.h>")
-        }
-        if (sublevel >= 157) {
-            val namespace = f("fs/namespace.c")
-            namespace.insertAfter(
-                Regex("""^#include "internal\.h"$"""),
-                "#include <trace/hooks/blk.h>"
-            )
-            logRevert(namespace, "restored #include <trace/hooks/blk.h> directly after #include \"internal.h\"")
-
-            val superC = f("fs/super.c")
-            superC.insertAfter(
-                Regex("""^#include "internal\.h"$"""),
-                "#include <trace/hooks/fs.h>"
-            )
-            logRevert(superC, "restored #include <trace/hooks/fs.h> directly after #include \"internal.h\"")
-        }
-        if (sublevel < 157 && namespaceBlkMarker.exists()) {
-            val namespace = f("fs/namespace.c")
-            namespace.deleteLine(Regex("""^#include <trace/hooks/blk\.h>$"""))
-            namespaceBlkMarker.delete()
-            logRevert(namespace, "removed #include <trace/hooks/blk.h>")
         }
     }
 
@@ -536,10 +576,14 @@ fun revert() {
 
 when (mode) {
     "apply" -> apply()
+    "context" -> restoreContext(File(args.getOrNull(2) ?: run {
+        println("Usage: kotlin PatchFakePatches.kts context <workDir> <patchFile>")
+        exitProcess(1)
+    }))
     "postfix" -> postfix()
     "revert" -> revert()
     else -> {
-        println("Usage: kotlin PatchFakePatches.main.kts <apply|postfix|revert> [workDir]")
+        println("Usage: kotlin PatchFakePatches.kts <apply|context|postfix|revert> [workDir] [patchFile]")
         exitProcess(1)
     }
 }
