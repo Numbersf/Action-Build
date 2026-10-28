@@ -113,6 +113,8 @@ fun logApply(file: File, detail: String) = println("[apply]-${file.rel()}: $deta
 fun logPostfix(file: File, detail: String) = println("[postfix]-${file.rel()}: $detail")
 fun logRevert(file: File, detail: String) = println("[revert]-${file.rel()}: $detail")
 
+val namespaceBlkMarker: File =
+    (File(workDir).absoluteFile.parentFile ?: File(workDir).absoluteFile).resolve(".fake_namespace_blk")
 val fdinfoCommentStart = Regex("""^[ \t]*/\*$""")
 val fdinfoCommentEnd = Regex("""^[ \t]*u32 mask = mark->mask & IN_ALL_EVENTS;$""")
 
@@ -329,15 +331,16 @@ fun apply() {
     }
 
     if (kmi == "android14-6.1") {
-        // 部分厂商源码的 namespace.c 本身没有 trace/hooks/blk.h，susfs 补丁上下文对不上
-        val namespace = f("fs/namespace.c")
-        if (sublevel < 157 && !namespace.readText().contains("#include <trace/hooks/blk.h>")) {
-            namespace.insertAfter(
-                Regex("""^#include "internal\.h"$"""),
-                "#include <trace/hooks/blk.h>"
-            )
-            File(workDir, ".fake_namespace_blk").createNewFile()
-            logApply(namespace, "added #include <trace/hooks/blk.h> directly after #include \"internal.h\"")
+        if (sublevel < 157) {
+            val namespace = f("fs/namespace.c")
+            if (namespace.exists() && !namespace.readText().contains("#include <trace/hooks/blk.h>")) {
+                namespace.insertAfterFirst(
+                    Regex("""^#include "internal\.h"$"""),
+                    "#include <trace/hooks/blk.h>"
+                )
+                namespaceBlkMarker.createNewFile()
+                logApply(namespace, "added #include <trace/hooks/blk.h> directly after #include \"internal.h\"")
+            }
         }
         if (sublevel <= 25) {
             val base = f("fs/proc/base.c")
@@ -468,13 +471,6 @@ fun revert() {
     }
 
     if (kmi == "android14-6.1") {
-        val blkMarker = File(workDir, ".fake_namespace_blk")
-        if (blkMarker.exists()) {
-            val namespace = f("fs/namespace.c")
-            namespace.deleteLine(Regex("""^#include <trace/hooks/blk\.h>$"""))
-            blkMarker.delete()
-            logRevert(namespace, "removed #include <trace/hooks/blk.h>")
-        }
         if (sublevel <= 25) {
             val base = f("fs/proc/base.c")
             base.deleteLine(Regex("""^#include <trace/hooks/sched\.h>$"""))
@@ -499,6 +495,12 @@ fun revert() {
                 "#include <trace/hooks/fs.h>"
             )
             logRevert(superC, "restored #include <trace/hooks/fs.h> directly after #include \"internal.h\"")
+        }
+        if (sublevel < 157 && namespaceBlkMarker.exists()) {
+            val namespace = f("fs/namespace.c")
+            namespace.deleteLine(Regex("""^#include <trace/hooks/blk\.h>$"""))
+            namespaceBlkMarker.delete()
+            logRevert(namespace, "removed #include <trace/hooks/blk.h>")
         }
     }
 
