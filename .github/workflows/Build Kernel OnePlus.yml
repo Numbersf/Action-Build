@@ -6,65 +6,65 @@ on:
         type: choice
         description: "配置文件//Configuration file"
         required: true
-        default: oneplus_15
+        default: "oneplus_15 | 一加 15"
         options:
-          - oneplus_nord_n30_se_5g_v
-          - oneplus_10r_v
-          - oneplus_nord_3_b
-          - oneplus_ace_v
-          - oneplus_ace_race_v
-          - oneplus_10_pro_b
-          - oneplus_10t_v
-          - oneplus_11r_b
-          - oneplus_ace2_b
-          - oneplus_pad_lite_b
-          - oneplus_pad_mt6983_b
-          - oneplus_ace_2v_b
-          - oneplus_ace_pro_v
-          - oneplus_11_b
-          - oneplus_12r_b
-          - oneplus_ace2_pro_b
-          - oneplus_ace3_b
-          - oneplus_open_b
-          - oneplus_nord_ce4_b
-          - oneplus_n6_b
-          - oneplus_n6x_b
-          - oneplus_12_b
-          - oneplus_pad_go_2_b
-          - oneplus_turbo_6x_b
-          - oneplus_nord_ce4_lite_5g_b
-          - oneplus_nord_ce6
-          - oneplus_nord_ce6_lite_b
-          - oneplus_turbo_6v
-          - oneplus_nord_4_b
-          - oneplus_ace_3v_b
-          - oneplus_pad_mt6897_b
-          - oneplus_13r_b
-          - oneplus_ace3_pro_b
-          - oneplus_ace5_b
-          - oneplus_pad_pro_b
-          - oneplus_pad2_b
-          - oneplus_nord_ce5_b
-          - oneplus_nord_5_b
-          - oneplus_ace5_pro_b
-          - oneplus_13_b
-          - oneplus_13t_b
-          - oneplus_13s_b
-          - oneplus_pad_2_pro_b
-          - oneplus_pad_3_b
-          - oneplus_ace5_race_b
-          - oneplus_ace5_ultra_b
-          - oneplus_pad2_mt6991_b
-          - oneplus_ace_6
-          - oneplus_turbo_6
-          - oneplus_nord_6
-          - oneplus_ace_6t
-          - oneplus_15r
-          - oneplus_15
-          - oneplus_15t
-          - oneplus_pad_3_pro
-          - oneplus_pad_4
-          - oneplus_ace6_ultra
+          - "oneplus_nord_n30_se_5g_v | 一加 Nord N30 SE 5G（海外）"
+          - "oneplus_10r_v | 一加 10R（海外，对应国行 Ace）"
+          - "oneplus_nord_3_b | 一加 Nord 3（海外，对应国行 Ace 2V）"
+          - "oneplus_ace_v | 一加 Ace"
+          - "oneplus_ace_race_v | 一加 Ace 竞速版"
+          - "oneplus_10_pro_b | 一加 10 Pro"
+          - "oneplus_10t_v | 一加 10T（海外，对应国行 Ace Pro）"
+          - "oneplus_11r_b | 一加 11R（海外，对应国行 Ace 2）"
+          - "oneplus_ace2_b | 一加 Ace 2"
+          - "oneplus_pad_lite_b | 一加平板 Lite（海外）"
+          - "oneplus_pad_mt6983_b | 一加平板（初代，天玑9000）"
+          - "oneplus_ace_2v_b | 一加 Ace 2V"
+          - "oneplus_ace_pro_v | 一加 Ace Pro"
+          - "oneplus_11_b | 一加 11"
+          - "oneplus_12r_b | 一加 12R（海外，对应国行 Ace 3）"
+          - "oneplus_ace2_pro_b | 一加 Ace 2 Pro"
+          - "oneplus_ace3_b | 一加 Ace 3"
+          - "oneplus_open_b | 一加 Open（海外折叠屏）"
+          - "oneplus_nord_ce4_b | 一加 Nord CE4（海外）"
+          - "oneplus_n6_b | 一加 N6（海外）"
+          - "oneplus_n6x_b | 一加 N6x"
+          - "oneplus_12_b | 一加 12"
+          - "oneplus_pad_go_2_b | 一加平板 Go 2"
+          - "oneplus_turbo_6x_b | 一加 Turbo 6X"
+          - "oneplus_nord_ce4_lite_5g_b | 一加 Nord CE4 Lite 5G（海外）"
+          - "oneplus_nord_ce6 | 一加 Nord CE6（海外）"
+          - "oneplus_nord_ce6_lite_b | 一加 Nord CE6 Lite（海外）"
+          - "oneplus_turbo_6v | 一加 Turbo 6V"
+          - "oneplus_nord_4_b | 一加 Nord 4（海外，对应国行 Ace 3V）"
+          - "oneplus_ace_3v_b | 一加 Ace 3V"
+          - "oneplus_pad_mt6897_b | 一加平板（2024，天玑8350）"
+          - "oneplus_13r_b | 一加 13R（海外，对应国行 Ace 5）"
+          - "oneplus_ace3_pro_b | 一加 Ace 3 Pro"
+          - "oneplus_ace5_b | 一加 Ace 5"
+          - "oneplus_pad_pro_b | 一加平板 Pro（国行，骁龙8Gen3）"
+          - "oneplus_pad2_b | 一加平板 2（海外，骁龙8Gen3，对应国行平板 Pro）"
+          - "oneplus_nord_ce5_b | 一加 Nord CE5（海外）"
+          - "oneplus_nord_5_b | 一加 Nord 5（海外）"
+          - "oneplus_ace5_pro_b | 一加 Ace 5 Pro"
+          - "oneplus_13_b | 一加 13"
+          - "oneplus_13t_b | 一加 13T"
+          - "oneplus_13s_b | 一加 13s（海外，对应国行 13T）"
+          - "oneplus_pad_2_pro_b | 一加平板 2 Pro（国行，骁龙8至尊版）"
+          - "oneplus_pad_3_b | 一加平板 3（海外，骁龙8至尊版，对应国行平板 2 Pro）"
+          - "oneplus_ace5_race_b | 一加 Ace 5 竞速版"
+          - "oneplus_ace5_ultra_b | 一加 Ace 5 至尊版"
+          - "oneplus_pad2_mt6991_b | 一加平板 2（国行，天玑9400+）"
+          - "oneplus_ace_6 | 一加 Ace 6"
+          - "oneplus_turbo_6 | 一加 Turbo 6"
+          - "oneplus_nord_6 | 一加 Nord 6（海外）"
+          - "oneplus_ace_6t | 一加 Ace 6T"
+          - "oneplus_15r | 一加 15R（海外）"
+          - "oneplus_15 | 一加 15"
+          - "oneplus_15t | 一加 15T"
+          - "oneplus_pad_3_pro | 一加平板 3 Pro"
+          - "oneplus_pad_4 | 一加平板 4"
+          - "oneplus_ace6_ultra | 一加 Ace 6 至尊版"
       SUSFS_CI:
         type: choice
         description: "SUSFS模块下载调用方向//SUSFS module branch"
@@ -189,6 +189,11 @@ jobs:
       CCACHE_IS_KERNEL_COMPILING: "true"
       CCACHE_MAXSIZE: 5G
     steps:
+      - name: Resolve Device Config
+        env:
+          INPUT_FILE: ${{ github.event.inputs.FILE }}
+        run: echo "FILE=${INPUT_FILE%% *}" >> "$GITHUB_ENV"
+
       - name: Checkout
         uses: actions/checkout@v7
 
@@ -213,7 +218,7 @@ jobs:
       - name: Extract Manifest Info
         id: extract_info
         env:
-          FILE: ${{ github.event.inputs.FILE }}
+          FILE: ${{ env.FILE }}
         run: |
           set -e
           cd "$GITHUB_WORKSPACE"
@@ -331,7 +336,7 @@ jobs:
           echo "Selected CPUD: ${{ env.CPUD }}"
           echo "Selected ANDROID_VERSION: ${{ env.ANDROID_VERSION }}"
           echo "Selected BUILD_METHOD: ${{ env.BUILD_METHOD }}"
-          echo "Selected FILE: ${{ github.event.inputs.FILE }}"
+          echo "Selected FILE: ${{ env.FILE }}"
           echo "Selected SUSFS_CI: ${{ github.event.inputs.SUSFS_CI }}"
           if [ "${{ github.event.inputs.SUSFS_CI }}" != "N/A" ]; then
             echo "::warning title=SUSFS Not Required::当前管理器已自带附加模块，无需启用 SUSFS 模块，强制启用可能导致不开机。"
@@ -372,9 +377,9 @@ jobs:
       - name: Set Cache Environment
         if: ${{ github.event.inputs.BUILD_NOCACHE == 'false' }}
         run: |
-          echo "CCACHE_DIR=$HOME/.ccache_${{ github.event.inputs.FILE }}" >> $GITHUB_ENV
-          mkdir -p "$HOME/.ccache_${{ github.event.inputs.FILE }}"
-          echo "set: $HOME/.ccache_${{ github.event.inputs.FILE }}"
+          echo "CCACHE_DIR=$HOME/.ccache_${{ env.FILE }}" >> $GITHUB_ENV
+          mkdir -p "$HOME/.ccache_${{ env.FILE }}"
+          echo "set: $HOME/.ccache_${{ env.FILE }}"
 
       - name: Fork Check
         run: |
@@ -420,7 +425,7 @@ jobs:
         uses: actions/cache/restore@v5
         with:
           path: ${{ env.CCACHE_DIR }}
-          key: ccache-${{ runner.os }}-${{ github.ref_name }}-${{ github.event.inputs.FILE }}-${{ env.BUILD_METHOD }}-${{ github.event.inputs.FAST_BUILD == 'true' && 'alpha' || 'beta' }}-17.0
+          key: ccache-${{ runner.os }}-${{ github.ref_name }}-${{ env.FILE }}-${{ env.BUILD_METHOD }}-${{ github.event.inputs.FAST_BUILD == 'true' && 'alpha' || 'beta' }}-17.0
 
       - name: Restore ThinLTO Cache
         if: ${{ github.event.inputs.BUILD_NOCACHE == 'false' && github.event.inputs.FAST_BUILD == 'true' }}
@@ -428,7 +433,7 @@ jobs:
         uses: actions/cache/restore@v5
         with:
           path: ${{ github.workspace }}/kernel_workspace/.thinlto-cache
-          key: thinlto-${{ runner.os }}-${{ github.ref_name }}-${{ github.event.inputs.FILE }}-17.0
+          key: thinlto-${{ runner.os }}-${{ github.ref_name }}-${{ env.FILE }}-17.0
 
       - name: Initialize Ccache
         if: ${{ github.event.inputs.BUILD_NOCACHE == 'false' }}
@@ -457,7 +462,7 @@ jobs:
 
       - name: Initialize Repo and Sync
         env:
-          FILE: ${{ github.event.inputs.FILE }}
+          FILE: ${{ env.FILE }}
         run: |
           cd kernel_workspace
           mkdir -p .repo/manifests
@@ -740,7 +745,7 @@ jobs:
 
       - name: Apply Patches SukiSU Ultra
         env:
-          FILE: ${{ github.event.inputs.FILE }}
+          FILE: ${{ env.FILE }}
         run: |
           cd kernel_workspace
           if [ "${{ github.event.inputs.SUSFS_META }}" != "-1" ]; then
@@ -866,7 +871,7 @@ jobs:
 
       - name: Apply DROID_SPACES
         env:
-          FILE: ${{ github.event.inputs.FILE }}
+          FILE: ${{ env.FILE }}
         if: ${{ github.event.inputs.DROID_SPACES == 'true' }}
         run: |
           PATCH_DIR="${GITHUB_WORKSPACE}/kernel_workspace/Action-Build/patches"
@@ -960,7 +965,7 @@ jobs:
 
       - name: Apply SCHED_HMBIRD
         env:
-          FILE: ${{ github.event.inputs.FILE }}
+          FILE: ${{ env.FILE }}
         if: ${{ github.event.inputs.SCHED_HMBIRD == 'true' }}
         run: |
           cd kernel_workspace/kernel_platform/common
@@ -1632,14 +1637,14 @@ jobs:
         uses: actions/cache/save@v5
         with:
           path: ${{ env.CCACHE_DIR }}
-          key: ccache-${{ runner.os }}-${{ github.ref_name }}-${{ github.event.inputs.FILE }}-${{ env.BUILD_METHOD }}-${{ github.event.inputs.FAST_BUILD == 'true' && 'alpha' || 'beta' }}-17.0
+          key: ccache-${{ runner.os }}-${{ github.ref_name }}-${{ env.FILE }}-${{ env.BUILD_METHOD }}-${{ github.event.inputs.FAST_BUILD == 'true' && 'alpha' || 'beta' }}-17.0
 
       - name: Save ThinLTO Cache
         if: ${{ github.event.inputs.BUILD_NOCACHE == 'false' && github.event.inputs.FAST_BUILD == 'true' && steps.cache_size_check.outputs.thinlto_save == 'true' && steps.restore-thinlto.outputs.cache-hit != 'true' }}
         uses: actions/cache/save@v5
         with:
           path: ${{ github.workspace }}/kernel_workspace/.thinlto-cache
-          key: thinlto-${{ runner.os }}-${{ github.ref_name }}-${{ github.event.inputs.FILE }}-17.0
+          key: thinlto-${{ runner.os }}-${{ github.ref_name }}-${{ env.FILE }}-17.0
 
       - name: Post-build Disk Check
         run: df -h
