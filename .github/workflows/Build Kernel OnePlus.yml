@@ -550,6 +550,16 @@ jobs:
             echo "CKERNEL_VERSION=$ORIG_VERSION" >> $GITHUB_ENV
           fi
 
+          # 提示本次源码的内核版本，刷入前需与设备一致
+          if [ "$ORIG_VERSION" != "$NEW_VERSION" ]; then
+            SHOW_VERSION="$ORIG_VERSION（伪装为 $NEW_VERSION）"
+          else
+            SHOW_VERSION="$ORIG_VERSION"
+          fi
+          echo "::notice title=Kernel Version::本次源码内核版本 $SHOW_VERSION，刷入前请确认与设备一致（设置-关于本机-内核版本），不一致可能无法开机//Source kernel version is $SHOW_VERSION. Make sure it matches your device before flashing."
+          echo "### 内核版本 / Kernel version: \`$SHOW_VERSION\`" >> $GITHUB_STEP_SUMMARY
+          echo "刷入前请确认与设备一致（设置-关于本机-内核版本），不一致可能无法开机。//Make sure it matches your device before flashing." >> $GITHUB_STEP_SUMMARY
+
           # 内核版本的数字转换，仅前两位不包含 SUBLEVEL
           echo "KERNEL_SHORT_PATCH_VERSION=$(echo $NEW_VERSION | cut -d. -f1,2 | tr '.' '_')" >> $GITHUB_ENV
 
