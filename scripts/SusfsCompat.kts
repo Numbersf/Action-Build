@@ -104,15 +104,17 @@ fun File.replaceWholeLine(oldLine: String, newLine: String) {
 
 val kmi = System.getenv("KMI") ?: ""
 val sublevel = (System.getenv("SUBLEVEL") ?: "0").toIntOrNull() ?: 0
-val mode = args.getOrNull(0) ?: "apply" // apply | context | postfix | revert
+val mode = args.getOrNull(0) ?: "apply" // apply | postfix | revert
 val workDir = args.getOrNull(1) ?: "kernel_workspace/kernel_platform/common"
 
 fun f(relPath: String) = File(workDir, relPath)
 fun File.rel(): String = this.path.removePrefix("$workDir/").removePrefix("$workDir\\")
-fun logApply(file: File, detail: String) = println("[apply]-${file.rel()}: $detail")
-fun logPostfix(file: File, detail: String) = println("[postfix]-${file.rel()}: $detail")
-fun logRevert(file: File, detail: String) = println("[revert]-${file.rel()}: $detail")
-fun logContext(file: File, detail: String) = println("[context]-${file.rel()}: $detail")
+val useColor = System.getenv("NO_COLOR") == null
+fun tag(name: String, code: String) =
+    if (useColor) "\u001B[${code}m[$name]\u001B[0m" else "[$name]"
+fun logApply(file: File, detail: String) = println("${tag("apply", "31")}-${file.rel()}: $detail")          // 红
+fun logPostfix(file: File, detail: String) = println("${tag("postfix", "38;5;208")}-${file.rel()}: $detail") // 橙
+fun logRevert(file: File, detail: String) = println("${tag("revert", "33")}-${file.rel()}: $detail")         // 黄
 
 val fdinfoCommentStart = Regex("""^[ \t]*/\*$""")
 val fdinfoCommentEnd = Regex("""^[ \t]*u32 mask = mark->mask & IN_ALL_EVENTS;$""")
@@ -174,11 +176,7 @@ fun applyAndroid15VmaBlock(taskMmu: File, namespace: File) {
     taskMmu.writeText(lines.joinToString("\n") + "\n")
     logApply(taskMmu, "opened a new '{ ... }' block by appending '{' to the trailing 'if (vma->vm_end > last_vma_end)' and inserting a closing '}' after the last 'last_vma_end = vma->vm_end;' statement, re-indenting that statement one level deeper")
 
-    // 3) namespace.c: 在 trace/hooks/blk.h 之后插入 trace/hooks/fs.h
-    namespace.insertAfter(Regex("""#include <trace/hooks/blk\.h>"""), "#include <trace/hooks/fs.h>")
-    logApply(namespace, "added #include <trace/hooks/fs.h> directly after #include <trace/hooks/blk.h>")
-
-    // 4) task_mmu.c: 在 "int ret = 0, copied = 0;" 之后插入两行
+    // 3) task_mmu.c: 在 "int ret = 0, copied = 0;" 之后插入两行
     taskMmu.insertAfter(
         Regex("""int ret = 0, copied = 0;"""),
         "\tunsigned int nr_subpages = __PAGE_SIZE / PAGE_SIZE;",
@@ -194,108 +192,6 @@ fun revertAndroid15VmaBlock(taskMmu: File, namespace: File) {
     logRevert(taskMmu, "removed 'unsigned int nr_subpages = __PAGE_SIZE / PAGE_SIZE;' declaration")
     taskMmu.deleteLine(Regex("""pagemap_entry_t \*res = NULL;"""))
     logRevert(taskMmu, "removed 'pagemap_entry_t *res = NULL;' declaration")
-}
-
-// context 模式:自动补回 SUSFS 补丁 hunk #1 期望、但 GKI 源码里已被 Google 删掉的行
-val traceHookInclude = Regex("""^#include\s+(<trace/hooks/[^>]+>)""")
-val anyInclude = Regex("""^#include\s+([<"][^>"]+[>"])""")
-
-fun firstHunkContextIncludes(hunk: List<String>): List<String> =
-    hunk.filter { it.firstOrNull() == ' ' }
-        .mapNotNull { anyInclude.find(it.substring(1).trim())?.groupValues?.get(1) }
-fun parsePatchContext(patchLines: List<String>): Map<String, List<String>> {
-    val files = LinkedHashMap<String, List<String>>()
-    var cur: String? = null
-    var hunk = mutableListOf<String>()
-    var inFirst = false
-
-    fun flush() {
-        val c = cur
-        if (c != null && inFirst) {
-            val incs = firstHunkContextIncludes(hunk)
-            if (incs.isNotEmpty()) files[c] = incs
-        }
-        hunk = mutableListOf()
-        inFirst = false
-    }
-
-    for (line in patchLines) {
-        if (line.startsWith("diff --git ")) {
-            flush()
-            cur = Regex("""^diff --git a/(\S+) b/""").find(line)?.groupValues?.get(1)
-            continue
-        }
-        if (line.startsWith("@@")) {
-            if (inFirst) {
-                flush()
-                cur = null
-                continue
-            }
-            inFirst = true
-            continue
-        }
-        if (inFirst) hunk.add(line)
-    }
-    flush()
-    return files
-}
-
-// 树里已不存在的 trace hook 头文件:建一个空桩
-fun ensureContextStub(inc: String): File? {
-    val rel = inc.trim('<', '>')
-    val header = File(workDir, "include/$rel")
-    if (header.exists()) return null
-    header.parentFile.mkdirs()
-    val guard = "_SUSFS_CONTEXT_STUB_" + rel.replace(Regex("""\W"""), "_").uppercase()
-    header.writeText(
-        "/* Stub created by PatchFakePatches.\n" +
-        " * The SUSFS patch lists #include <$rel> as hunk context only; this\n" +
-        " * GKI sublevel no longer ships the header. No symbols are used. */\n" +
-        "#ifndef $guard\n#define $guard\n#endif\n"
-    )
-    return header
-}
-
-fun restoreContext(patch: File) {
-    if (!patch.exists()) {
-        println("[context] patch not found: ${patch.path}")
-        exitProcess(2)
-    }
-    val plan = parsePatchContext(patch.readLines())
-    var touched = false
-
-    for ((rel, includes) in plan) {
-        if (includes.none { traceHookInclude.containsMatchIn("#include $it") }) continue
-        val target = f(rel)
-        if (!target.exists()) continue
-
-        val lines = target.readLines().toMutableList()
-        val present = lines.map { it.trim() }.toMutableList()
-        var changed = false
-        var cursor = 0
-
-        for (inc in includes) {
-            val want = "#include $inc"
-            val found = present.subList(cursor, present.size).indexOf(want)
-            if (found >= 0) {
-                cursor += found + 1
-                continue
-            }
-            if (!traceHookInclude.containsMatchIn(want)) continue // 只补 trace/hooks 这一类
-
-            lines.add(cursor, want)
-            present.add(cursor, want)
-            logContext(target, "restored missing patch context: $want")
-            ensureContextStub(inc)?.let { logContext(it, "created empty stub header for context-only include $inc") }
-            cursor++
-            changed = true
-        }
-        if (changed) {
-            target.writeText(lines.joinToString("\n") + "\n")
-            touched = true
-        }
-    }
-    if (!touched) println("[context] already complete, nothing to restore")
 }
 
 /** 兜底修复 */
@@ -576,14 +472,10 @@ fun revert() {
 
 when (mode) {
     "apply" -> apply()
-    "context" -> restoreContext(File(args.getOrNull(2) ?: run {
-        println("Usage: kotlin PatchFakePatches.kts context <workDir> <patchFile>")
-        exitProcess(1)
-    }))
     "postfix" -> postfix()
     "revert" -> revert()
     else -> {
-        println("Usage: kotlin PatchFakePatches.kts <apply|context|postfix|revert> [workDir] [patchFile]")
+        println("Usage: kotlin SusfsCompat.kts <apply|postfix|revert> [workDir]")
         exitProcess(1)
     }
 }
