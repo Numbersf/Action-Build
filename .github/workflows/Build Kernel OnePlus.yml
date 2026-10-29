@@ -682,11 +682,6 @@ jobs:
           KSU_GIT_TAG=$(curl -sL "https://api.github.com/repos/KernelSU-Next/KernelSU-Next/tags" | grep -o '"name": *"[^"]*"' | head -n 1 | sed 's/"name": "//;s/"//')
           sed -i "s/KSU_VERSION_TAG_FALLBACK := v0.0.1/KSU_VERSION_TAG_FALLBACK := $KSU_GIT_TAG/g" kernel/Kbuild
 
-      - name: Apply Fake Patches
-        if: ${{ github.event.inputs.SUSFS_META != '-1' }}
-        run: |
-          kotlin "$GITHUB_WORKSPACE/kernel_workspace/Action-Build/scripts/PatchFakePatches.kts" apply "$GITHUB_WORKSPACE/kernel_workspace/kernel_platform/common"
-
       - name: Apply Patches KernelSU Next
         env:
           FILE: ${{ github.event.inputs.FILE }}
@@ -732,6 +727,10 @@ jobs:
 
           cd ./common
 
+          if [ "${{ github.event.inputs.SUSFS_META }}" != "-1" ]; then
+            kotlin "$GITHUB_WORKSPACE/kernel_workspace/Action-Build/scripts/SusfsCompat.kts" apply "$PWD"
+          fi
+
           if [ "$KMI" == "android13-5.15" ] && [ "$SUBLEVEL" -lt 123 ]; then
             echo "修复内核版本为5.15.0~5.15.123仅支持旧版C库造成的一些bug"
             cp "${GITHUB_WORKSPACE}/kernel_workspace/Action-Build/patches/fix_5.15.legacy" ./fix_5.15.legacy.patch
@@ -741,18 +740,17 @@ jobs:
 
           if [ "${{ github.event.inputs.SUSFS_META }}" != "-1" ]; then
             echo "正在打susfs补丁"
-            kotlin "$GITHUB_WORKSPACE/kernel_workspace/Action-Build/scripts/PatchFakePatches.kts" context "$PWD" "$PWD/50_add_susfs_in_gki-${{ env.KANDROID_VERSION }}-${{ env.KERNEL_VERSION }}.patch"
+            kotlin "$GITHUB_WORKSPACE/kernel_workspace/Action-Build/scripts/SusfsContext.kts" "$PWD" "$PWD/50_add_susfs_in_gki-${{ env.KANDROID_VERSION }}-${{ env.KERNEL_VERSION }}.patch"
             patch -p1 < 50_add_susfs_in_gki-${{ env.KANDROID_VERSION }}-${{ env.KERNEL_VERSION }}.patch || true
             echo "susfs_patch完成"
           fi
           source $REJ_CHECKER
           check_rejects .
 
-      - name: Revert and Postfix Fake Patches
-        if: ${{ github.event.inputs.SUSFS_META != '-1' }}
-        run: |
-          kotlin "$GITHUB_WORKSPACE/kernel_workspace/Action-Build/scripts/PatchFakePatches.kts" postfix "$GITHUB_WORKSPACE/kernel_workspace/kernel_platform/common"
-          kotlin "$GITHUB_WORKSPACE/kernel_workspace/Action-Build/scripts/PatchFakePatches.kts" revert "$GITHUB_WORKSPACE/kernel_workspace/kernel_platform/common"
+          if [ "${{ github.event.inputs.SUSFS_META }}" != "-1" ]; then
+            kotlin "$GITHUB_WORKSPACE/kernel_workspace/Action-Build/scripts/SusfsCompat.kts" postfix "$PWD"
+            kotlin "$GITHUB_WORKSPACE/kernel_workspace/Action-Build/scripts/SusfsCompat.kts" revert "$PWD"
+          fi
 
       # OGKI转换GKI，无需修改 dtbo 开机
       - name: Apply Convert HMBIRD_OGKI to HMBIRD_GKI
