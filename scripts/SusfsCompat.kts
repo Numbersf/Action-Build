@@ -109,9 +109,12 @@ val workDir = args.getOrNull(1) ?: "kernel_workspace/kernel_platform/common"
 
 fun f(relPath: String) = File(workDir, relPath)
 fun File.rel(): String = this.path.removePrefix("$workDir/").removePrefix("$workDir\\")
-fun logApply(file: File, detail: String) = println("[apply]-${file.rel()}: $detail")
-fun logPostfix(file: File, detail: String) = println("[postfix]-${file.rel()}: $detail")
-fun logRevert(file: File, detail: String) = println("[revert]-${file.rel()}: $detail")
+val useColor = System.getenv("NO_COLOR") == null
+fun tag(name: String, code: String) =
+    if (useColor) "\u001B[${code}m[$name]\u001B[0m" else "[$name]"
+fun logApply(file: File, detail: String) = println("${tag("apply", "31")}-${file.rel()}: $detail")          // 红
+fun logPostfix(file: File, detail: String) = println("${tag("postfix", "38;5;208")}-${file.rel()}: $detail") // 橙
+fun logRevert(file: File, detail: String) = println("${tag("revert", "33")}-${file.rel()}: $detail")         // 黄
 
 val fdinfoCommentStart = Regex("""^[ \t]*/\*$""")
 val fdinfoCommentEnd = Regex("""^[ \t]*u32 mask = mark->mask & IN_ALL_EVENTS;$""")
@@ -173,11 +176,7 @@ fun applyAndroid15VmaBlock(taskMmu: File, namespace: File) {
     taskMmu.writeText(lines.joinToString("\n") + "\n")
     logApply(taskMmu, "opened a new '{ ... }' block by appending '{' to the trailing 'if (vma->vm_end > last_vma_end)' and inserting a closing '}' after the last 'last_vma_end = vma->vm_end;' statement, re-indenting that statement one level deeper")
 
-    // 3) namespace.c: 在 trace/hooks/blk.h 之后插入 trace/hooks/fs.h
-    namespace.insertAfter(Regex("""#include <trace/hooks/blk\.h>"""), "#include <trace/hooks/fs.h>")
-    logApply(namespace, "added #include <trace/hooks/fs.h> directly after #include <trace/hooks/blk.h>")
-
-    // 4) task_mmu.c: 在 "int ret = 0, copied = 0;" 之后插入两行
+    // 3) task_mmu.c: 在 "int ret = 0, copied = 0;" 之后插入两行
     taskMmu.insertAfter(
         Regex("""int ret = 0, copied = 0;"""),
         "\tunsigned int nr_subpages = __PAGE_SIZE / PAGE_SIZE;",
@@ -309,22 +308,18 @@ fun apply() {
             )
             logApply(openC, "added #include <linux/mnt_idmapping.h> directly after #include <linux/compat.h>")
 
+            val idmap = f("include/linux/mnt_idmapping.h")
+            if (!idmap.exists()) {
+                idmap.writeText("/* Stub: mnt idmap helpers live in linux/fs.h on this sublevel. */\n")
+                logApply(idmap, "stubbed missing include/linux/mnt_idmapping.h")
+            }
+
             applyFdinfo(f("fs/notify/fdinfo.c"))
         }
         if (sublevel >= 123) {
             val memory = f("mm/memory.c")
             memory.deleteLine(Regex("""#include <linux/swap_slots\.h>"""))
             logApply(memory, "removed #include <linux/swap_slots.h> (now provided elsewhere on this baseline)")
-        }
-        if (sublevel >= 197) {
-            val namespace = f("fs/namespace.c")
-            namespace.deleteLine(Regex("""^#include <trace/hooks/blk\.h>$"""))
-            logApply(namespace, "removed #include <trace/hooks/blk.h>")
-        }
-        if (sublevel >= 206) {
-            val taskMmu = f("fs/proc/task_mmu.c")
-            taskMmu.deleteLine(Regex("""^#include <trace/hooks/mm\.h>$"""))
-            logApply(taskMmu, "removed #include <trace/hooks/mm.h>")
         }
     }
 
@@ -344,15 +339,6 @@ fun apply() {
                 "#include <linux/dma-buf.h>"
             )
             logApply(base, "added #include <linux/dma-buf.h> directly after #include <linux/cpufreq_times.h>")
-        }
-        if (sublevel >= 157) {
-            val namespace = f("fs/namespace.c")
-            namespace.deleteLine(Regex("""^#include <trace/hooks/blk\.h>$"""))
-            logApply(namespace, "removed #include <trace/hooks/blk.h>")
-
-            val superC = f("fs/super.c")
-            superC.deleteLineAndFollowing(Regex("""^#include <trace/hooks/fs\.h>$"""), 1)
-            logApply(superC, "removed #include <trace/hooks/fs.h>")
         }
     }
 
@@ -439,22 +425,6 @@ fun revert() {
             )
             logRevert(memory, "restored #include <linux/swap_slots.h> directly before #ifdef CONFIG_KSU_SUSFS_SUS_MAP")
         }
-        if (sublevel >= 197) {
-            val namespace = f("fs/namespace.c")
-            namespace.insertAfter(
-                Regex("""^#include "internal\.h"$"""),
-                "#include <trace/hooks/blk.h>"
-            )
-            logRevert(namespace, "restored #include <trace/hooks/blk.h> directly after #include \"internal.h\"")
-        }
-        if (sublevel >= 206) {
-            val taskMmu = f("fs/proc/task_mmu.c")
-            taskMmu.insertAfter(
-                Regex("""^#include <linux/pkeys\.h>$"""),
-                "#include <trace/hooks/mm.h>"
-            )
-            logRevert(taskMmu, "restored #include <trace/hooks/mm.h> directly after #include <linux/pkeys.h>")
-        }
     }
 
     if (kmi == "android14-6.1") {
@@ -467,21 +437,6 @@ fun revert() {
             val base = f("fs/proc/base.c")
             base.deleteLine(Regex("""^#include <linux/dma-buf\.h>$"""))
             logRevert(base, "removed #include <linux/dma-buf.h>")
-        }
-        if (sublevel >= 157) {
-            val namespace = f("fs/namespace.c")
-            namespace.insertAfter(
-                Regex("""^#include "internal\.h"$"""),
-                "#include <trace/hooks/blk.h>"
-            )
-            logRevert(namespace, "restored #include <trace/hooks/blk.h> directly after #include \"internal.h\"")
-
-            val superC = f("fs/super.c")
-            superC.insertAfter(
-                Regex("""^#include "internal\.h"$"""),
-                "#include <trace/hooks/fs.h>"
-            )
-            logRevert(superC, "restored #include <trace/hooks/fs.h> directly after #include \"internal.h\"")
         }
     }
 
@@ -520,7 +475,7 @@ when (mode) {
     "postfix" -> postfix()
     "revert" -> revert()
     else -> {
-        println("Usage: kotlin PatchFakePatches.main.kts <apply|postfix|revert> [workDir]")
+        println("Usage: kotlin SusfsCompat.kts <apply|postfix|revert> [workDir]")
         exitProcess(1)
     }
 }

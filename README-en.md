@@ -93,6 +93,8 @@ Prohibit the promotion of forked repositories with **no modifications**; see [LI
 # Changelog
 > Minor updates will be ignored. For more details, please refer to the commit.
  
+- Add `SusfsCompat.kts` to handle susfs compatibility issues and `SusfsContext.kts` to automatically handle `susfs` context mismatch exceptions.  
+ 
 - Added `FakeConfig(HideConfig)` to hide the visibility of config options in `proc/config.gz`.  
 ```
 Regular config option:
@@ -100,8 +102,6 @@ set_config "CONFIG_IP_NF_TARGET_ECN=y"
 Hidden config option:
 set_hide_config "CONFIG_IP6_NF_NAT=y"
 ```  
- 
-- Added `FakePatch` to improve compatibility between multiple kernel sublevel and `susfs`.  
  
 - Added path recursion, providing full support for `Rust` build logic and `bindgen`/`Kleaf` dependency resolution on kernel version `6.12+`.  
  
