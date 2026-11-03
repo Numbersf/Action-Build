@@ -208,7 +208,32 @@ jobs:
           git config --global user.name "Numbersf"
           git config --global user.email "263623064@qq.com"
           mkdir kernel_workspace && cd kernel_workspace
-          git clone https://github.com/Numbersf/Action-Build.git -b SukiSU-Ultra
+
+          UPSTREAM_REPO="Numbersf/Action-Build"
+          UPSTREAM_BRANCH="SukiSU-Ultra"
+          SELF_REPO="${{ github.repository }}"
+          SELF_BRANCH="${{ github.ref_name }}"
+
+          USE_REPO="$UPSTREAM_REPO"
+          USE_BRANCH="$UPSTREAM_BRANCH"
+
+          if [ "${SELF_REPO,,}" != "${UPSTREAM_REPO,,}" ]; then
+            git clone --filter=blob:none --no-checkout "https://github.com/${SELF_REPO}.git" -b "$SELF_BRANCH" probe
+            cd probe
+            git remote add upstream "https://github.com/${UPSTREAM_REPO}.git"
+            git fetch --filter=blob:none upstream "$UPSTREAM_BRANCH"
+
+            AHEAD=$(git rev-list --no-merges --count "upstream/${UPSTREAM_BRANCH}..HEAD")
+            echo "fork 独有的非 Merge 提交数: $AHEAD"
+
+            if [ "$AHEAD" -gt 0 ]; then
+              USE_REPO="$SELF_REPO"
+              USE_BRANCH="$SELF_BRANCH"
+            fi
+            cd .. && rm -rf probe
+          fi
+          echo "使用仓库: $USE_REPO @ $USE_BRANCH"
+          git clone "https://github.com/${USE_REPO}.git" -b "$USE_BRANCH" Action-Build
 
       - name: Extract Manifest Info
         id: extract_info
