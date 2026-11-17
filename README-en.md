@@ -1,6 +1,6 @@
 **`Enlish`** | [简体中文](README.md)
  
-[![Workflow Status](https://img.shields.io/github/actions/workflow/status/Numbersf/Action-Build/Build%20Kernel%20OnePlus.yml?branch=SukiSU-Ultra&label=remote%20build&logo=github-actions&style=flat-square)](https://github.com/Numbersf/Action-Build/actions/workflows/Build%20Kernel%20OnePlus.yml?query=branch%3ASukiSU-Ultra) ![Downloads](https://img.shields.io/github/downloads/Numbersf/Action-Build/total)
+[![Workflow Status](https://img.shields.io/github/actions/workflow/status/Numbersf/Action-Build/Build%20Kernel%20OnePlus.yml?branch=SukiSU-Nova&label=remote%20build&logo=github-actions&style=flat-square)](https://github.com/Numbersf/Action-Build/actions/workflows/Build%20Kernel%20OnePlus.yml?query=branch%3ASukiSU-Nova) ![Downloads](https://img.shields.io/github/downloads/Numbersf/Action-Build/total)
  
 [![Kernel Manifest](https://img.shields.io/badge/Kernel%20Manifest-EB0029?logo=oneplus&logoColor=white&style=flat-square)](https://github.com/OnePlusOSS/kernel_manifest) [![Dynamic Kernel Manifest](https://img.shields.io/badge/Dynamic%20Kernel%20Manifest-EB0029?logo=oneplus&logoColor=white&style=flat-square)](https://github.com/Numbersf/kernel_manifest) [![Kernel Manifest Appendix](https://img.shields.io/badge/Kernel%20Manifest%20Appendix-EB0029?logo=oneplus&logoColor=white&style=flat-square)](https://github.com/Numbersf/Kernel_Manifest_Appendix) [![Fengchi Kernel](https://img.shields.io/badge/Fengchi%20Kernel-EB0029?logo=github&logoColor=white&style=flat-square)](https://github.com/Numbersf/SCHED_PATCH)
  
@@ -16,16 +16,16 @@ Prohibit the promotion of forked repositories with **no modifications**; see [LI
 <details>
 <summary><strong>Click to view how to fork the project</strong></summary>
 <p>
-  <img src="https://github.com/Numbersf/Action-Build/blob/SukiSU-Ultra/pic/start.gif" width="500"/>
-  <img src="https://github.com/Numbersf/Action-Build/blob/SukiSU-Ultra/pic/start(2).png" width="500"/>
+  <img src="https://github.com/Numbersf/Action-Build/blob/SukiSU-Nova/pic/start.gif" width="500"/>
+  <img src="https://github.com/Numbersf/Action-Build/blob/SukiSU-Nova/pic/start(2).png" width="500"/>
 </p>
-<summary>Please note, if you want to use other branch manager projects, make sure to disable 'Copy the SukiSU-Ultra branch only' when forking.</summary>
+<summary>Please note, if you want to use other branch manager projects, make sure to disable 'Copy the SukiSU-Nova branch only' when forking.</summary>
 </details>
  
 <details>
 <summary><strong>Click to view how to sync the forked project to the latest</strong></summary>
 <p>
-  <img src="https://github.com/Numbersf/Action-Build/blob/SukiSU-Ultra/pic/syncfork.png" width="500"/>
+  <img src="https://github.com/Numbersf/Action-Build/blob/SukiSU-Nova/pic/syncfork.png" width="500"/>
 </p>
 <summary>Please sync promptly! Some updates may cause older versions to fail! If it still fails after syncing, delete and fork again! If the issue persists, then submit an issue for feedback.</summary>
 </details>
@@ -180,9 +180,9 @@ When there is a kernel-level update or a significant slowdown caused by changes 
  
 - Removed potential version codes from the suffix of `Anykernel3.zip` config file, replaced with exact `Android` version numbers `XX.X.(X)`.
 ```
-AnyKernel3_SukiSUUltra_34895_OnePlusAce2Pro_Android16.0.0(5.15.180)_KPM_BBG_ILH_DS_REKER.zip
-AnyKernel3_SukiSUUltra_34895_OnePlus11_Android14.1.0(5.15.123)_KPM_BBG_ILH_DS_REKER.zip
-AnyKernel3_SukiSUUltra_34895_OnePlus15(AOSP)_Android16.0.0(6.12.23)_KPM_BBG_ILH_DS_REKER.zip
+AnyKernel3_SukiSUNova_34895_OnePlusAce2Pro_Android16.0.0(5.15.180)_KPM_BBG_ILH_DS_REKER.zip
+AnyKernel3_SukiSUNova_34895_OnePlus11_Android14.1.0(5.15.123)_KPM_BBG_ILH_DS_REKER.zip
+AnyKernel3_SukiSUNova_34895_OnePlus15(AOSP)_Android16.0.0(6.12.23)_KPM_BBG_ILH_DS_REKER.zip
 ```  
  
 - Added support for the `LZ4K、LZ4KD` compression algorithm in the `zram` module.   [@ShirkNeko](https://github.com/ShirkNeko)  

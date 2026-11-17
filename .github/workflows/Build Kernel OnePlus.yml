@@ -210,7 +210,7 @@ jobs:
           mkdir kernel_workspace && cd kernel_workspace
 
           UPSTREAM_REPO="Numbersf/Action-Build"
-          UPSTREAM_BRANCH="SukiSU-Ultra"
+          UPSTREAM_BRANCH="SukiSU-Nova"
           SELF_REPO="${{ github.repository }}"
           SELF_BRANCH="${{ github.ref_name }}"
 
@@ -697,7 +697,7 @@ jobs:
           [[ -n "$KSU_CUSTOM_TAG" ]] && echo "自定义版本标识: $KSU_CUSTOM_TAG" || echo "自定义版本标识: 未启用"
           [[ -n "$MANUAL_HASH" ]] && echo "手动指定 hash: $MANUAL_HASH" || echo "手动指定 hash: 未启用"
 
-          curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/${KSU_MANAGER_BRANCH}/kernel/setup.sh" | bash -s "$KSU_BUILTIN_BRANCH"
+          curl -LSs "https://raw.githubusercontent.com/SukiSU-Nova/SukiSU-Nova/${KSU_MANAGER_BRANCH}/kernel/setup.sh" | bash -s "$KSU_BUILTIN_BRANCH"
           cd ./KernelSU
 
           # 如果指定了手动 hash，就切换到该提交
@@ -707,7 +707,7 @@ jobs:
             SHORT_HASH=${MANUAL_HASH:0:8}
           fi
 
-          KSU_VERSION_TAG=$(curl -fsSL https://api.github.com/repos/SukiSU-Ultra/SukiSU-Ultra/releases/latest \
+          KSU_VERSION_TAG=$(curl -fsSL https://api.github.com/repos/SukiSU-Nova/SukiSU-Nova/releases/latest \
             | grep '"tag_name":' | sed -E 's/.*"v?([^"]+)".*/\1/')
           if [[ -z "$KSU_VERSION_TAG" || "$(printf '%s\n' "$KSU_VERSION_TAG" "3.1.7" | sort -V | head -n1)" != "3.1.7" ]]; then
             KSU_VERSION_TAG="3.1.7"
@@ -784,7 +784,7 @@ jobs:
           if [ "${{ github.event.inputs.LZ4_UPDATE }}" = "true" ]; then
             git clone https://github.com/Numbersf/lz4_oplus.git
           fi
-          git clone https://github.com/ShirkNeko/SukiSU_patch.git
+          git clone https://github.com/SukiSU-Nova/SukiSU_patch.git
           cd kernel_platform
           if [ "${{ github.event.inputs.SUSFS_META }}" != "-1" ]; then
             echo "正在拉取susfs补丁"
@@ -1531,7 +1531,7 @@ jobs:
           wget -O ksu_module_susfs_1.5.2+_Release.zip https://github.com/sidex15/ksu_module_susfs/releases/latest/download/ksu_module_susfs_1.5.2+.zip
           cp ksu_module_susfs_1.5.2+_Release.zip ./AnyKernel3/
 
-      - name: Download Latest SukiSU-Ultra APK from CI
+      - name: Download Latest SukiSU-Nova APK from CI
         continue-on-error: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -1541,13 +1541,13 @@ jobs:
           echo "Using branch: $KSU_MANAGER_BRANCH"
           echo "Downloading artifact: $MANAGER_ARTIFACT"
 
-          run_id=$(gh api "repos/SukiSU-Ultra/SukiSU-Ultra/actions/workflows/build-manager.yml/runs?branch=$KSU_MANAGER_BRANCH&status=success&event=push&per_page=1" --jq '.workflow_runs[0].id' || echo "")
+          run_id=$(gh api "repos/SukiSU-Nova/SukiSU-Nova/actions/workflows/build-manager.yml/runs?branch=$KSU_MANAGER_BRANCH&status=success&event=push&per_page=1" --jq '.workflow_runs[0].id' || echo "")
 
           if [[ -z "$run_id" ]]; then
             echo "No successful workflow run found on branch $KSU_MANAGER_BRANCH. Skipping download."
             exit 0
           fi
-          artifact_url=$(gh api "repos/SukiSU-Ultra/SukiSU-Ultra/actions/runs/$run_id/artifacts" | jq -r ".artifacts[] | select(.name == \"$MANAGER_ARTIFACT\") | .archive_download_url" | head -n1)
+          artifact_url=$(gh api "repos/SukiSU-Nova/SukiSU-Nova/actions/runs/$run_id/artifacts" | jq -r ".artifacts[] | select(.name == \"$MANAGER_ARTIFACT\") | .archive_download_url" | head -n1)
 
           if [[ -z "$artifact_url" ]]; then
             echo "No artifact '$MANAGER_ARTIFACT' found in run $run_id. Skipping download."
@@ -1565,7 +1565,7 @@ jobs:
       - name: Upload AnyKernel3
         uses: actions/upload-artifact@v7
         with:
-          name: AnyKernel3_SukiSUUltra_${{ env.KSUVER }}_${{ steps.extract_info.outputs.value }}(${{ env.CKERNEL_VERSION }})${{ steps.suffix.outputs.value }}
+          name: AnyKernel3_SukiSUNova_${{ env.KSUVER }}_${{ steps.extract_info.outputs.value }}(${{ env.CKERNEL_VERSION }})${{ steps.suffix.outputs.value }}
           path: ./AnyKernel3/*
 
       - name: Extract and Process ZRAM Module
