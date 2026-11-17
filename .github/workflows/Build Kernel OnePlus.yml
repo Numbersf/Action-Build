@@ -707,11 +707,7 @@ jobs:
             SHORT_HASH=${MANUAL_HASH:0:8}
           fi
 
-          KSU_VERSION_TAG=$(curl -fsSL https://api.github.com/repos/LyraVoid/FinaSU/releases/latest \
-            | grep '"tag_name":' | sed -E 's/.*"v?([^"]+)".*/\1/')
-          if [[ -z "$KSU_VERSION_TAG" || "$(printf '%s\n' "$KSU_VERSION_TAG" "1.6.2" | sort -V | head -n1)" != "1.6.2" ]]; then
-            KSU_VERSION_TAG="1.6.2"
-          fi
+          KSU_VERSION_TAG=$(curl -fsSLI -o /dev/null -w '%{url_effective}' https://github.com/LyraVoid/FinaSU/releases/latest | sed -E 's#.*/tag/v?##' | grep -E '^[0-9]+(\.[0-9]+)*$' || true); KSU_VERSION_TAG=$(printf '%s\n' "$KSU_VERSION_TAG" "1.6.2" | sort -V | tail -n1)
           echo "KSU_VERSION_TAG=$KSU_VERSION_TAG" >> $GITHUB_ENV
 
           GIT_HASH=$(git rev-parse --short HEAD)
