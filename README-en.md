@@ -19,7 +19,7 @@ Prohibit the promotion of forked repositories with **no modifications**; see [LI
   <img src="https://github.com/Numbersf/Action-Build/blob/KernelSU/pic/start.gif" width="500"/>
   <img src="https://github.com/Numbersf/Action-Build/blob/KernelSU/pic/start(2).png" width="500"/>
 </p>
-<summary>Please note, if you want to use other branch manager projects, make sure to disable 'Copy the SukiSU-Ultra branch only' when forking.</summary>
+<summary>Please note, if you want to use other branch manager projects, make sure to disable 'Copy the SukiSU-Nova branch only' when forking.</summary>
 </details>
  
 <details>
