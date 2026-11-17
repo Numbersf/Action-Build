@@ -74,7 +74,7 @@ Prohibit the promotion of forked repositories with **no modifications**; see [LI
  
 ------
 > [!CAUTION]
-> Do not use volume down to install modules during root-retaining updates, use volume up to skip! Generally, installation is no longer necessary, just use the SukiSU Ultra Add-on Module  
+> Do not use volume down to install modules during root-retaining updates, use volume up to skip! Generally, installation is no longer necessary, just use the SukiSU Nova Add-on Module  
 >
 > If you have enabled the ``ZRAM`` algorithm, make sure to install the ``ZRAM`` module **before rebooting** after flashing with ``Anykernel3``. You may need to adjust some parameters manually.The 5.10 kernel is not supported ``ZRAM`` , as the ``zram.ko`` module path could not be found.However, the generated ``Anykernel3`` is still usable  
 >
@@ -133,7 +133,7 @@ set_hide_config "CONFIG_IP6_NF_NAT=y"
  
 - Support setting branches、custom version identifiers、fallback hash.  
 ```
-Set Branch: Divided into manager-layer and built-in-layer. Please modify according to the channel name in the SukiSU Ultra repository. Do not modify unless you are a developer. Do not leave it empty or remove it.
+Set Branch: Divided into manager-layer and built-in-layer. Please modify according to the channel name in the SukiSU Nova repository. Do not modify unless you are a developer. Do not leave it empty or remove it.
 Custom Version Tag:
 Replace the original commit hash with your custom content, and move the commit hash to the end. This can be modified freely, but keep it reasonably short.
 The commit hash referred to here is the built-in-layer.

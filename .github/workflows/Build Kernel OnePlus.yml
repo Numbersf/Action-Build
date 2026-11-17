@@ -679,7 +679,7 @@ jobs:
             chmod +x "$f"
           done
 
-      - name: Add SukiSU Ultra
+      - name: Add SukiSU Nova
         run: |
           cd kernel_workspace/kernel_platform
           KSU_META="${{ github.event.inputs.KSU_META }}"
@@ -758,7 +758,7 @@ jobs:
           grep -nE '^(REPO_OWNER|REPO_NAME|REPO_BRANCH|KSU_VERSION_API|KSU_VERSION_FULL|VERSION_TAG|GIT_BIN|CURL_BIN)' kernel/Makefile
           echo "::endgroup::"
 
-      - name: Apply Patches SukiSU Ultra
+      - name: Apply Patches SukiSU Nova
         env:
           FILE: ${{ github.event.inputs.FILE }}
         run: |
@@ -1063,7 +1063,7 @@ jobs:
           }
           trap 'inject_fake_config' EXIT
 
-          # SukiSU Ultra配置
+          # SukiSU Nova配置
           set_config "CONFIG_KSU=y"
 
           # KPM配置
