@@ -19,7 +19,7 @@
   <img src="https://github.com/Numbersf/Action-Build/blob/BakaSU/pic/start.gif" width="500"/>
   <img src="https://github.com/Numbersf/Action-Build/blob/BakaSU/pic/start(2).png" width="500"/>
 </p>
-<summary>请注意，如果你想使用其他分支管理器项目，请在fork时关闭“仅复制SukiSU-Ultra分支”</summary>
+<summary>请注意，如果你想使用其他分支管理器项目，请在fork时关闭“仅复制SukiSU-Nova分支”</summary>
 </details>
  
 <details>
