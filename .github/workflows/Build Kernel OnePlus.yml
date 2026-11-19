@@ -714,7 +714,7 @@ jobs:
             SHORT_HASH=${MANUAL_HASH:0:8}
           fi
 
-          KSU_VERSION_TAG=$(curl -fsSLI -o /dev/null -w '%{url_effective}' https://github.com/SukiSU-Nova/SukiSU-Nova/releases/latest | sed -E 's#.*/tag/v?##' | grep -E '^[0-9]+(\.[0-9]+)*$' || true); KSU_VERSION_TAG=$(printf '%s\n' "$KSU_VERSION_TAG" "3.1.7" | sort -V | tail -n1)
+          KSU_VERSION_TAG=$(curl -fsSLI -o /dev/null -w '%{url_effective}' https://github.com/SukiSU-Nova/SukiSU-Nova/releases/latest | sed -E 's#.*/tag/v?##' | grep -E '^[0-9]+(\.[0-9]+)*$' || true); KSU_VERSION_TAG=$(printf '%s\n' "$KSU_VERSION_TAG" "3.0.0" | sort -V | tail -n1)
           echo "KSU_VERSION_TAG=$KSU_VERSION_TAG" >> $GITHUB_ENV
 
           GIT_HASH=$(git rev-parse --short HEAD)
@@ -754,7 +754,7 @@ jobs:
             sed -i "s|^KSU_VERSION_API := .*|KSU_VERSION_API := $ESC_KSU_VERSION_TAG|" kernel/Makefile
           fi
 
-          KSU_VERSION=$(expr $(git rev-list --count "$KSU_MANAGER_BRANCH" 2>/dev/null || echo 13000) + 37185)
+          KSU_VERSION=$(expr $(git rev-list --count "$KSU_MANAGER_BRANCH" 2>/dev/null || echo 13000) + 30996)
           echo "KSUVER=$KSU_VERSION" >> $GITHUB_ENV
 
           echo "::group::最终 Makefile 中版本信息及部分调试结果预览"
