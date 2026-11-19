@@ -718,11 +718,11 @@ jobs:
 
           KSU_VERSION=$(expr $(git rev-list --count "$KSU_MANAGER_BRANCH" 2>/dev/null || echo 13000) + 30700)
           echo "KSUVER=$KSU_VERSION" >> $GITHUB_ENV
+
           if [ "$FAST_BUILD" = "false" ]; then
-            KSU_SRC="$GITHUB_WORKSPACE/kernel_workspace/kernel_platform/KernelSU/kernel"
-            if [[ -f "$KSU_SRC/Kbuild" ]]; then
-              sed -i 's/-dirty//g' "$KSU_SRC/Kbuild"
-              sed -i "s|^KSU_SRC :=.*|KSU_SRC := $KSU_SRC|" "$KSU_SRC/Kbuild"
+            if [ -f "$KSU_DIR/kernel/Kbuild" ]; then
+              sed -i 's/-dirty//g' "$KSU_DIR/kernel/Kbuild"
+              sed -i "s|^KSU_SRC :=.*|KSU_SRC := $KSU_DIR/kernel|" "$KSU_DIR/kernel/Kbuild"
             fi
           fi
 
