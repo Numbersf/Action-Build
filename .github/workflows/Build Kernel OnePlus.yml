@@ -694,7 +694,14 @@ jobs:
           [[ -n "$MANUAL_HASH" ]] && echo "手动指定 hash: $MANUAL_HASH" || echo "手动指定 hash: 未启用"
 
           curl -LSs "https://raw.githubusercontent.com/pershoot/KernelSU-Next/refs/heads/${KSU_MANAGER_BRANCH}/kernel/setup.sh" | bash -s "$KSU_BUILTIN_BRANCH"
-          cd ./KernelSU-Next
+          if [ -d common/drivers ]; then
+            DRV=common/drivers
+          else
+            DRV=drivers
+          fi
+          KSU_DIR=$(dirname "$(realpath "$DRV/kernelsu")")
+          echo "KSU_DIR=$KSU_DIR"
+          cd "$KSU_DIR"
 
           if [[ -n "$MANUAL_HASH" ]]; then
             git fetch origin "$KSU_BUILTIN_BRANCH" --depth=50
