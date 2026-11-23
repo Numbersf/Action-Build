@@ -1,0 +1,44 @@
+From f177b382c33900d0e5a9766493c11a1074076f78 Mon Sep 17 00:00:00 2001
+From: Kuniyuki Iwashima <kuniyu@amazon.com>
+Date: Mon, 11 Jul 2022 17:15:19 -0700
+Subject: [PATCH] sysctl: Fix data-races in proc_dou8vec_minmax().
+
+commit 7dee5d7747a69aa2be41f04c6a7ecfe3ac8cdf18 upstream.
+
+A sysctl variable is accessed concurrently, and there is always a chance
+of data-race.  So, all readers and writers need some basic protection to
+avoid load/store-tearing.
+
+This patch changes proc_dou8vec_minmax() to use READ_ONCE() and
+WRITE_ONCE() internally to fix data-races on the sysctl side.  For now,
+proc_dou8vec_minmax() itself is tolerant to a data-race, but we still
+need to add annotations on the other subsystem's side.
+
+Fixes: cb9444130662 ("sysctl: add proc_dou8vec_minmax()")
+Signed-off-by: Kuniyuki Iwashima <kuniyu@amazon.com>
+Signed-off-by: David S. Miller <davem@davemloft.net>
+Signed-off-by: Greg Kroah-Hartman <gregkh@linuxfoundation.org>
+---
+ kernel/sysctl.c | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/kernel/sysctl.c b/kernel/sysctl.c
+index 43e907f4cac7..d981abea0358 100644
+--- a/kernel/sysctl.c
++++ b/kernel/sysctl.c
+@@ -1109,13 +1109,13 @@ int proc_dou8vec_minmax(struct ctl_table *table, int write,
+ 
+ 	tmp.maxlen = sizeof(val);
+ 	tmp.data = &val;
+-	val = *data;
++	val = READ_ONCE(*data);
+ 	res = do_proc_douintvec(&tmp, write, buffer, lenp, ppos,
+ 				do_proc_douintvec_minmax_conv, &param);
+ 	if (res)
+ 		return res;
+ 	if (write)
+-		*data = val;
++		WRITE_ONCE(*data, val);
+ 	return 0;
+ }
+ EXPORT_SYMBOL_GPL(proc_dou8vec_minmax);

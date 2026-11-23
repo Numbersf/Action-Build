@@ -1,0 +1,161 @@
+name: Workflow and Cache Cleanup — Faster
+
+on:
+  workflow_dispatch:
+    inputs:
+      workflow_name:
+        type: choice
+        description: '清理的工作流名称'
+        required: true
+        default: 'Build All OnePlus Kernels'
+        options:
+          - Build All OnePlus Kernels
+          - Build TEST
+          - Build TEST2
+      cache_mode:
+        type: choice
+        description: '缓存清理类型'
+        required: false
+        default: 'none'
+        options:
+          - none
+          - all
+          - ccache
+          - apt-cache
+          - thinlto-cache
+      count:
+        description: '最多处理的运行条数（0 = 不限制，所有状态均计数）'
+        required: false
+        default: '0'
+      delete_failed:
+        description: '删除指定工作流失败的运行记录？'
+        required: false
+        type: boolean
+        default: false
+      delete_success:
+        description: '删除指定工作流成功的运行记录？'
+        required: false
+        type: boolean
+        default: false
+      delete_cancelled:
+        description: '删除指定工作流取消的运行记录？'
+        required: false
+        type: boolean
+        default: false
+      reverse_order:
+        description: '从旧到新开始清理？'
+        required: false
+        type: boolean
+        default: false
+      cancel_all:
+        description: '是否一键取消指定工作流的所有运行？'
+        required: false
+        type: boolean
+        default: false
+      target_run_numbers:
+        description: '按运行编号删除（逗号分隔，纯数字）'
+        required: false
+        default: ''
+      target_run_ids:
+        description: '按 Run-ID 删除（逗号分隔，纯数字）'
+        required: false
+        default: ''
+      self_cleanup:
+        description: '是否同时清理本工作流（Cleanup 自身）的历史记录？'
+        required: false
+        type: boolean
+        default: true
+
+permissions:
+  actions: write
+  contents: read
+
+concurrency:
+  group: cleanup-${{ github.workflow }}
+  cancel-in-progress: false
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    if: ${{ inputs.cache_mode != 'none' || inputs.self_cleanup || inputs.cancel_all || inputs.delete_failed || inputs.delete_success || inputs.delete_cancelled || inputs.target_run_numbers != '' || inputs.target_run_ids != '' }}
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      REPO: ${{ github.repository }}
+      CURRENT_RUN_ID: ${{ github.run_id }}
+      WORKFLOW_NAME: ${{ inputs.workflow_name }}
+      COUNT: ${{ inputs.count }}
+    steps:
+      - name: Checkout scripts
+        uses: actions/checkout@v5
+        with:
+          sparse-checkout: scripts
+          fetch-depth: 1
+
+      - name: Validate inputs
+        env:
+          TARGET_RUN_NUMBERS: ${{ inputs.target_run_numbers }}
+          TARGET_RUN_IDS: ${{ inputs.target_run_ids }}
+        run: bash scripts/cleanup-runs.sh validate
+
+      - name: Delete by Run Number / Run ID
+        if: ${{ inputs.target_run_numbers != '' || inputs.target_run_ids != '' }}
+        env:
+          TARGET_RUN_NUMBERS: ${{ inputs.target_run_numbers }}
+          TARGET_RUN_IDS: ${{ inputs.target_run_ids }}
+        run: bash scripts/cleanup-runs.sh delete-by-target
+
+      - name: Cancel all active runs
+        if: ${{ inputs.cancel_all }}
+        run: bash scripts/cleanup-runs.sh cancel-active
+
+      - name: Batch delete by conclusion
+        if: ${{ inputs.target_run_numbers == '' && inputs.target_run_ids == '' && (inputs.delete_failed || inputs.delete_success || inputs.delete_cancelled) }}
+        env:
+          DELETE_FAILED: ${{ inputs.delete_failed }}
+          DELETE_SUCCESS: ${{ inputs.delete_success }}
+          DELETE_CANCELLED: ${{ inputs.delete_cancelled }}
+          REVERSE_ORDER: ${{ inputs.reverse_order }}
+        run: bash scripts/cleanup-runs.sh delete-by-conclusion
+
+      - name: Clean caches by mode
+        if: ${{ inputs.cache_mode != 'none' }}
+        uses: actions/github-script@v9
+        env:
+          MODE: ${{ inputs.cache_mode }}
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const mode = process.env.MODE;
+            const rules = {
+              'all': () => true,
+              'ccache': k => k.startsWith('ccache-'),
+              'apt-cache': k => k.includes('apt-cache') || k.startsWith('apt-'),
+              'thinlto-cache': k => k.startsWith('thinlto-'),
+            };
+            const match = rules[mode];
+
+            // 先一次性取完所有缓存，再删除（边翻页边删会导致后续页被跳过）
+            const caches = await github.paginate(
+              github.rest.actions.getActionsCacheList, { owner, repo, per_page: 100 });
+            const hit = caches.filter(c => match(c.key));
+            console.log(`🔹 模式 ${mode}：共 ${caches.length} 个缓存，匹配 ${hit.length} 个`);
+
+            let ok = 0, fail = 0;
+            for (let i = 0; i < hit.length; i += 10) {
+              const rs = await Promise.allSettled(hit.slice(i, i + 10).map(c =>
+                github.rest.actions.deleteActionsCacheById({ owner, repo, cache_id: c.id })));
+              rs.forEach((r, j) => {
+                if (r.status === 'fulfilled') ok++;
+                else { fail++; console.log(`删除失败: ${hit[i + j].key} (${r.reason.message})`); }
+              });
+            }
+            require('fs').appendFileSync(`${process.env.RUNNER_TEMP}/cleanup-rows.md`, `| 缓存清理 (${mode}) | ${ok} | ${fail} |\n`);
+
+      - name: Clean this workflow's own run history
+        if: ${{ always() && inputs.self_cleanup }}
+        run: bash scripts/cleanup-runs.sh self-history
+
+      - name: Write summary
+        if: ${{ always() }}
+        run: bash scripts/cleanup-runs.sh summary
