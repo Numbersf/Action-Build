@@ -704,7 +704,7 @@ jobs:
             DRV=drivers
           fi
           KSU_DIR=$(dirname "$(realpath "$DRV/kernelsu")")
-          echo "KSU_DIR=$KSU_DIR"
+          echo "KSU_DIR=$KSU_DIR" >> "$GITHUB_ENV"
           cd "$KSU_DIR"
 
           # 如果指定了手动 hash，就切换到该提交
@@ -790,13 +790,7 @@ jobs:
           fi
           echo "✅ 证书: size=$SIZE sha256=$HASH"
 
-          cd kernel_workspace/kernel_platform
-          if [ -d common/drivers ]; then
-            DRV=common/drivers
-          else
-            DRV=drivers
-          fi
-          KBUILD="$(dirname "$(realpath "$DRV/kernelsu")")/kernel/Kbuild"
+          KBUILD="$KSU_DIR/kernel/Kbuild"
           for pair in "KSU_EXPECTED_SIZE=$SIZE" "KSU_EXPECTED_HASH=$HASH"; do
             k=${pair%%=*}
             v=${pair#*=}
