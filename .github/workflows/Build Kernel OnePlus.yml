@@ -433,8 +433,8 @@ jobs:
 
       - name: Setup Ccache-ECS
         run: |
-         LIB_DIR="${GITHUB_WORKSPACE}/kernel_workspace/Action-Build/lib"
-         sudo cp -f "$LIB_DIR/ccache" /usr/bin/ccache && sudo chmod +x /usr/bin/ccache
+          LIB_DIR="${GITHUB_WORKSPACE}/kernel_workspace/Action-Build/lib"
+          sudo cp -f "$LIB_DIR/ccache" /usr/bin/ccache && sudo chmod +x /usr/bin/ccache
 
       - name: Restore Ccache
         if: ${{ github.event.inputs.BUILD_NOCACHE == 'false' }}
@@ -1277,7 +1277,7 @@ jobs:
           elif [[ -d "$GITHUB_WORKSPACE/kernel_workspace/kernel_platform/clang-${CLANG_VERSION}/lib" ]]; then
             export LIBCLANG_PATH="$GITHUB_WORKSPACE/kernel_workspace/kernel_platform/clang-${CLANG_VERSION}/lib"
           else
-            export LIBCLANG_PATH="$(clang --print-resource-dir 2>/dev/null | sed 's|/lib/clang/.*||')/lib" 
+            export LIBCLANG_PATH="$(clang --print-resource-dir 2>/dev/null | sed 's|/lib/clang/.*||')/lib"
             echo "⚠️ LIBCLANG_PATH fallback to system: $LIBCLANG_PATH"
           fi
           echo "✅ LIBCLANG_PATH=$LIBCLANG_PATH"
@@ -1383,7 +1383,7 @@ jobs:
           if [[ -n "$LD_WRAPPER" ]]; then
             MAKE_ARGS+=(LD="$LD_WRAPPER")
           else
-            MAKE_ARGS+=(LD=ld.lld)     
+            MAKE_ARGS+=(LD=ld.lld)
           fi
           if [[ "$USE_LLVM_IAS" == "true" ]]; then
             MAKE_ARGS+=(LLVM_IAS=1)
@@ -1415,8 +1415,7 @@ jobs:
             ./kernel_platform/oplus/bazel/oplus_modules_variant.sh ${{ env.CPUD }} ${{ env.BUILD_METHOD }}
             ./kernel_platform/build_with_bazel.py -t ${{ env.CPUD }} ${{ env.BUILD_METHOD }}
           else
-            LTO=thin SYSTEM_DLKM_RE_SIGN=0 BUILD_SYSTEM_DLKM=0 KMI_SYMBOL_LIST_STRICT_MODE=0 \
-            ./kernel_platform/oplus/build/oplus_build_kernel.sh ${{ env.CPUD }} ${{ env.BUILD_METHOD }}
+            LTO=thin SYSTEM_DLKM_RE_SIGN=0 BUILD_SYSTEM_DLKM=0 KMI_SYMBOL_LIST_STRICT_MODE=0 ./kernel_platform/oplus/build/oplus_build_kernel.sh ${{ env.CPUD }} ${{ env.BUILD_METHOD }}
           fi
 
       - name: Make AnyKernel3
@@ -1471,14 +1470,11 @@ jobs:
         if: ${{ github.event.inputs.SUSFS_CI == 'CI' && github.event.inputs.SUSFS_META != '-1' }}
         continue-on-error: true
         run: |
-          LATEST_RUN_ID=$(curl -s -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
-            "https://api.github.com/repos/sidex15/susfs4ksu-module/actions/runs?status=success&event=push" | \
-            jq -r '.workflow_runs[] | select(.head_branch == "v1.5.2+") | .id' | head -n 1)
+          LATEST_RUN_ID=$(curl -s -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" "https://api.github.com/repos/sidex15/susfs4ksu-module/actions/runs?status=success&event=push" | jq -r '.workflow_runs[] | select(.head_branch == "v1.5.2+") | .id' | head -n 1)
           if [ -z "$LATEST_RUN_ID" ]; then
             echo "No successful run found for branch v1.5.2+"
           else
-            ARTIFACT_URL=$(curl -s -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
-              "https://api.github.com/repos/sidex15/susfs4ksu-module/actions/runs/$LATEST_RUN_ID/artifacts" | jq -r '.artifacts[0].archive_download_url')
+            ARTIFACT_URL=$(curl -s -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" "https://api.github.com/repos/sidex15/susfs4ksu-module/actions/runs/$LATEST_RUN_ID/artifacts" | jq -r '.artifacts[0].archive_download_url')
             if [ -n "$ARTIFACT_URL" ]; then
               curl -L -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" -o ksu_module_susfs_1.5.2+_CI.zip "$ARTIFACT_URL"
               cp ksu_module_susfs_1.5.2+_CI.zip ./AnyKernel3/
