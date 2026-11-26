@@ -989,179 +989,143 @@ jobs:
           cd kernel_workspace/kernel_platform/common
           CONFIG_FILE=./arch/arm64/configs/gki_defconfig
           MAKEFILE=./kernel/Makefile
-
-          declare -a HIDE_CONFIGS=()
-
-          set_config() {
-            local val="$1"
-            local key="${val%%=*}"
-            if grep -qF "${key}=" "$CONFIG_FILE" || grep -qF "# ${key} is not set" "$CONFIG_FILE"; then
-              VAL="$val" awk -v key="$key" '
-                $0 == "# " key " is not set" || index($0, key "=") == 1 { print ENVIRON["VAL"]; next }
-                { print }
-              ' "$CONFIG_FILE" > "${CONFIG_FILE}.tmp" && mv "${CONFIG_FILE}.tmp" "$CONFIG_FILE" || rm -f "${CONFIG_FILE}.tmp"
-            else
-              printf '%s\n' "$val" >> "$CONFIG_FILE"
-            fi
-          }
-
-          set_hide_config() {
-            local val="$1"
-            local key="${val%%=*}"
-            set_config "$val"
-            HIDE_CONFIGS+=("$key")
-          }
-
-          inject_fake_config() {
-            [ "${#HIDE_CONFIGS[@]}" -eq 0 ] && return 0
-            local marker="# --- fake_config injector ---"
-            if ! grep -qF "$marker" "$MAKEFILE"; then
-              {
-                printf '\n%s\n' "$marker"
-                printf 'ifneq ($(strip $(CONFIG_FAKE_DISABLE)),)\n'
-                printf '$(obj)/config_data: $(KCONFIG_CONFIG) FORCE\n'
-                printf '\t$(Q)sed $(foreach opt,$(CONFIG_FAKE_DISABLE),-e '"'"'s|^$(opt)=.*|# $(opt) is not set|'"'"') $(KCONFIG_CONFIG) > $@\n'
-                printf 'endif\n'
-              } >> "$MAKEFILE"
-            fi
-            echo "CONFIG_FAKE_DISABLE=${HIDE_CONFIGS[*]}" >> "$GITHUB_ENV"
-          }
-          trap 'inject_fake_config' EXIT
+          source "$GITHUB_WORKSPACE/kernel_workspace/Action-Build/scripts/defconfig_utils.sh"
+          trap 'kcfg_inject_fake' EXIT
 
           # KernelSU配置
-          set_config "CONFIG_KSU=y"
+          kcfg_set "CONFIG_KSU=y"
 
           # KPM配置
           if [ "${{ github.event.inputs.KPM }}" = "KPM" ] || [ "${{ github.event.inputs.KPM }}" = "N/A" ]; then
-            set_config "CONFIG_KPM=y"
+            kcfg_set "CONFIG_KPM=y"
           fi
           if [ "${{ github.event.inputs.KPM }}" = "KPN" ]; then
-            set_config "CONFIG_KPM=n"
+            kcfg_set "CONFIG_KPM=n"
           fi
 
           # SUSFS配置
           if [ "${{ github.event.inputs.SUSFS_META }}" != "-1" ]; then
-            set_config "CONFIG_KSU_SUSFS=y"
-            set_config "CONFIG_KSU_SUSFS_SUS_PATH=y"
-            set_config "CONFIG_KSU_SUSFS_SUS_MAP=y"
-            set_config "CONFIG_KSU_SUSFS_SUS_MOUNT=y"
-            set_config "CONFIG_KSU_SUSFS_SUS_KSTAT=y"
-            set_config "CONFIG_KSU_SUSFS_SPOOF_UNAME=y"
-            set_config "CONFIG_KSU_SUSFS_ENABLE_LOG=y"
-            set_config "CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y"
-            set_config "CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y"
-            set_config "CONFIG_KSU_SUSFS_OPEN_REDIRECT=y"
-            set_config "CONFIG_KSU_SUSFS_PRIORITY_UID_FILTER=y"
+            kcfg_set "CONFIG_KSU_SUSFS=y"
+            kcfg_set "CONFIG_KSU_SUSFS_SUS_PATH=y"
+            kcfg_set "CONFIG_KSU_SUSFS_SUS_MAP=y"
+            kcfg_set "CONFIG_KSU_SUSFS_SUS_MOUNT=y"
+            kcfg_set "CONFIG_KSU_SUSFS_SUS_KSTAT=y"
+            kcfg_set "CONFIG_KSU_SUSFS_SPOOF_UNAME=y"
+            kcfg_set "CONFIG_KSU_SUSFS_ENABLE_LOG=y"
+            kcfg_set "CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y"
+            kcfg_set "CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y"
+            kcfg_set "CONFIG_KSU_SUSFS_OPEN_REDIRECT=y"
+            kcfg_set "CONFIG_KSU_SUSFS_PRIORITY_UID_FILTER=y"
           else
-            set_config "CONFIG_KSU_SUSFS=n"
+            kcfg_set "CONFIG_KSU_SUSFS=n"
           fi
 
           # TMPFS配置*
-          set_config "CONFIG_TMPFS_XATTR=y"
-          set_config "CONFIG_TMPFS_POSIX_ACL=y"
+          kcfg_set "CONFIG_TMPFS_XATTR=y"
+          kcfg_set "CONFIG_TMPFS_POSIX_ACL=y"
 
           # BBR & ECN配置*
           if [ "${{ github.event.inputs.CCM }}" = "true" ]; then
-            set_hide_config "CONFIG_TCP_CONG_ADVANCED=y"
-            set_config "CONFIG_TCP_CONG_BBR=y"
+            kcfg_set_hidden "CONFIG_TCP_CONG_ADVANCED=y"
+            kcfg_set "CONFIG_TCP_CONG_BBR=y"
             if [ "$KMI" != "android16-6.12" ]; then
-              set_config "CONFIG_TCP_CONG_BBR3=y"
+              kcfg_set "CONFIG_TCP_CONG_BBR3=y"
             fi
-            set_config "CONFIG_NET_SCH_FQ=y"
-            set_config "CONFIG_TCP_CONG_BIC=n"
-            set_config "CONFIG_TCP_CONG_WESTWOOD=n"
-            set_config "CONFIG_TCP_CONG_HTCP=n"
-            set_config "CONFIG_IP_ECN=y"
-            set_config "CONFIG_TCP_ECN=y"
-            set_config "CONFIG_IPV6_ECN=y"
-            set_config "CONFIG_IP_NF_TARGET_ECN=y"
+            kcfg_set "CONFIG_NET_SCH_FQ=y"
+            kcfg_set "CONFIG_TCP_CONG_BIC=n"
+            kcfg_set "CONFIG_TCP_CONG_WESTWOOD=n"
+            kcfg_set "CONFIG_TCP_CONG_HTCP=n"
+            kcfg_set "CONFIG_IP_ECN=y"
+            kcfg_set "CONFIG_TCP_ECN=y"
+            kcfg_set "CONFIG_IPV6_ECN=y"
+            kcfg_set "CONFIG_IP_NF_TARGET_ECN=y"
           fi
 
           # Re-Kernel配置*
           if [ "${{ github.event.inputs.RE_KERNEL }}" = "true" ]; then
-            set_config "CONFIG_REKERNEL=y"
-            set_config "CONFIG_REKERNEL_NETWORK=y"
+            kcfg_set "CONFIG_REKERNEL=y"
+            kcfg_set "CONFIG_REKERNEL_NETWORK=y"
           fi
 
           # ZRAM配置*
           if [[ "${{ github.event.inputs.ZRAM }}" == 1* ]]; then
-            set_config "CONFIG_CRYPTO_LZ4HC=y"
-            set_config "CONFIG_CRYPTO_LZ4K=y"
-            set_config "CONFIG_CRYPTO_LZ4KD=y"
-            set_config "CONFIG_CRYPTO_842=y"
-            set_config "CONFIG_CRYPTO_LZ4K_OPLUS=y"
-            set_config "CONFIG_ZRAM_WRITEBACK=y"
+            kcfg_set "CONFIG_CRYPTO_LZ4HC=y"
+            kcfg_set "CONFIG_CRYPTO_LZ4K=y"
+            kcfg_set "CONFIG_CRYPTO_LZ4KD=y"
+            kcfg_set "CONFIG_CRYPTO_842=y"
+            kcfg_set "CONFIG_CRYPTO_LZ4K_OPLUS=y"
+            kcfg_set "CONFIG_ZRAM_WRITEBACK=y"
           fi
 
           # LSM配置*
           if [ "${{ github.event.inputs.LSM_BBG }}" = "true" ]; then
-            set_config "CONFIG_BBG=y"
+            kcfg_set "CONFIG_BBG=y"
           fi
 
           # DROID_SPACES配置*
           if [ "${{ github.event.inputs.DROID_SPACES }}" = "true" ]; then
-            set_config "CONFIG_NTSYNC=y"
-            set_config "CONFIG_MACVLAN=y"
-            set_config "CONFIG_SYSVIPC=y"
-            set_config "CONFIG_DEVTMPFS=y"
-            set_config "CONFIG_PID_NS=y"
-            set_config "CONFIG_IPC_NS=y"
-            set_config "CONFIG_USER_NS=y"
-            set_config "CONFIG_NAMESPACES=y"
-            set_config "CONFIG_POSIX_MQUEUE=y"
-            set_config "CONFIG_NETFILTER_XT_TARGET_REJECT=y"
-            set_config "CONFIG_NETFILTER_XT_TARGET_LOG=y"
-            set_config "CONFIG_NETFILTER_XT_MATCH_RECENT=y"
+            kcfg_set "CONFIG_NTSYNC=y"
+            kcfg_set "CONFIG_MACVLAN=y"
+            kcfg_set "CONFIG_SYSVIPC=y"
+            kcfg_set "CONFIG_DEVTMPFS=y"
+            kcfg_set "CONFIG_PID_NS=y"
+            kcfg_set "CONFIG_IPC_NS=y"
+            kcfg_set "CONFIG_USER_NS=y"
+            kcfg_set "CONFIG_NAMESPACES=y"
+            kcfg_set "CONFIG_POSIX_MQUEUE=y"
+            kcfg_set "CONFIG_NETFILTER_XT_TARGET_REJECT=y"
+            kcfg_set "CONFIG_NETFILTER_XT_TARGET_LOG=y"
+            kcfg_set "CONFIG_NETFILTER_XT_MATCH_RECENT=y"
           fi
 
           # IPSET & IPv6_NAT & TTL配置*
           if [ "${{ github.event.inputs.NETFILTER }}" = "true" ]; then
             if [[ "$KERNEL_VERSION" != "6.12" && "${CPU}" != mt* ]]; then
-              set_config "CONFIG_BPF_STREAM_PARSER=y"
+              kcfg_set "CONFIG_BPF_STREAM_PARSER=y"
             fi
-            set_config "CONFIG_NETFILTER_XT_MATCH_ADDRTYPE=y"
-            set_config "CONFIG_NETFILTER_XT_SET=y"
-            set_config "CONFIG_IP_SET=y"
-            set_config "CONFIG_IP_SET_MAX=65534"
-            set_config "CONFIG_IP_SET_BITMAP_IP=y"
-            set_config "CONFIG_IP_SET_BITMAP_IPMAC=y"
-            set_config "CONFIG_IP_SET_BITMAP_PORT=y"
-            set_config "CONFIG_IP_SET_HASH_IP=y"
-            set_config "CONFIG_IP_SET_HASH_IPMARK=y"
-            set_config "CONFIG_IP_SET_HASH_IPPORT=y"
-            set_config "CONFIG_IP_SET_HASH_IPPORTIP=y"
-            set_config "CONFIG_IP_SET_HASH_IPPORTNET=y"
-            set_config "CONFIG_IP_SET_HASH_IPMAC=y"
-            set_config "CONFIG_IP_SET_HASH_MAC=y"
-            set_config "CONFIG_IP_SET_HASH_NETPORTNET=y"
-            set_config "CONFIG_IP_SET_HASH_NET=y"
-            set_config "CONFIG_IP_SET_HASH_NETNET=y"
-            set_config "CONFIG_IP_SET_HASH_NETPORT=y"
-            set_config "CONFIG_IP_SET_HASH_NETIFACE=y"
-            set_config "CONFIG_IP_SET_LIST_SET=y"
-            set_hide_config "CONFIG_IP6_NF_NAT=y"
-            set_config "CONFIG_IP6_NF_TARGET_MASQUERADE=y"
-            set_config "CONFIG_NETFILTER_XT_TARGET_HL=y"
-            set_config "CONFIG_IP_NF_TARGET_TTL=y"
-            set_config "CONFIG_IP6_NF_TARGET_HL=y"
-            set_config "CONFIG_NETFILTER_XT_MATCH_HL=y"
-            set_config "CONFIG_IP_NF_MATCH_TTL=y"
-            set_config "CONFIG_IP6_NF_MATCH_HL=y"
-            set_config "CONFIG_IP_NF_MANGLE=y"
-            set_config "CONFIG_IP6_NF_MANGLE=y"
+            kcfg_set "CONFIG_NETFILTER_XT_MATCH_ADDRTYPE=y"
+            kcfg_set "CONFIG_NETFILTER_XT_SET=y"
+            kcfg_set "CONFIG_IP_SET=y"
+            kcfg_set "CONFIG_IP_SET_MAX=65534"
+            kcfg_set "CONFIG_IP_SET_BITMAP_IP=y"
+            kcfg_set "CONFIG_IP_SET_BITMAP_IPMAC=y"
+            kcfg_set "CONFIG_IP_SET_BITMAP_PORT=y"
+            kcfg_set "CONFIG_IP_SET_HASH_IP=y"
+            kcfg_set "CONFIG_IP_SET_HASH_IPMARK=y"
+            kcfg_set "CONFIG_IP_SET_HASH_IPPORT=y"
+            kcfg_set "CONFIG_IP_SET_HASH_IPPORTIP=y"
+            kcfg_set "CONFIG_IP_SET_HASH_IPPORTNET=y"
+            kcfg_set "CONFIG_IP_SET_HASH_IPMAC=y"
+            kcfg_set "CONFIG_IP_SET_HASH_MAC=y"
+            kcfg_set "CONFIG_IP_SET_HASH_NETPORTNET=y"
+            kcfg_set "CONFIG_IP_SET_HASH_NET=y"
+            kcfg_set "CONFIG_IP_SET_HASH_NETNET=y"
+            kcfg_set "CONFIG_IP_SET_HASH_NETPORT=y"
+            kcfg_set "CONFIG_IP_SET_HASH_NETIFACE=y"
+            kcfg_set "CONFIG_IP_SET_LIST_SET=y"
+            kcfg_set_hidden "CONFIG_IP6_NF_NAT=y"
+            kcfg_set "CONFIG_IP6_NF_TARGET_MASQUERADE=y"
+            kcfg_set "CONFIG_NETFILTER_XT_TARGET_HL=y"
+            kcfg_set "CONFIG_IP_NF_TARGET_TTL=y"
+            kcfg_set "CONFIG_IP6_NF_TARGET_HL=y"
+            kcfg_set "CONFIG_NETFILTER_XT_MATCH_HL=y"
+            kcfg_set "CONFIG_IP_NF_MATCH_TTL=y"
+            kcfg_set "CONFIG_IP6_NF_MATCH_HL=y"
+            kcfg_set "CONFIG_IP_NF_MANGLE=y"
+            kcfg_set "CONFIG_IP6_NF_MANGLE=y"
           fi
 
           # 构建依赖项调整及优化
           if [ "$KERNEL_VERSION" = "5.15" ] && [[ "$CPU" == mt* ]]; then
-            set_config "CONFIG_OPLUS_SYSTEM_KERNEL=y"
-            set_config "CONFIG_OPLUS_FEATURE_CMDLINE=m"
-            set_config "CONFIG_OPLUS_FEATURE_OPLUSBOOT=m"
-            set_config "CONFIG_OPLUS_FEATURE_BUILDVARIANT=m"
-            set_config "CONFIG_OPLUS_FEATURE_OPROJECT=m"
+            kcfg_set "CONFIG_OPLUS_SYSTEM_KERNEL=y"
+            kcfg_set "CONFIG_OPLUS_FEATURE_CMDLINE=m"
+            kcfg_set "CONFIG_OPLUS_FEATURE_OPLUSBOOT=m"
+            kcfg_set "CONFIG_OPLUS_FEATURE_BUILDVARIANT=m"
+            kcfg_set "CONFIG_OPLUS_FEATURE_OPROJECT=m"
           fi
           if [[ "$ENABLE_RUST" == "true" ]]; then
-            set_config "CONFIG_RUST=y"
-            set_config "CONFIG_ANDROID_BINDER_IPC_RUST=m"
+            kcfg_set "CONFIG_RUST=y"
+            kcfg_set "CONFIG_ANDROID_BINDER_IPC_RUST=m"
           fi
 
       # Custom kernel build time, without adding #1 SMP PREEMPT 自定义内核构建时间，不要加入#1 SMP PREEMPT
