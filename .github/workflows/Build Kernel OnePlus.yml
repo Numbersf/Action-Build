@@ -700,9 +700,10 @@ jobs:
             DRV=drivers
           fi
           KSU_DIR=$(dirname "$(realpath "$DRV/kernelsu")")
-          echo "KSU_DIR=$KSU_DIR"
+          echo "KSU_DIR=$KSU_DIR" >> "$GITHUB_ENV"
           cd "$KSU_DIR"
 
+          # 如果指定了手动 hash，就切换到该提交
           if [[ -n "$MANUAL_HASH" ]]; then
             git fetch origin "$KSU_BUILTIN_BRANCH" --depth=50
             git checkout "$MANUAL_HASH"
