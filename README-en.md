@@ -98,9 +98,9 @@ Prohibit the promotion of forked repositories with **no modifications**; see [LI
 - Added `FakeConfig(HideConfig)` to hide the visibility of config options in `proc/config.gz`.  
 ```
 Regular config option:
-set_config "CONFIG_IP_NF_TARGET_ECN=y"
+kcfg_set "CONFIG_IP_NF_TARGET_ECN=y"
 Hidden config option:
-set_hide_config "CONFIG_IP6_NF_NAT=y"
+kcfg_set_hidden "CONFIG_IP6_NF_NAT=y"
 ```  
  
 - Added path recursion, providing full support for `Rust` build logic and `bindgen`/`Kleaf` dependency resolution on kernel version `6.12+`.  
