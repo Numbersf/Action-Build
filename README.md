@@ -98,9 +98,9 @@
 - 新增`FakeConfig(HideConfig)`，用于隐藏`proc/config.gz`内配置项可见性  
 ```
 普通配置项:
-set_config "CONFIG_IP_NF_TARGET_ECN=y"
+kcfg_set "CONFIG_IP_NF_TARGET_ECN=y"
 隐藏配置项:
-set_hide_config "CONFIG_IP6_NF_NAT=y"
+kcfg_set_hidden "CONFIG_IP6_NF_NAT=y"
 ```  
  
 - 新增路径递推,完整适配内核版本`6.12+`的`Rust`构建逻辑和`bindgen`、`Kleaf`依赖搜索  
