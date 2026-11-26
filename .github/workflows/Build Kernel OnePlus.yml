@@ -759,13 +759,15 @@ jobs:
           fi
 
           if [ "${{ github.event.inputs.SUSFS_META }}" != "-1" ]; then
-            cd ./KernelSU
-            sed -i 's|kernel/Makefile|kernel/Kbuild|g' ./10_enable_susfs_for_ksu.patch
-            patch -p1 < 10_enable_susfs_for_ksu.patch || true
-            cd ../common
-          else
-            cd ./common
+            (
+              cd "$KSU_DIR"
+              sed -i 's|kernel/Makefile|kernel/Kbuild|g' ./10_enable_susfs_for_ksu.patch
+              patch -p1 < 10_enable_susfs_for_ksu.patch || true
+            )
           fi
+
+          cd ./common
+
           if [ "${{ github.event.inputs.SUSFS_META }}" != "-1" ]; then
             kotlin "$GITHUB_WORKSPACE/kernel_workspace/Action-Build/scripts/SusfsCompat.kts" apply "$PWD"
           fi
