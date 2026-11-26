@@ -761,6 +761,55 @@ jobs:
           grep -nE '^(REPO_OWNER|REPO_NAME|REPO_BRANCH|KSU_VERSION_API|KSU_VERSION_FULL|VERSION_TAG|GIT_BIN|CURL_BIN)' kernel/Kbuild
           echo "::endgroup::"
 
+      - name: Inject FinaSU Manager Signature
+        run: |
+          MGR_DIR=/tmp/mgr
+          mkdir -p "$MGR_DIR"
+          APK=""
+          RUN_ID=$(curl -s -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" "https://api.github.com/repos/LyraVoid/FinaSU/actions/workflows/build-manager.yml/runs?branch=$KSU_MANAGER_BRANCH&status=success&event=push&per_page=1" | jq -r '.workflow_runs[0].id // empty')
+          if [ -n "$RUN_ID" ]; then
+            ARTIFACT_URL=$(curl -s -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" "https://api.github.com/repos/LyraVoid/FinaSU/actions/runs/$RUN_ID/artifacts" | jq -r '.artifacts[] | select(.name == "manager") | .archive_download_url' | head -n 1)
+            if [ -n "$ARTIFACT_URL" ] && curl -sfL -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" -o "$MGR_DIR/manager.zip" "$ARTIFACT_URL" && unzip -j -o "$MGR_DIR/manager.zip" "*.apk" -d "$MGR_DIR"; then
+              APK=$(ls "$MGR_DIR"/*.apk | head -n 1)
+            fi
+          fi
+
+          if [ -z "$APK" ]; then
+            echo "❌ 未获取到 FinaSU 管理器 APK，无法提取签名"
+            exit 1
+          fi
+          echo "✅ 管理器 APK: $APK"
+          echo "MANAGER_APK=$APK" >> $GITHUB_ENV
+
+          CERT=$(python3 "$GITHUB_WORKSPACE/kernel_workspace/Action-Build/scripts/extract_manager_cert.py" "$APK" | head -n 1)
+          SIZE=$(echo "$CERT" | awk '{print $1}')
+          HASH=$(echo "$CERT" | awk '{print $2}')
+          if [[ ! "$SIZE" =~ ^0x[0-9a-fA-F]+$ ]] || [[ ! "$HASH" =~ ^[0-9a-fA-F]{64}$ ]]; then
+            echo "❌ 证书提取异常: size='$SIZE' hash='$HASH'"
+            exit 1
+          fi
+          echo "✅ 证书: size=$SIZE sha256=$HASH"
+
+          cd kernel_workspace/kernel_platform
+          if [ -d common/drivers ]; then
+            DRV=common/drivers
+          else
+            DRV=drivers
+          fi
+          KBUILD="$(dirname "$(realpath "$DRV/kernelsu")")/kernel/Kbuild"
+          for pair in "KSU_EXPECTED_SIZE=$SIZE" "KSU_EXPECTED_HASH=$HASH"; do
+            k=${pair%%=*}
+            v=${pair#*=}
+            if ! grep -qE "^[[:space:]]*$k[[:space:]]*[:?]?=" "$KBUILD"; then
+              echo "❌ Kbuild 中找不到 $k 的默认定义，上游结构可能已变化"
+              exit 1
+            fi
+            sed -i -E "s|^([[:space:]]*$k[[:space:]]*[:?]?=).*|\1 $v|" "$KBUILD"
+          done
+          echo "::group::Kbuild 签名项"
+          grep -nE 'KSU_EXPECTED_(SIZE|HASH)' "$KBUILD"
+          echo "::endgroup::"
+
       - name: Apply Patches FinaSU
         env:
           FILE: ${{ github.event.inputs.FILE }}
@@ -1531,31 +1580,10 @@ jobs:
           wget -O ksu_module_susfs_1.5.2+_Release.zip https://github.com/sidex15/ksu_module_susfs/releases/latest/download/ksu_module_susfs_1.5.2+.zip
           cp ksu_module_susfs_1.5.2+_Release.zip ./AnyKernel3/
 
-      - name: Download Latest FinaSU APK from CI
-        continue-on-error: true
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Add FinaSU APK to AnyKernel3
         run: |
-          MANAGER_ARTIFACT=manager
-
-          echo "Using branch: $KSU_MANAGER_BRANCH"
-          echo "Downloading artifact: $MANAGER_ARTIFACT"
-
-          run_id=$(gh api "repos/LyraVoid/FinaSU/actions/workflows/build-manager.yml/runs?branch=$KSU_MANAGER_BRANCH&status=success&event=push&per_page=1" --jq '.workflow_runs[0].id' || echo "")
-
-          if [[ -z "$run_id" ]]; then
-            echo "No successful workflow run found on branch $KSU_MANAGER_BRANCH. Skipping download."
-            exit 0
-          fi
-          artifact_url=$(gh api "repos/LyraVoid/FinaSU/actions/runs/$run_id/artifacts" | jq -r ".artifacts[] | select(.name == \"$MANAGER_ARTIFACT\") | .archive_download_url" | head -n1)
-
-          if [[ -z "$artifact_url" ]]; then
-            echo "No artifact '$MANAGER_ARTIFACT' found in run $run_id. Skipping download."
-            exit 0
-          fi
-          echo "Downloading from: $artifact_url"
-          curl -fL -H "Authorization: token $GITHUB_TOKEN" -o "${MANAGER_ARTIFACT}.zip" "$artifact_url"
-          unzip -j "${MANAGER_ARTIFACT}.zip" "*.apk" -d ./AnyKernel3/
+          cp "$MANAGER_APK" ./AnyKernel3/
+          echo "✅ 已打包管理器: $(basename "$MANAGER_APK")"
 
       - name: Set zip Suffix
         id: suffix
