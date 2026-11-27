@@ -775,7 +775,7 @@ jobs:
           cd ./common
 
           if [ "${{ github.event.inputs.SUSFS_META }}" != "-1" ]; then
-            kotlin "$GITHUB_WORKSPACE/kernel_workspace/Action-Build/scripts/SusfsCompat.kts" apply "$PWD"
+            kotlin "$GITHUB_WORKSPACE/kernel_workspace/Action-Build/scripts/SusfsCompat.kts" apply "$PWD" || echo "::warning::SusfsCompat apply 失败"
           fi
 
           if [ "$KMI" == "android13-5.15" ] && [ "$SUBLEVEL" -lt 123 ]; then
@@ -789,15 +789,12 @@ jobs:
             echo "正在打susfs补丁"
             kotlin "$GITHUB_WORKSPACE/kernel_workspace/Action-Build/scripts/SusfsContext.kts" "$PWD" "$PWD/50_add_susfs_in_gki-${{ env.KANDROID_VERSION }}-${{ env.KERNEL_VERSION }}.patch"
             patch -p1 < 50_add_susfs_in_gki-${{ env.KANDROID_VERSION }}-${{ env.KERNEL_VERSION }}.patch || true
+            kotlin "$GITHUB_WORKSPACE/kernel_workspace/Action-Build/scripts/SusfsCompat.kts" postfix "$PWD" || echo "::warning::SusfsCompat postfix 失败"
+            kotlin "$GITHUB_WORKSPACE/kernel_workspace/Action-Build/scripts/SusfsCompat.kts" revert "$PWD" || echo "::warning::SusfsCompat revert 失败"
             echo "susfs_patch完成"
           fi
           source $REJ_CHECKER
           check_rejects .
-
-          if [ "${{ github.event.inputs.SUSFS_META }}" != "-1" ]; then
-            kotlin "$GITHUB_WORKSPACE/kernel_workspace/Action-Build/scripts/SusfsCompat.kts" postfix "$PWD"
-            kotlin "$GITHUB_WORKSPACE/kernel_workspace/Action-Build/scripts/SusfsCompat.kts" revert "$PWD"
-          fi
 
       # OGKI转换GKI，无需修改 dtbo 开机
       - name: Apply Convert HMBIRD_OGKI to HMBIRD_GKI
