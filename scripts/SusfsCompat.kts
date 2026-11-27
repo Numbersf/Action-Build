@@ -194,6 +194,96 @@ fun revertAndroid15VmaBlock(taskMmu: File, namespace: File) {
     logRevert(taskMmu, "removed 'pagemap_entry_t *res = NULL;' declaration")
 }
 
+fun failFix(msg: String): Nothing {
+    println("${tag("postfix", "38;5;208")}-ERROR: $msg")
+    exitProcess(1)
+}
+
+fun fixSusMapTaskMmu() {
+    val file = f("fs/proc/task_mmu.c")
+    if (!file.exists()) return
+    var text = file.readText()
+    var changed = false
+
+    fun funcRange(sig: String): IntRange? {
+        val s = text.indexOf(sig)
+        if (s < 0) return null
+        val e = text.indexOf("\n}\n", s)
+        if (e < 0) return null
+        return s until (e + 3)
+    }
+
+    val smapRange = funcRange("static int show_smap(struct seq_file *m, void *v)")
+    if (smapRange != null) {
+        val body = text.substring(smapRange.first, smapRange.last + 1)
+        if (!body.contains("SUSFS_IS_INODE_SUS_MAP")) {
+            val anchor = Regex("""(?m)^[ \t]*(if \(!vma_(data_)?pages\(vma\)\)|smap_gather_stats\()""")
+            val m = anchor.find(body) ?: failFix("show_smap: anchor not found")
+            val block = "#ifdef CONFIG_KSU_SUSFS_SUS_MAP\n" +
+                "\tif (vma->vm_file) {\n" +
+                "\t\tif (SUSFS_IS_INODE_SUS_MAP(file_inode(vma->vm_file)))\n" +
+                "\t\t\treturn 0;\n" +
+                "\t}\n" +
+                "#endif // #ifdef CONFIG_KSU_SUSFS_SUS_MAP\n\n"
+            val nb = body.substring(0, m.range.first) + block + body.substring(m.range.first)
+            text = text.substring(0, smapRange.first) + nb + text.substring(smapRange.last + 1)
+            changed = true
+            logPostfix(file, "inserted SUS_MAP check at the top of show_smap()")
+        }
+    }
+
+    val rollRange = funcRange("static int show_smaps_rollup(struct seq_file *m, void *v)")
+    if (rollRange != null) {
+        val body = text.substring(rollRange.first, rollRange.last + 1)
+        if (!body.contains("SUSFS_IS_INODE_SUS_MAP")) {
+            val oldCall = Regex("""(?m)^([ \t]+)smap_gather_stats\(vma, &mss, (0|last_vma_end)\);$""")
+            val nb: String
+            if (oldCall.containsMatchIn(body)) {
+                nb = oldCall.replace(body) { mr ->
+                    val indent = mr.groupValues[1]
+                    val off = mr.groupValues[2]
+                    "#ifdef CONFIG_KSU_SUSFS_SUS_MAP\n" +
+                        "${indent}if (!vma->vm_file || !(SUSFS_IS_INODE_SUS_MAP(file_inode(vma->vm_file))))\n" +
+                        "#endif\n" +
+                        "${indent}\tsmap_gather_stats(vma, &mss, $off);"
+                }
+                logPostfix(file, "guarded smap_gather_stats() calls in show_smaps_rollup() with SUS_MAP check (pre-refactor structure)")
+            } else {
+                val ifRe = Regex("""(?m)^([ \t]*)if \(vma->vm_start < last_vma_end\)""")
+                val endRe = Regex("""(?m)^[ \t]*last_vma_end = vma->vm_end;$""")
+                val m1 = ifRe.find(body)
+                val m2 = endRe.find(body)
+                if (m1 == null || m2 == null || m2.range.first < m1.range.first) {
+                    failFix("show_smaps_rollup: anchors not found")
+                }
+                val ind = m1.groupValues[1]
+                val blk1 = "#ifdef CONFIG_KSU_SUSFS_SUS_MAP\n" +
+                    "${ind}if (vma->vm_file && SUSFS_IS_INODE_SUS_MAP(file_inode(vma->vm_file)))\n" +
+                    "${ind}\tgoto bypass_orig_flow;\n" +
+                    "#endif // #ifdef CONFIG_KSU_SUSFS_SUS_MAP\n\n"
+                val blk2 = "#ifdef CONFIG_KSU_SUSFS_SUS_MAP\n" +
+                    "bypass_orig_flow:\n" +
+                    "#endif // #ifdef CONFIG_KSU_SUSFS_SUS_MAP\n"
+                nb = body.substring(0, m1.range.first) + blk1 +
+                    body.substring(m1.range.first, m2.range.first) + blk2 +
+                    body.substring(m2.range.first)
+                logPostfix(file, "inserted bypass_orig_flow SUS_MAP skip in show_smaps_rollup() (refactored structure)")
+            }
+            text = text.substring(0, rollRange.first) + nb + text.substring(rollRange.last + 1)
+            changed = true
+        }
+    }
+
+    if (changed) {
+        file.writeText(text)
+        val rej = f("fs/proc/task_mmu.c.rej")
+        if (rej.exists()) {
+            rej.delete()
+            logPostfix(rej, "removed stale .rej after manual SUS_MAP port")
+        }
+    }
+}
+
 /** 兜底修复 */
 fun applyPostPatchFixups() {
     val taskMmu = f("fs/proc/task_mmu.c")
@@ -267,6 +357,7 @@ fun applyPostPatchFixups() {
             )
             logPostfix(openC, "rewrote 3-arg getname_flags(filename, lookup_flags, NULL) calls to the 2-arg form getname_flags(filename, lookup_flags) required on this 6.12 baseline")
         }
+        fixSusMapTaskMmu()
     }
 }
 
