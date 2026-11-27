@@ -365,6 +365,11 @@ fun apply() {
     }
 
     if (kmi == "android16-6.12") {
+        if (sublevel <= 38) {
+            val exec = f("fs/exec.c")
+            exec.insertAfterFirst(Regex("""^#include <linux/ksm\.h>$"""), "#include <linux/dma-buf.h>")
+            logApply(exec, "added #include <linux/dma-buf.h> after <linux/ksm.h>")
+        }
         if (sublevel >= 58) {
             val exec = f("fs/exec.c")
             exec.deleteLine(Regex("""^#include <linux/dma-buf\.h>$"""))
@@ -457,6 +462,11 @@ fun revert() {
     }
 
     if (kmi == "android16-6.12") {
+        if (sublevel <= 38) {
+            val exec = f("fs/exec.c")
+            exec.deleteLine(Regex("""^#include <linux/dma-buf\.h>$"""))
+            logRevert(exec, "removed #include <linux/dma-buf.h>")
+        }
         if (sublevel >= 58) {
             val exec = f("fs/exec.c")
             exec.insertAfterFirst(Regex("""^#include """), "#include <linux/dma-buf.h>")
